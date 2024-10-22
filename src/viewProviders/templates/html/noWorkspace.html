@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src {{CSP_SOURCE}};">
+    <title>Workspace Required</title>
+    <style>
+        body {
+            padding: 20px;
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+        }
+        .message {
+            margin-bottom: 20px;
+        }
+        button {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h3>Workspace Required</h3>
+        <p>The IBM Catalog JSON Editor requires a workspace to operate. 
+           Please open a folder or workspace to continue.</p>
+    </div>
+    <button onclick="openFolder()">Open Folder</button>
+    <script>
+        const vscode = acquireVsCodeApi();
+        function openFolder() {
+            vscode.postMessage({ type: 'openFolder' });
+        }
+    </script>
+</body>
+</html>

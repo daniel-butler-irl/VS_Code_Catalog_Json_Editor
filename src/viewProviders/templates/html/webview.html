@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="{{STYLE_URI}}" rel="stylesheet">
+    <title>IBM Catalog JSON Editor</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src 'nonce-{{NONCE}}' {{CSP_SOURCE}};">
+</head>
+<body>
+    <div id="login-status">Not Logged In</div>
+    <button id="save-button" disabled>Save</button>
+    <button id="refresh-button" disabled>Refresh</button> <!-- Added Refresh Button -->
+    <div id="json-viewer"></div>
+
+    <!-- Modal Overlay -->
+    <div id="modal-overlay" class="modal" hidden>
+        <div class="modal-content">
+            <span id="modal-close" class="close">&times;</span>
+            <h2>Add New Element</h2>
+            <input type="text" id="element-input" placeholder="Enter new element value">
+            <button id="modal-add-button">Add</button>
+            <button id="modal-cancel-button">Cancel</button>
+        </div>
+    </div>
+
+    <script nonce="{{NONCE}}" src="{{SCRIPT_URI}}"></script>
+</body>
+</html>

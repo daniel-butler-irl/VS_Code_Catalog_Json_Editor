@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline';">
+    <title>Error</title>
+    <style>
+        body {
+            padding: 20px;
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+        }
+        .error {
+            color: var(--vscode-errorForeground);
+        }
+    </style>
+</head>
+<body>
+    <h1 class="error">Error</h1>
+    <p>Failed to load the webview content.</p>
+</body>
+</html>
