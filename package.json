@@ -1,0 +1,75 @@
+{
+  "name": "catalog-editor",
+  "displayName": "catalog_editor",
+  "description": "Simplify catalog entry editing",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:catalogEditor.login",
+    "onCommand:catalogEditor.logout",
+    "onView:catalogEditor.view"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "catalogEditorView",
+          "title": "Catalog Editor",
+          "icon": "media/edit-content-svgrepo-com.svg"
+        }
+      ]
+    },
+    "views": {
+      "catalogEditorView": [
+        {
+          "type": "webview",
+          "id": "catalogEditor.view",
+          "name": "IBM Catalog JSON Editor"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "catalogEditor.login",
+        "title": "IBM Catalog Editor: Login",
+        "category": "Catalog Editor"
+      },
+      {
+        "command": "catalogEditor.logout",
+        "title": "IBM Catalog Editor: Logout",
+        "category": "Catalog Editor"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run build && vsce package",
+    "test": "mocha -r ts-node/register 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.4",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^20.4.2",
+    "@types/node-fetch": "^2.6.11",
+    "@types/vscode": "^1.94.0",
+    "chai": "^4.3.7",
+    "esbuild-plugin-copy": "^2.1.1",
+    "mocha": "^10.2.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.1.6",
+    "vsce": "^1.97.0"
+  },
+  "dependencies": {
+    "@ibm-cloud/platform-services": "^0.65.2",
+    "ibm-cloud-sdk-core": "^5.1.0",
+    "node-fetch": "^2.6.7",
+    "strip-json-comments": "^3.1.1"
+  }
+}
