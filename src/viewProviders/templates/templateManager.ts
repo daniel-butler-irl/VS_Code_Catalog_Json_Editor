@@ -1,5 +1,6 @@
 // src/viewProviders/templates/templateManager.ts
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { TemplateLoader, TemplateResources } from './templateLoader';
 import { WorkspaceRequiredError } from '../../utils/errors';
 import { createLoggerFor } from '../../utils/outputManager';
@@ -22,13 +23,15 @@ export class TemplateManager {
     /**
      * Gets the main webview content
      */
-    public async getWebviewContent(webview: vscode.Webview, options: TemplateOptions = {}): Promise<string> {
+   public async getWebviewContent(webview: vscode.Webview, options: TemplateOptions = {}): Promise<string> {
         try {
             const resources = this.templateLoader.getTemplateResources(webview);
+            const scripts = this.getWebviewScripts(webview);
+            
             const replacements = {
                 ...this.getStandardReplacements(options),
                 STYLE_URI: resources.styleUri.toString(),
-                SCRIPT_URI: resources.scriptUri.toString(),
+                SCRIPT_URIS: scripts.map(uri => `<script type="module" src="${uri}"></script>`).join('\n'),
                 CSP_SOURCE: resources.cspSource,
                 NONCE: resources.nonce
             };
@@ -43,6 +46,7 @@ export class TemplateManager {
             return this.getErrorContent(webview);
         }
     }
+
     /**
      * Gets the no workspace content
      */
@@ -106,6 +110,26 @@ export class TemplateManager {
     }
 
     /**
+     * Gets content for when ibm_catalog.json doesn't exist
+     */
+    public async getNoIbmCatalogContent(webview: vscode.Webview): Promise<string> {
+        try {
+            const resources = this.templateLoader.getTemplateResources(webview);
+            
+            return await this.templateLoader.processTemplate(
+                'noIbmCatalog',
+                resources,
+                {
+                    MESSAGE: 'This repository does not contain an ibm_catalog.json file.'
+                }
+            );
+        } catch (error) {
+            this.logger.error('Error getting no ibm_catalog content:', error);
+            return this.getErrorContent(webview);
+        }
+    }
+    
+    /**
      * Updates the login status in an existing webview
      */
     public async updateLoginStatus(webview: vscode.Webview, isLoggedIn: boolean): Promise<string> {
@@ -129,7 +153,7 @@ export class TemplateManager {
         return {
             LOGIN_STATUS: options.isLoggedIn ? 'Logged In' : 'Not Logged In',
             LOGIN_STATUS_CLASS: options.isLoggedIn ? 'logged-in' : 'logged-out',
-            REFRESH_BUTTON_VISIBILITY: options.showRefreshButton ? 'visible' : 'hidden',
+            REFRESH_CATALOG_BUTTON_DISABLED: options.showRefreshButton ? 'disabled' : '',
             CUSTOM_STYLES: options.customStyles || '',
             CUSTOM_SCRIPTS: options.customScripts || '',
             EXTENSION_VERSION: '1.0.0', // Should be pulled from package.json
@@ -183,7 +207,19 @@ export class TemplateManager {
         this.logger.info('Template cache cleared');
     }
 
-  
+   private getWebviewScripts(webview: vscode.Webview): string[] {
+        const modulesPath = vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'modules');
+        return [
+            webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'logger.js')),
+            webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'jsonRenderer.js')),
+            webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'stateManager.js')),
+            webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'modalManager.js')),
+            webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'messageHandler.js')),
+            webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'webview.js'))
+        ].map(uri => uri.toString());
+    }
+
+    
 
     /**
      * Disposes of resources

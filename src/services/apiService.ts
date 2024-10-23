@@ -1,21 +1,24 @@
-// src/services/apiService.ts
 import * as vscode from 'vscode';
 import CatalogManagementV1 from '@ibm-cloud/platform-services/catalog-management/v1';
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
 import { createLoggerFor } from '../utils/outputManager';
+import { ApiKeyRequiredError } from '../utils/errors';
+
+interface CatalogListOptions {
+    limit?: number;
+    offset?: number;
+    digest?: boolean;
+}
 
 export class ApiService {
     private readonly logger = createLoggerFor('API');
     private catalogService: CatalogManagementV1 | null = null;
     private apiKey: string | undefined;
-    private cache: vscode.Memento;
 
-    constructor(private secrets: vscode.SecretStorage, private globalState: vscode.Memento) {
-        this.cache = globalState; // Use Global Memento for caching
-    }
+    constructor(private secrets: vscode.SecretStorage, private globalState: vscode.Memento) {}
 
     /**
-     * Initializes the API service by retrieving the API key and setting up the CatalogManagement service.
+     * Initializes the API service
      */
     public async initialize() {
         this.apiKey = await this.secrets.get('catalogEditor.apiKey');
@@ -23,69 +26,60 @@ export class ApiService {
             const authenticator = new IamAuthenticator({ apikey: this.apiKey });
             this.catalogService = new CatalogManagementV1({
                 authenticator,
-                serviceUrl: 'https://api.us-south.catalog.cloud.ibm.com', // Update region as needed
+                serviceUrl: 'https://api.us-south.catalog.cloud.ibm.com'
             });
         }
     }
 
     /**
-     * Checks if the user is authenticated.
-     * @returns {boolean} - True if authenticated, else false.
+     * Checks if user is authenticated
      */
     public isAuthenticated(): boolean {
         return !!this.apiKey && !!this.catalogService;
     }
 
     /**
-     * Fetches all offerings from the specified catalog and filters them based on 'product_kind' and 'target_kind'.
-     * @param catalogId - The catalog ID to fetch offerings from.
-     * @returns {Promise<any[]>} - Array of filtered offerings.
-     * @throws Will throw an error if the API call fails.
+     * Gets the list of available catalogs
      */
-    public async getFilteredOfferings(catalogId: string): Promise<any[]> {
+    public async listCatalogs(): Promise<any[]> {
         if (!this.isAuthenticated()) {
-            throw new Error('User is not authenticated. Please login.');
+            throw new ApiKeyRequiredError();
         }
 
-        const cacheKey = `filtered_offerings_${catalogId}`;
-        const cachedOfferings = this.cache.get<any[]>(cacheKey);
+        try {
+            const response = await this.catalogService!.listCatalogs();
+            return response.result.resources || [];
+        } catch (error) {
+            this.logger.error('Error listing catalogs:', error);
+            throw error;
+        }
+    }
 
-        if (cachedOfferings && cachedOfferings.length > 0) {
-            this.logger.info(`Using cached filtered offerings for catalog_id: ${catalogId}`);
-            return cachedOfferings;
+    /**
+     * Gets offerings from a specific catalog with filtering
+     */
+    public async getFilteredOfferings(catalogId: string, options: CatalogListOptions = {}): Promise<any[]> {
+        if (!this.isAuthenticated()) {
+            throw new ApiKeyRequiredError();
         }
 
         const offerings: any[] = [];
-        const limit = 100;
-        let offset = 0;
+        const limit = options.limit || 100;
+        let offset = options.offset || 0;
         let hasMore = true;
 
         try {
             while (hasMore) {
                 const response = await this.catalogService!.listOfferings({
                     catalogIdentifier: catalogId,
-                    digest: true, // Optional: Strip down the content for smaller payload
-                    limit: limit,
-                    offset: offset,
+                    digest: options.digest ?? true,
+                    limit,
+                    offset,
                 });
 
                 const resources = response.result.resources || [];
+                offerings.push(...resources);
 
-                // Manual Filtering: product_kind == 'solution' and target_kind == 'terraform'
-                const filteredResources = resources.filter(offering => {
-                    const productKind = offering.product_kind;
-                    if (productKind !== 'solution') return false;
-
-                    const kinds = offering.kinds;
-                    if (!kinds || kinds.length === 0) return false;
-
-                    const firstKind = kinds[0];
-                    return firstKind.target_kind === 'terraform';
-                });
-
-                offerings.push(...filteredResources);
-
-                // Check if more offerings are available
                 if (resources.length < limit) {
                     hasMore = false;
                 } else {
@@ -93,58 +87,48 @@ export class ApiService {
                 }
             }
 
-            // Cache the filtered offerings
-            await this.cache.update(cacheKey, offerings);
-            this.logger.info(`Fetched and cached filtered offerings for catalog_id: ${catalogId}`);
-
             return offerings;
         } catch (error) {
-            console.error(`Error fetching offerings for catalog_id ${catalogId}:`, error);
+            this.logger.error(`Error fetching offerings for catalog ${catalogId}:`, error);
             throw error;
         }
     }
 
     /**
-     * Fetches version details given a version locator.
-     * @param versionLocator - The version locator string.
-     * @returns {Promise<any>} - Version details.
-     * @throws Will throw an error if the API call fails.
+     * Gets details for a specific version
      */
     public async getVersionDetails(versionLocator: string): Promise<any> {
         if (!this.isAuthenticated()) {
-            throw new Error('User is not authenticated. Please login.');
+            throw new ApiKeyRequiredError();
         }
 
         try {
             const response = await this.catalogService!.getVersion({
-                versionLocId: versionLocator, // Corrected property name
+                versionLocId: versionLocator,
             });
             return response.result;
         } catch (error) {
-            console.error(`Error fetching version details for locator ${versionLocator}:`, error);
+            this.logger.error(`Error fetching version details for ${versionLocator}:`, error);
             throw error;
         }
     }
 
     /**
-     * Clears cached offerings for a specific catalog_id.
-     * @param catalogId - The catalog ID whose cache should be cleared.
+     * Gets a specific catalog by ID
      */
-    public async clearOfferingsCache(catalogId: string): Promise<void> {
-        const cacheKey = `filtered_offerings_${catalogId}`;
-        await this.cache.update(cacheKey, undefined);
-        this.logger.info(`Cleared cache for catalog_id: ${catalogId}`);
-    }
+    public async getCatalog(catalogId: string): Promise<any> {
+        if (!this.isAuthenticated()) {
+            throw new ApiKeyRequiredError();
+        }
 
-    /**
-     * Clears all cached offerings.
-     */
-    public async clearAllOfferingsCache(): Promise<void> {
-        const keys = this.cache.keys();
-        const offeringsKeys = keys.filter(key => key.startsWith('filtered_offerings_'));
-        for (const key of offeringsKeys) {
-            await this.cache.update(key, undefined);
-            this.logger.info(`Cleared cache for key: ${key}`);
+        try {
+            const response = await this.catalogService!.getCatalog({
+                catalogIdentifier: catalogId
+            });
+            return response.result;
+        } catch (error) {
+            this.logger.error(`Error fetching catalog ${catalogId}:`, error);
+            throw error;
         }
     }
 }

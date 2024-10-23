@@ -150,16 +150,18 @@ button:hover:not(:disabled) {
     position: absolute;
     top: 10px;
     right: 15px;
-    font-size: 28px;
+    font-size: 24px; 
     font-weight: bold;
     cursor: pointer;
+    transition: color 0.2s ease;
 }
 
 .close:hover,
 .close:focus {
-    color: var(--vscode-editor-foreground);
+    color: var(--vscode-button-hoverBackground); 
     text-decoration: none;
 }
+
 
 /* Input and Select Elements in Modal */
 .modal-content input[type="text"],
@@ -174,8 +176,13 @@ button:hover:not(:disabled) {
     color: var(--vscode-editor-foreground);
 }
 
-/* Save and Cancel Buttons in Modal */
-.modal-content button {
+/* Modal Buttons */
+.modal-content .buttons {
+    display: flex;
+    justify-content: space-between;
+}
+
+.modal-content .buttons button {
     width: 48%; /* Allow two buttons to sit side by side */
     margin: 8px 1%;
 }
@@ -197,8 +204,8 @@ button:hover:not(:disabled) {
     margin-top: 10px;
 }
 
-/* Refresh Button */
-#refresh-button {
+/* Refresh Catalog Button */
+#refresh-catalog-button {
     width: 100%; /* Expand refresh button to fill the panel */
     margin-top: 10px;
 }
@@ -222,4 +229,18 @@ button:hover:not(:disabled) {
     .modal-content {
         width: 90%; /* Make modal content responsive */
     }
+}
+
+/* Login Status Styles */
+#login-status {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.logged-in {
+    color: green;
+}
+
+.logged-out {
+    color: red;
 }

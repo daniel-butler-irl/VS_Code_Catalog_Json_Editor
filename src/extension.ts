@@ -1,4 +1,3 @@
-// src/extension.ts
 import * as vscode from 'vscode';
 import { CatalogEditorViewProvider } from './viewProviders/catalogEditorViewProvider';
 import { WorkspaceRequiredError } from './utils/errors';
@@ -52,10 +51,14 @@ export function activate(context: vscode.ExtensionContext) {
 
                     if (apiKey) {
                         await context.secrets.store('catalogEditor.apiKey', apiKey);
-                        vscode.window.showInformationMessage('Successfully logged in to IBM Cloud.');
-                        provider.updateStatusBar(true);
-                        provider.sendLoginStatus(true);
                         await provider.initializeApiService();
+                        // MessageHandler will handle showing success message and updating status
+                        if (provider.currentView) {
+                            await provider.currentView.webview.postMessage({
+                                type: 'login',
+                                apiKey: apiKey
+                            });
+                        }
                     }
                 } catch (error) {
                     console.error('Error during login:', error);
@@ -71,10 +74,12 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.registerCommand('catalogEditor.logout', async () => {
                 try {
                     await context.secrets.delete('catalogEditor.apiKey');
-                    await provider.clearAllOfferingsCache();
-                    vscode.window.showInformationMessage('Successfully logged out from IBM Cloud.');
-                    provider.updateStatusBar(false);
-                    provider.sendLoginStatus(false);
+                    // MessageHandler will handle the cache clearing and status updates
+                    if (provider.currentView) {
+                        await provider.currentView.webview.postMessage({
+                            type: 'logout'
+                        });
+                    }
                 } catch (error) {
                     console.error('Error during logout:', error);
                     vscode.window.showErrorMessage(
@@ -106,7 +111,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Listen to changes in the active editor
         disposables.push(
             vscode.window.onDidChangeActiveTextEditor((editor) => {
-                if (editor && provider.currentView) {
+                // Only update if this is a real text editor (not output/debug console)
+                if (editor && editor.document && editor.document.uri.scheme === 'file') {
                     provider.updateWebviewContent(editor.document.fileName).catch(error => {
                         if (!(error instanceof WorkspaceRequiredError)) {
                             vscode.window.showErrorMessage(`Error updating webview: ${error.message}`);
@@ -121,7 +127,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.workspace.onDidSaveTextDocument((document) => {
                 if (document.fileName.endsWith('ibm_catalog.json')) {
                     console.log(`Detected save on "ibm_catalog.json". Updating webview...`);
-                    provider.sendJsonData().catch(error => {
+                    provider.updateWebviewContent(document.fileName).catch(error => {
                         if (!(error instanceof WorkspaceRequiredError)) {
                             vscode.window.showErrorMessage(`Error updating JSON data: ${error.message}`);
                         }

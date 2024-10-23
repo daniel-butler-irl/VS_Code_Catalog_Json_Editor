@@ -142,6 +142,7 @@ export const Components = {
     TEMPLATE_LOADER: "Template Loader",
     TEMPLATE_MANAGER: "Template Manager",
     MESSAGE_HANDLER: "Message Handler",
+    CACHE: "Cache",
     API: "API Service"
 } as const;
 

@@ -8,9 +8,9 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src 'nonce-{{NONCE}}' {{CSP_SOURCE}};">
 </head>
 <body>
-    <div id="login-status">Not Logged In</div>
+    <div id="login-status" class="{{LOGIN_STATUS_CLASS}}">{{LOGIN_STATUS}}</div>
     <button id="save-button" disabled>Save</button>
-    <button id="refresh-button" disabled>Refresh</button> <!-- Added Refresh Button -->
+    <button id="refresh-catalog-button" {{REFRESH_CATALOG_BUTTON_DISABLED}}>Get Catalog Details</button> 
     <div id="json-viewer"></div>
 
     <!-- Modal Overlay -->
@@ -19,11 +19,13 @@
             <span id="modal-close" class="close">&times;</span>
             <h2>Add New Element</h2>
             <input type="text" id="element-input" placeholder="Enter new element value">
-            <button id="modal-add-button">Add</button>
-            <button id="modal-cancel-button">Cancel</button>
+            <div class="buttons">
+                <button id="modal-add-button">Add</button>
+                <button id="modal-cancel-button">Cancel</button>
+            </div>
         </div>
     </div>
 
-    <script nonce="{{NONCE}}" src="{{SCRIPT_URI}}"></script>
+    {{SCRIPT_URIS}}
 </body>
 </html>

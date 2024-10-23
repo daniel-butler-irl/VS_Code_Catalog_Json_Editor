@@ -1,25 +1,38 @@
-// src/viewProviders/handlers/messageHandler.ts
 import * as vscode from 'vscode';
 import { ApiService } from '../../services/apiService';
+import { CatalogCacheService } from '../../services/catalogCacheService';
 import { FileHandler } from './fileHandler';
-import { OfferingsHandler } from './offeringsHandler';
 import { StatusBarManager } from '../ui/statusBar';
 import { TemplateManager } from '../templates/templateManager';
-import { FileUtils } from '../../utils/fileUtils';
-import { WorkspaceRequiredError } from '../../utils/errors';
 import { createLoggerFor } from '../../utils/outputManager';
+import { ApiKeyRequiredError } from '../../utils/errors';
 
-export interface WebviewMessage {
-    type: string;
-    [key: string]: any;
+export interface LoginMessage {
+    type: 'login';
+    apiKey: string;
 }
+
+export interface LogoutMessage {
+    type: 'logout';
+}
+
+export interface LoginStatusMessage {
+    type: 'loginStatus';
+    isLoggedIn: boolean;
+}
+
+export type WebviewMessage = 
+    | LoginMessage 
+    | LogoutMessage 
+    | LoginStatusMessage 
+    | { type: string; [key: string]: any };
 
 export class MessageHandler {
     private readonly logger = createLoggerFor('MESSAGE_HANDLER');
     private webview?: vscode.WebviewView;
     private fileHandler: FileHandler;
-    private offeringsHandler: OfferingsHandler;
     private templateManager: TemplateManager;
+    private catalogCache: CatalogCacheService;
     public readonly disposables: vscode.Disposable[] = [];
 
     constructor(
@@ -27,11 +40,9 @@ export class MessageHandler {
         private readonly statusBar: StatusBarManager,
         private readonly extensionUri: vscode.Uri
     ) {
-        
         this.fileHandler = new FileHandler();
-        this.offeringsHandler = new OfferingsHandler(apiService);
         this.templateManager = new TemplateManager(extensionUri);
-       
+        this.catalogCache = new CatalogCacheService(apiService);
     }
 
     public setWebview(webview: vscode.WebviewView) {
@@ -66,18 +77,36 @@ export class MessageHandler {
                     await this.handleHighlightKey(message.key);
                     break;
 
-                case 'fetchOfferings':
-                    await this.handleFetchOfferings(message.catalog_id, message.path);
+                case 'fetchCatalogData':
+                    await this.handleFetchCatalogData(message.catalogId);
                     break;
 
-                case 'clearCache':
-                    await this.handleClearCache();
+                case 'clearCatalogCache':
+                    await this.handleClearCatalogCache();
+                    break;
+
+                case 'refreshAllCatalogs':
+                    await this.handleRefreshAllCatalogs();
+                    break;
+
+                case 'getVersionDetails':
+                    await this.handleGetVersionDetails(message.versionLocator);
                     break;
 
                 case 'log':
                     this.handleLogMessage(message.level, message.message);
                     break;
 
+                case 'login':
+                    await this.handleLogin(message.apiKey);
+                    break;
+
+                case 'createIbmCatalog':
+                    await this.handleCreateIbmCatalog();
+                    break;
+                case 'logout':
+                    await this.handleLogout();
+                    break;
                 default:
                     this.logger.warn(`Unknown message type received: ${message.type}`);
             }
@@ -86,21 +115,165 @@ export class MessageHandler {
         }
     }
 
-    public async handleFileChange(fileName: string): Promise<void> {
+    private async handleFetchCatalogData(catalogId: string): Promise<void> {
         if (!this.webview) return;
 
-        if (!FileUtils.isWorkspaceAvailable()) {
-            this.webview.webview.html = await this.templateManager.getNoWorkspaceContent(this.webview.webview);
-            return;
-        }
+        try {
+            if (!this.apiService.isAuthenticated()) {
+                throw new ApiKeyRequiredError();
+            }
 
-        if (fileName.endsWith('ibm_catalog.json')) {
-            await this.sendJsonData();
-        } else {
+            // Get current status first
+            const status = this.catalogCache.getCatalogStatus(catalogId);
+            
+            // Send immediate status update to UI
             await this.webview.webview.postMessage({
-                type: 'noFileSelected'
+                type: 'catalogStatus',
+                catalogId,
+                status: status.status,
+                error: status.error
             });
+
+            // Fetch offerings
+            const offerings = await this.catalogCache.getOfferings(catalogId);
+            
+            // Send data to webview
+            await this.webview.webview.postMessage({
+                type: 'catalogData',
+                catalogId,
+                data: { resources: offerings },
+                status: 'ready'
+            });
+        } catch (error) {
+            this.logger.error('Error fetching catalog data:', error);
+            if (this.webview) {
+                await this.webview.webview.postMessage({
+                    type: 'catalogDataError',
+                    catalogId,
+                    message: error instanceof Error ? error.message : 'Failed to fetch catalog data'
+                });
+            }
         }
+    }
+
+    private async handleClearCatalogCache(): Promise<void> {
+        try {
+            this.catalogCache.clearCache();
+            if (this.webview) {
+                await this.webview.webview.postMessage({
+                    type: 'catalogCacheCleared'
+                });
+            }
+            vscode.window.showInformationMessage('Catalog cache cleared successfully.');
+        } catch (error) {
+            this.logger.error('Error clearing catalog cache:', error);
+            vscode.window.showErrorMessage('Failed to clear catalog cache.');
+        }
+    }
+
+    private async handleRefreshAllCatalogs(): Promise<void> {
+        try {
+            await this.catalogCache.refreshAllCatalogs();
+            if (this.webview) {
+                const catalogs = this.catalogCache.getActiveCatalogs();
+                for (const catalogId of catalogs) {
+                    const offerings = await this.catalogCache.getOfferings(catalogId);
+                    await this.webview.webview.postMessage({
+                        type: 'catalogData',
+                        catalogId,
+                        data: { resources: offerings },
+                        status: 'ready'
+                    });
+                }
+            }
+        } catch (error) {
+            this.logger.error('Error refreshing catalogs:', error);
+            vscode.window.showErrorMessage('Failed to refresh catalogs.');
+        }
+    }
+
+    private async handleGetVersionDetails(versionLocator: string): Promise<void> {
+        if (!this.webview) return;
+
+        try {
+            const details = await this.apiService.getVersionDetails(versionLocator);
+            await this.webview.webview.postMessage({
+                type: 'versionDetails',
+                versionLocator,
+                data: details
+            });
+        } catch (error) {
+            this.logger.error('Error fetching version details:', error);
+            if (this.webview) {
+                await this.webview.webview.postMessage({
+                    type: 'versionDetailsError',
+                    versionLocator,
+                    message: error instanceof Error ? error.message : 'Failed to fetch version details'
+                });
+            }
+        }
+    }
+
+    private async handleSaveJson(json: any): Promise<void> {
+        try {
+            await this.fileHandler.saveJsonData(json);
+            if (this.webview) {
+                await this.webview.webview.postMessage({
+                    type: 'saveSuccess'
+                });
+            }
+            await this.sendJsonData();
+        } catch (error) {
+            await this.handleError(error);
+        }
+    }
+
+    private async handleOpenIbmCatalog(): Promise<void> {
+        try {
+            const filePath = this.fileHandler.getFilePath();
+            const document = await vscode.workspace.openTextDocument(filePath);
+            await vscode.window.showTextDocument(document);
+        } catch (error) {
+            this.logger.error('Error opening IBM catalog:', error);
+            vscode.window.showErrorMessage('Failed to open ibm_catalog.json');
+        }
+    }
+
+    private async handleHighlightKey(key: string): Promise<void> {
+        // Implementation would handle highlighting keys in the editor
+    }
+
+    private handleLogMessage(level: string, message: string): void {
+        switch (level) {
+            case 'log':
+                this.logger.info(message);
+                break;
+            case 'warn':
+                this.logger.warn(message);
+                break;
+            case 'error':
+                this.logger.error(message);
+                break;
+            default:
+                this.logger.info(`[UNKNOWN LEVEL] ${message}`);
+        }
+    }
+ private async handleCreateIbmCatalog(): Promise<void> {
+        try {
+            await this.fileHandler.createNewFile();
+            vscode.window.showInformationMessage('Created new ibm_catalog.json file');
+            
+            // Refresh the view
+            await this.sendJsonData();
+        } catch (error) {
+            this.logger.error('Error creating ibm_catalog.json:', error);
+            throw error;
+        }
+    }
+    private async handleError(error: unknown): Promise<void> {
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+        this.logger.error(errorMessage);
+        vscode.window.showErrorMessage(errorMessage);
     }
 
     public async sendJsonData(): Promise<void> {
@@ -120,119 +293,53 @@ export class MessageHandler {
         }
     }
 
-    public sendLoginStatus(isLoggedIn: boolean): void {
-        if (!this.webview) return;
-
-        this.webview.webview.postMessage({
-            type: 'loginStatus',
-            isLoggedIn
-        });
-    }
-
-    public async clearCache(): Promise<void> {
-        await this.offeringsHandler.clearCache();
-    }
-
-    private async handleSaveJson(json: any): Promise<void> {
-        if (!this.webview) return;
-
-        try {
-            await this.fileHandler.saveJsonData(json);
-            await this.webview.webview.postMessage({
-                type: 'saveSuccess'
-            });
-            await this.sendJsonData();
-        } catch (error) {
-            await this.handleError(error);
+     /**
+     * Handles login requests
+     */
+   private async handleLogin(apiKey: string): Promise<void> {
+    try {
+        await this.apiService.initialize();
+        if (this.apiService.isAuthenticated()) {
+            this.sendLoginStatus(true);
+            vscode.window.showInformationMessage('Successfully logged in to IBM Cloud.');
         }
+    } catch (error) {
+        this.logger.error('Login failed:', error);
+        this.sendLoginStatus(false);
+        throw error;
+    }
+}
+
+/**
+ * Handles logout requests
+ */
+private async handleLogout(): Promise<void> {
+    try {
+        await this.catalogCache.clearCache();
+        this.sendLoginStatus(false);
+        vscode.window.showInformationMessage('Successfully logged out from IBM Cloud.');
+    } catch (error) {
+        this.logger.error('Logout failed:', error);
+        throw error;
+    }
+}
+
+/**
+ * Sends the login status to the webview
+ */
+public sendLoginStatus(isLoggedIn: boolean): void {
+    if (!this.webview) {
+        this.logger.info('No webview available for sending login status');
+        return;
     }
 
-    private async handleOpenIbmCatalog(): Promise<void> {
-        try {
-            const filePath = FileUtils.getWorkspaceFilePath('ibm_catalog.json');
-            const document = await vscode.workspace.openTextDocument(filePath);
-            await vscode.window.showTextDocument(document);
-        } catch (error) {
-            if (!(error instanceof WorkspaceRequiredError)) {
-                vscode.window.showErrorMessage('Failed to open ibm_catalog.json');
-            }
-        }
-    }
+    this.webview.webview.postMessage({
+        type: 'loginStatus',
+        isLoggedIn
+    });
 
-    private async handleHighlightKey(key: string): Promise<void> {
-        // Implementation would be moved from catalogEditorViewProvider
-        // This would handle the highlighting of keys in the editor
-    }
-
-    private async handleFetchOfferings(catalogId: string, path: string): Promise<void> {
-        if (!this.webview) return;
-
-        if (!this.apiService.isAuthenticated()) {
-            vscode.window.showWarningMessage('Please login to fetch offerings.');
-            return;
-        }
-
-        try {
-            const offerings = await this.offeringsHandler.fetchOfferings(catalogId);
-            await this.webview.webview.postMessage({
-                type: 'offeringsData',
-                path: path,
-                offerings: offerings
-            });
-        } catch (error) {
-            this.logger.error('Error fetching offerings:', error);
-            if (this.webview) {
-                await this.webview.webview.postMessage({
-                    type: 'fetchOfferingsError',
-                    path: path,
-                    message: 'Failed to fetch offerings'
-                });
-            }
-        }
-    }
-
-    private async handleClearCache(): Promise<void> {
-        if (!this.webview) return;
-
-        try {
-            await this.offeringsHandler.clearCache();
-            await this.webview.webview.postMessage({
-                type: 'cacheCleared'
-            });
-        } catch (error) {
-            this.logger.error('Error clearing cache:', error);
-            await this.webview.webview.postMessage({
-                type: 'clearCacheError',
-                message: 'Failed to clear cache'
-            });
-        }
-    }
-
-    private handleLogMessage(level: string, message: string): void {
-        switch (level) {
-            case 'log':
-                this.logger.info(message);
-                break;
-            case 'warn':
-                this.logger.warn(message);
-                break;
-            case 'error':
-                this.logger.error(message);
-                break;
-            default:
-                this.logger.info(`[UNKNOWN LEVEL] ${message}`);
-        }
-    }
-
-    private async handleError(error: unknown): Promise<void> {
-        if (error instanceof WorkspaceRequiredError && this.webview) {
-            this.webview.webview.html = await this.templateManager.getNoWorkspaceContent(this.webview.webview);
-        } else {
-            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-            this.logger.error(errorMessage);
-            vscode.window.showErrorMessage(errorMessage);
-        }
-    }
+    this.statusBar.updateStatus(isLoggedIn);
+}
 
     public dispose(): void {
         this.disposables.forEach(d => d.dispose());

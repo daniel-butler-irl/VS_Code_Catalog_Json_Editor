@@ -1,4 +1,3 @@
-// src/viewProviders/handlers/fileHandler.ts
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { FileUtils } from '../../utils/fileUtils';
@@ -6,7 +5,6 @@ import { JsonUtils } from '../../utils/jsonUtils';
 import { readSchema } from '../../services/schemaFetcher';
 import { WorkspaceRequiredError, FileOperationError } from '../../utils/errors';
 import { createLoggerFor } from '../../utils/outputManager';
-
 
 export interface JsonValidationResult {
     isValid: boolean;
@@ -23,6 +21,20 @@ export class FileHandler {
         this.initializeSchema().catch(error => 
             this.logger.error('Failed to initialize schema:', error)
         );
+    }
+
+    /**
+     * Gets the full path to the IBM catalog JSON file
+     */
+    public getFilePath(): string {
+        return FileUtils.getWorkspaceFilePath(this.jsonFileName);
+    }
+
+    /**
+     * Gets the filename being handled
+     */
+    public getFileName(): string {
+        return this.jsonFileName;
     }
 
     /**
@@ -48,6 +60,33 @@ export class FileHandler {
         return this.schema;
     }
 
+       /**
+     * Checks if ibm_catalog.json exists in the workspace root
+     * @returns Promise<boolean>
+     */
+    public async checkIbmCatalogExists(): Promise<boolean> {
+        try {
+            const filePath = this.getFilePath();
+            await FileUtils.readFileContent(filePath);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Gets the workspace root path
+     * @returns string
+     * @throws WorkspaceRequiredError if no workspace is open
+     */
+    public getWorkspaceRootPath(): string {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            throw new WorkspaceRequiredError();
+        }
+        return workspaceFolders[0].uri.fsPath;
+    }
+    
     /**
      * Reads and parses the JSON data from the file
      */
@@ -168,13 +207,6 @@ export class FileHandler {
         } catch (error) {
             return false;
         }
-    }
-
-    /**
-     * Gets the full path to the IBM catalog JSON file
-     */
-    private getFilePath(): string {
-        return FileUtils.getWorkspaceFilePath(this.jsonFileName);
     }
 
     /**
