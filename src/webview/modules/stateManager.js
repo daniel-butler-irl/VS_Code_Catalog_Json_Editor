@@ -1,66 +1,69 @@
 // src/webview/modules/stateManager.js
+
+/**
+ * Manages the state of the webview UI.
+ */
 export class StateManager {
     constructor(vscode, logger) {
         this.vscode = vscode;
         this.logger = logger;
-        this.state = this.vscode.getState() || {};
+        this.state = {
+            expandedNodes: new Set(),
+            // Add more state properties as needed
+        };
     }
 
     /**
-     * Updates the state with new data
-     * @param {Object} newState - The state updates to apply
+     * Toggles the expansion state of a JSON node.
+     * @param {string} path The JSONPath of the node.
      */
-    updateState(newState) {
-        this.state = { ...this.state, ...newState };
-        this.vscode.setState(this.state);
-        this.logger.log('State updated:', newState);
-    }
-
-    /**
-     * Gets current state value
-     * @param {string} key - The key to retrieve
-     * @returns {any} The state value
-     */
-    getState(key) {
-        return this.state[key];
-    }
-
-    /**
-     * Updates the state of expanded nodes and saves it
-     * @param {string[]} expandedNodes - Array of expanded node paths
-     */
-    updateExpandedNodes(expandedNodes) {
-        this.logger.log('Current expanded nodes:', expandedNodes);
-        this.updateState({ expandedNodes, jsonData: this.jsonData });
-    }
-
-    /**
-     * Restores previously expanded nodes from saved state
-     */
-    restoreExpandedNodes() {
-        const state = this.vscode.getState();
-        if (!state?.expandedNodes) {
-            this.logger.log('No expandedNodes found in state.');
-            return;
+    toggleNode(path) {
+        if (this.state.expandedNodes.has(path)) {
+            this.state.expandedNodes.delete(path);
+            this.collapseNode(path);
+        } else {
+            this.state.expandedNodes.add(path);
+            this.expandNode(path);
         }
-        this.restoreNodes(state.expandedNodes);
     }
 
     /**
-     * Restores specific nodes to their expanded state
-     * @param {string[]} nodes - Array of node paths to restore
+     * Expands a JSON node in the UI.
+     * @param {string} path The JSONPath of the node.
      */
-    restoreNodes(nodes) {
-        nodes.forEach(nodePath => {
-            const element = document.querySelector(`[data-path="${nodePath}"] .key.collapsible`);
-            if (element) {
-                const ul = element.closest('li').querySelector('.nested');
-                if (ul) {
-                    ul.classList.add('visible');
-                    element.classList.add('expanded');
-                    element.setAttribute('aria-expanded', 'true');
-                }
-            }
-        });
+    expandNode(path) {
+        const node = document.querySelector(`[data-path="${path}"]`);
+        if (node) {
+            // Implement logic to expand the node (e.g., reveal children)
+            node.classList.add('expanded');
+            this.logger.info(`Expanded node: ${path}`);
+        }
+    }
+
+    /**
+     * Collapses a JSON node in the UI.
+     * @param {string} path The JSONPath of the node.
+     */
+    collapseNode(path) {
+        const node = document.querySelector(`[data-path="${path}"]`);
+        if (node) {
+            // Implement logic to collapse the node (e.g., hide children)
+            node.classList.remove('expanded');
+            this.logger.info(`Collapsed node: ${path}`);
+        }
+    }
+
+    /**
+     * Saves the current state.
+     */
+    saveState() {
+        // Implement logic to persist state if necessary
+    }
+
+    /**
+     * Restores the saved state.
+     */
+    restoreState() {
+        // Implement logic to restore state if necessary
     }
 }

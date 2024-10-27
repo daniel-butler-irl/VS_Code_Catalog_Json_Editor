@@ -1,5 +1,7 @@
+// src/viewProviders/ui/decorations.ts
+
 import * as vscode from 'vscode';
-import { createLoggerFor } from '../../utils/outputManager';
+import { OutputManager, Components, LogLevel } from '../../utils/outputManager';
 
 export interface DecorationOptions {
     backgroundColor?: string;
@@ -21,10 +23,8 @@ export interface HighlightRange {
 }
 
 export class DecorationManager implements vscode.Disposable {
-    private readonly logger = createLoggerFor('DECORATIONS');
     private decorationTypes: Map<string, vscode.TextEditorDecorationType> = new Map();
     private activeDecorations: Map<string, vscode.Range[]> = new Map();
-    private readonly COMPONENT = 'DecorationManager';
     private readonly defaultOptions: DecorationOptions = {
         backgroundColor: 'rgba(255, 215, 0, 0.3)',
         borderColor: 'rgba(255, 215, 0, 0.5)',
@@ -33,10 +33,18 @@ export class DecorationManager implements vscode.Disposable {
         borderRadius: '3px'
     };
 
-    constructor() {
-        this.logger.info('Initializing DecorationManager');
+    constructor(private readonly outputManager: OutputManager) {
+        this.log('Initializing DecorationManager');
     }
 
+    /**
+     * Logs messages using the OutputManager.
+     * @param message The message to log.
+     * @param level The severity level.
+     */
+    private log(message: string, level: LogLevel = LogLevel.INFO): void {
+        this.outputManager.log(Components.FILE_HANDLER, message, level);
+    }
 
     /**
      * Creates a new decoration type with given options
@@ -45,24 +53,30 @@ export class DecorationManager implements vscode.Disposable {
         key: string,
         options: DecorationOptions = {}
     ): vscode.TextEditorDecorationType {
-        // Dispose existing decoration type if it exists
-        this.disposeDecorationType(key);
+        try {
+            // Dispose existing decoration type if it exists
+            this.disposeDecorationType(key);
 
-        const mergedOptions = { ...this.defaultOptions, ...options };
-        const decorationType = vscode.window.createTextEditorDecorationType({
-            backgroundColor: mergedOptions.backgroundColor,
-            border: `${mergedOptions.borderWidth} ${mergedOptions.borderStyle} ${mergedOptions.borderColor}`,
-            borderRadius: mergedOptions.borderRadius,
-            color: mergedOptions.color,
-            fontWeight: mergedOptions.fontWeight,
-            fontStyle: mergedOptions.fontStyle,
-            textDecoration: mergedOptions.textDecoration,
-            opacity: mergedOptions.opacity,
-            outline: mergedOptions.outline,
-        });
+            const mergedOptions = { ...this.defaultOptions, ...options };
+            const decorationType = vscode.window.createTextEditorDecorationType({
+                backgroundColor: mergedOptions.backgroundColor,
+                border: `${mergedOptions.borderWidth} ${mergedOptions.borderStyle} ${mergedOptions.borderColor}`,
+                borderRadius: mergedOptions.borderRadius,
+                color: mergedOptions.color,
+                fontWeight: mergedOptions.fontWeight,
+                fontStyle: mergedOptions.fontStyle,
+                textDecoration: mergedOptions.textDecoration,
+                opacity: mergedOptions.opacity,
+                outline: mergedOptions.outline,
+            });
 
-        this.decorationTypes.set(key, decorationType);
-        return decorationType;
+            this.decorationTypes.set(key, decorationType);
+            this.log(`Created decoration type: ${key}`);
+            return decorationType;
+        } catch (error) {
+            this.log(`Error creating decoration type ${key}: ${error}`, LogLevel.ERROR);
+            throw error;
+        }
     }
 
     /**
@@ -90,9 +104,10 @@ export class DecorationManager implements vscode.Disposable {
             editor.setDecorations(decorationType, decorationOptions);
             this.activeDecorations.set(key, ranges.map(r => r.range));
             
-            this.logger.info(`Applied decoration '${key}' to ${ranges.length} ranges`);
+            this.log(`Applied decoration '${key}' to ${ranges.length} ranges`);
         } catch (error) {
-            this.logger.error(`Error applying decoration '${key}':`, error);
+            this.log(`Error applying decoration '${key}': ${error}`, LogLevel.ERROR);
+            throw error;
         }
     }
 
@@ -116,15 +131,18 @@ export class DecorationManager implements vscode.Disposable {
                     hoverMessage: `JSON Path: ${jsonPath}`
                 })), options);
                 
-                // Reveal the first range
                 editor.revealRange(ranges[0], vscode.TextEditorRevealType.InCenter);
+                this.log(`Highlighted JSON key '${jsonPath}' with ${ranges.length} occurrences`);
+            } else {
+                this.log(`No occurrences found for JSON key '${jsonPath}'`, LogLevel.WARN);
             }
         } catch (error) {
-            this.logger.error(`Error highlighting JSON key '${jsonPath}':`, error);
+            this.log(`Error highlighting JSON key '${jsonPath}': ${error}`, LogLevel.ERROR);
+            throw error;
         }
     }
 
-     /**
+    /**
      * Finds ranges for a JSON key path in text
      */
     private findJsonKeyRanges(text: string, jsonPath: string): vscode.Range[] {
@@ -145,7 +163,6 @@ export class DecorationManager implements vscode.Disposable {
                 lastMatch = matchResult;
             }
 
-            // Update search start position for nested keys
             if (lastMatch) {
                 currentIndex = currentIndex + lastMatch.index + key.length;
             }
@@ -170,11 +187,15 @@ export class DecorationManager implements vscode.Disposable {
      * Removes decorations for a specific key
      */
     public removeDecorations(editor: vscode.TextEditor, key: string): void {
-        const decorationType = this.decorationTypes.get(key);
-        if (decorationType) {
-            editor.setDecorations(decorationType, []);
-            this.activeDecorations.delete(key);
-            this.logger.info(`Removed decoration '${key}'`);
+        try {
+            const decorationType = this.decorationTypes.get(key);
+            if (decorationType) {
+                editor.setDecorations(decorationType, []);
+                this.activeDecorations.delete(key);
+                this.log(`Removed decoration '${key}'`);
+            }
+        } catch (error) {
+            this.log(`Error removing decoration '${key}': ${error}`, LogLevel.ERROR);
         }
     }
 
@@ -182,11 +203,15 @@ export class DecorationManager implements vscode.Disposable {
      * Removes all decorations
      */
     public removeAllDecorations(editor: vscode.TextEditor): void {
-        for (const [key, decorationType] of this.decorationTypes) {
-            editor.setDecorations(decorationType, []);
-            this.activeDecorations.delete(key);
+        try {
+            for (const [key, decorationType] of this.decorationTypes) {
+                editor.setDecorations(decorationType, []);
+                this.activeDecorations.delete(key);
+            }
+            this.log('Removed all decorations');
+        } catch (error) {
+            this.log('Error removing all decorations', LogLevel.ERROR);
         }
-        this.logger.info('Removed all decorations');
     }
 
     /**
@@ -200,20 +225,25 @@ export class DecorationManager implements vscode.Disposable {
      * Updates decorations after document changes
      */
     public updateDecorations(editor: vscode.TextEditor, changes: readonly vscode.TextDocumentContentChangeEvent[]): void {
-        for (const [key, ranges] of this.activeDecorations) {
-            const updatedRanges = ranges.map(range => {
-                let updatedRange = range;
-                for (const change of changes) {
-                    updatedRange = this.adjustRange(updatedRange, change);
-                }
-                return updatedRange;
-            });
+        try {
+            for (const [key, ranges] of this.activeDecorations) {
+                const updatedRanges = ranges.map(range => {
+                    let updatedRange = range;
+                    for (const change of changes) {
+                        updatedRange = this.adjustRange(updatedRange, change);
+                    }
+                    return updatedRange;
+                });
 
-            const decorationType = this.decorationTypes.get(key);
-            if (decorationType) {
-                editor.setDecorations(decorationType, updatedRanges);
-                this.activeDecorations.set(key, updatedRanges);
+                const decorationType = this.decorationTypes.get(key);
+                if (decorationType) {
+                    editor.setDecorations(decorationType, updatedRanges);
+                    this.activeDecorations.set(key, updatedRanges);
+                }
             }
+            this.log('Decorations updated after document changes');
+        } catch (error) {
+            this.log('Error updating decorations', LogLevel.ERROR);
         }
     }
 
@@ -256,22 +286,32 @@ export class DecorationManager implements vscode.Disposable {
      * Disposes a specific decoration type
      */
     private disposeDecorationType(key: string): void {
-        const existing = this.decorationTypes.get(key);
-        if (existing) {
-            existing.dispose();
-            this.decorationTypes.delete(key);
-            this.activeDecorations.delete(key);
+        try {
+            const existing = this.decorationTypes.get(key);
+            if (existing) {
+                existing.dispose();
+                this.decorationTypes.delete(key);
+                this.activeDecorations.delete(key);
+                this.log(`Disposed decoration type: ${key}`);
+            }
+        } catch (error) {
+            this.log(`Error disposing decoration type ${key}: ${error}`, LogLevel.ERROR);
         }
     }
 
-     /**
+    /**
      * Disposes all resources
      */
     public dispose(): void {
-        for (const decorationType of this.decorationTypes.values()) {
-            decorationType.dispose();
+        try {
+            for (const decorationType of this.decorationTypes.values()) {
+                decorationType.dispose();
+            }
+            this.decorationTypes.clear();
+            this.activeDecorations.clear();
+            this.log('DecorationManager disposed');
+        } catch (error) {
+            this.log('Error disposing DecorationManager', LogLevel.ERROR);
         }
-        this.decorationTypes.clear();
-        this.activeDecorations.clear();
     }
 }

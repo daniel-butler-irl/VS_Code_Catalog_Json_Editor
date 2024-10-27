@@ -1,25 +1,34 @@
+// src/webview/modules/logger.js
+
 /**
- * Logger module for handling all webview logging functionality
+ * Handles logging from the webview frontend.
  */
 export class Logger {
-    constructor(vscode) {
-        this.vscode = vscode;
+    constructor() {
+        this.vscode = acquireVsCodeApi();
     }
 
     /**
-     * Sends log messages from the webview to the extension's output channel
-     * @param {string} level - The log level ('log', 'warn', 'error')
-     * @param {...any} args - The log messages or data
+     * Logs a standard message.
+     * @param {string} message The message to log.
      */
-    logToExtension(level, ...args) {
-        this.vscode.postMessage({
-            type: 'log',
-            level: level,
-            message: args.map(String).join(' '),
-        });
+    log(message) {
+        this.vscode.postMessage({ type: 'log', level: 'log', message });
     }
 
-    log(...args) { this.logToExtension('log', ...args); }
-    warn(...args) { this.logToExtension('warn', ...args); }
-    error(...args) { this.logToExtension('error', ...args); }
+    /**
+     * Logs a warning message.
+     * @param {string} message The warning message to log.
+     */
+    warn(message) {
+        this.vscode.postMessage({ type: 'log', level: 'warn', message });
+    }
+
+    /**
+     * Logs an error message.
+     * @param {string} message The error message to log.
+     */
+    error(message) {
+        this.vscode.postMessage({ type: 'log', level: 'error', message });
+    }
 }

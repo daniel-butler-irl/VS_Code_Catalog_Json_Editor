@@ -1,267 +1,226 @@
+// src/viewProviders/catalogEditorViewProvider.ts
+
 import * as vscode from 'vscode';
-import { readSchema } from '../services/schemaFetcher';
+import { FileHandler } from './handlers/fileHandler';
 import { ApiService } from '../services/apiService';
-import { FileUtils } from '../utils/fileUtils';
-import { MessageHandler } from './handlers/messageHandler';
+import { CatalogCacheService } from '../services/catalogCacheService';
+import { JsonPathProcessor } from '../services/jsonPathProcessor';
+import { FunctionResult } from '../utils/jsonPathFunctionRegistry';
+import { OutputManager, Components, LogLevel } from '../utils/outputManager';
+import { TemplateManager } from './templates/templateManager';
 import { StatusBarManager } from './ui/statusBar';
 import { DecorationManager } from './ui/decorations';
-import { TemplateManager } from './templates/templateManager';
+import { MessageHandler } from './handlers/messageHandler';
 import { WorkspaceRequiredError } from '../utils/errors';
-import { createLoggerFor } from '../utils/outputManager';
-import { FileHandler } from './handlers/fileHandler';
 
+/**
+ * Provides the catalog editor webview.
+ */
 export class CatalogEditorViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'catalogEditor.view';
-    private readonly logger = createLoggerFor('MAIN');
-    private _currentView?: vscode.WebviewView;
-    private readonly messageHandler: MessageHandler;
+    private _view?: vscode.WebviewView;
+    private readonly outputManager: OutputManager;
     private readonly statusBar: StatusBarManager;
     private readonly decorationManager: DecorationManager;
     private readonly templateManager: TemplateManager;
-    private readonly apiService: ApiService;
-    private readonly fileHandler = new FileHandler();
-    private disposables: vscode.Disposable[] = [];
+    private readonly catalogCache: CatalogCacheService;
+    private readonly fileHandler: FileHandler;
+    private readonly jsonPathProcessor: JsonPathProcessor;
+    private readonly messageHandler: MessageHandler;
+    private enhancementResults: FunctionResult[] = [];
 
     constructor(
         private readonly extensionUri: vscode.Uri,
-        private secrets: vscode.SecretStorage,
-        private globalState: vscode.Memento
+        private readonly apiService: ApiService,
+        private readonly logger: OutputManager,
+         private readonly context: vscode.ExtensionContext
     ) {
-        this.logger.info('Initializing CatalogEditorViewProvider');
-        
-        // Initialize services and managers
-        this.apiService = new ApiService(secrets, globalState);
+        this.outputManager = logger;
         this.statusBar = new StatusBarManager();
-        this.decorationManager = new DecorationManager();
-        this.templateManager = new TemplateManager(extensionUri);
-        this.fileHandler = new FileHandler();
-        this.messageHandler = new MessageHandler(
-            this.apiService, 
-            this.statusBar,
-            extensionUri
-        );
+        this.decorationManager = new DecorationManager(logger);
+        this.templateManager = new TemplateManager(extensionUri, logger);
+        this.catalogCache = new CatalogCacheService(apiService, logger);
+        this.fileHandler = new FileHandler(apiService, this.catalogCache, logger, context);
+        this.jsonPathProcessor = new JsonPathProcessor(this.catalogCache, apiService);
+        this.messageHandler = new MessageHandler(apiService, this.statusBar, extensionUri, logger, context);
 
-        // Add disposables
-        this.disposables.push(
-            this.statusBar,
-            this.decorationManager,
-            ...this.messageHandler.disposables
-        );
-
-        // Initialize the extension
-        this.initialize().catch(error => {
-            this.logger.error('Initialization failed', error);
-        });
+        this.log('CatalogEditorViewProvider initialized');
     }
 
-    private async initialize(): Promise<void> {
-        try {
-            this.logger.info('Starting initialization');
-            await this.apiService.initialize();
-            const isLoggedIn = this.apiService.isAuthenticated();
-            this.statusBar.updateStatus(isLoggedIn);
-            this.logger.info('Extension initialized successfully');
-        } catch (error) {
-            this.logger.error('Initialization error', error);
-            throw error;
-        }
-    }
-
-    public dispose(): void {
-        this.logger.info('Disposing CatalogEditorViewProvider');
-        this.disposables.forEach(d => d.dispose());
-        this.disposables = [];
-    }
-
-  public async resolveWebviewView(
+    /**
+     * Resolves the webview view.
+     */
+    public async resolveWebviewView(
         webviewView: vscode.WebviewView,
         context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken
+        token: vscode.CancellationToken
     ): Promise<void> {
-        try {
-            this.logger.info('Resolving webview view');
-            this._currentView = webviewView;
-            this.messageHandler.setWebview(webviewView);
+        this._view = webviewView;
 
-            webviewView.webview.options = this.getWebviewOptions();
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this.extensionUri]
+        };
 
-            // Setup message handler
-            const messageHandler = webviewView.webview.onDidReceiveMessage(
-                async message => {
-                    try {
-                        await this.messageHandler.handleMessage(message);
-                    } catch (error) {
-                        this.logger.error('Error handling message', error);
-                    }
-                }
-            );
-            this.disposables.push(messageHandler);
+        // Set initial HTML content
+        webviewView.webview.html = await this.getWebviewContent(webviewView.webview);
 
-            if (!FileUtils.isWorkspaceAvailable()) {
-                this.logger.info('No workspace available, showing workspace required message');
-                webviewView.webview.html = await this.templateManager.getNoWorkspaceContent(
-                    webviewView.webview
-                );
-                return;
-            }
+        // Set up message handling
+        this.messageHandler.setWebview(webviewView);
+        webviewView.webview.onDidReceiveMessage(
+            message => this.messageHandler.handleMessage(message),
+            undefined,
+            []
+        );
 
-            // Check if ibm_catalog.json exists
-            const fileExists = await this.fileHandler.checkIbmCatalogExists();
-            if (!fileExists) {
-                this.logger.info('ibm_catalog.json not found, showing not found message');
-                webviewView.webview.html = await this.templateManager.getNoIbmCatalogContent(
-                    webviewView.webview
-                );
-                return;
-            }
+        // Initialize with current authentication state
+        this.log('Checking authentication state');
+        const isAuthenticated = await this.apiService.isAuthenticated();
+        this.log(`Authentication state: ${isAuthenticated ? 'authenticated' : 'not authenticated'}`);
 
-            // Check active editor
-            const activeEditor = vscode.window.activeTextEditor;
-            if (!activeEditor || !activeEditor.document.fileName.endsWith('ibm_catalog.json')) {
-                this.logger.info('Active editor is not ibm_catalog.json, showing no file selected message');
-                webviewView.webview.html = await this.templateManager.getNoFileContent(
-                    webviewView.webview
-                );
-                return;
-            }
+        this.statusBar.updateStatus(isAuthenticated);
 
-            // Set webview HTML for ibm_catalog.json view
-            const isLoggedIn = this.apiService.isAuthenticated();
-            webviewView.webview.html = await this.templateManager.getWebviewContent(
-                webviewView.webview,
-                {
-                    isLoggedIn: isLoggedIn,
-                    showRefreshButton: isLoggedIn
-                }
-            );
+        // Initialize view with JSON data if authenticated
+        await this.sendJsonData();
 
-            // Setup document change handlers
-            const changeHandler = vscode.workspace.onDidChangeTextDocument(event => {
-                if (event.document === vscode.window.activeTextEditor?.document) {
-                    this.decorationManager.updateDecorations(
-                        vscode.window.activeTextEditor,
-                        event.contentChanges
-                    );
-                }
-            });
-            this.disposables.push(changeHandler);
-
-            // Send initial login status
-            this.messageHandler.sendLoginStatus(isLoggedIn);
-
-            this.logger.info('Webview view resolved successfully');
-
-        } catch (error) {
-            this.logger.error('Error resolving webview', error);
-            if (this._currentView) {
-                this._currentView.webview.html = await this.templateManager.getErrorContent(
-                    this._currentView.webview,
-                    'Failed to initialize the editor view.'
-                );
-            }
-        }
+        this.log('Webview view resolved successfully');
     }
 
-    public get currentView(): vscode.WebviewView | undefined {
-        return this._currentView;
+    /**
+     * Gets the webview content from the template manager.
+     */
+    private async getWebviewContent(webview: vscode.Webview): Promise<string> {
+        const isAuthenticated = await this.apiService.isAuthenticated();
+        return this.templateManager.getWebviewContent(webview, { isLoggedIn: isAuthenticated });
     }
 
-    public async initializeStatusBar(): Promise<void> {
-        try {
-            this.logger.info('Initializing status bar');
-            const apiKey = await this.secrets.get('catalogEditor.apiKey');
-            this.statusBar.updateStatus(!!apiKey);
-        } catch (error) {
-            this.logger.error('Error initializing status bar', error);
-        }
-    }
-
-    public updateStatusBar(isLoggedIn: boolean): void {
-        this.logger.info(`Updating status bar, logged in: ${isLoggedIn}`);
-        this.statusBar.updateStatus(isLoggedIn);
-    }
-
-    public async updateWebviewContent(fileName: string): Promise<void> {
-        if (!this._currentView) {
-            this.logger.info('No current view, skipping content update');
+    /**
+     * Sends JSON data to the webview.
+     */
+    private async sendJsonData(): Promise<void> {
+        if (!this._view) {
+            this.log('No webview available for sending JSON data', LogLevel.WARN);
             return;
         }
 
         try {
-            this.logger.info(`Updating webview content for file: ${fileName}`);
-            
-            // Check if workspace is available
-            if (!FileUtils.isWorkspaceAvailable()) {
-                this._currentView.webview.html = await this.templateManager.getNoWorkspaceContent(
-                    this._currentView.webview
-                );
+            const jsonData = await this.fileHandler.readJsonData();
+            const schema = await this.fileHandler.getSchema();
+
+            // Validate JSON
+            const validation = await this.fileHandler.validateJson(jsonData);
+            if (!validation.isValid && validation.errors) {
+                await this._view.webview.postMessage({
+                    type: 'jsonValidationError',
+                    errors: validation.errors
+                });
+                this.log(`JSON validation failed: ${validation.errors.join('; ')}`, LogLevel.WARN);
                 return;
             }
 
-            // Check if ibm_catalog.json exists
-            const fileExists = await this.fileHandler.checkIbmCatalogExists();
-            if (!fileExists) {
-                this._currentView.webview.html = await this.templateManager.getNoIbmCatalogContent(
-                    this._currentView.webview
-                );
-                return;
-            }
+            // Process JSONPaths for enhancements
+            this.enhancementResults = await this.jsonPathProcessor.processJsonPaths(jsonData);
 
+            // Send data to webview
+            await this._view.webview.postMessage({
+                type: 'loadJson',
+                json: jsonData,
+                schema: schema,
+                enhancements: this.enhancementResults
+            });
+
+            this.log('JSON data sent to webview successfully');
+        } catch (error) {
+            this.handleError('Error sending JSON data', error);
+        }
+    }
+
+    /**
+     * Updates the webview content based on file changes.
+     */
+    public async updateContent(fileName: string): Promise<void> {
+        if (!this._view) return;
+
+        try {
             if (fileName.endsWith('ibm_catalog.json')) {
-                this._currentView.webview.html = await this.templateManager.getWebviewContent(
-                    this._currentView.webview,
-                    {
-                        isLoggedIn: this.apiService.isAuthenticated(),
-                        showRefreshButton: true
-                    }
-                );
-                await this.messageHandler.sendJsonData();
-            } else {
-                // Only show "no file selected" if we're looking at a real file that isn't ibm_catalog.json
-                const isRealFile = fileName.includes('/') && !fileName.includes('extension-output');
-                if (isRealFile) {
-                    this._currentView.webview.html = await this.templateManager.getNoFileContent(
-                        this._currentView.webview
-                    );
-                }
+                await this.sendJsonData();
+                this.log('Webview content updated successfully');
             }
         } catch (error) {
-            this.logger.error('Error updating webview content', error);
-            throw error;
+            this.handleError('Error updating webview content', error);
         }
     }
 
-    private async handleCreateIbmCatalog(): Promise<void> {
+    /**
+     * Refreshes the view after login/logout.
+     */
+    public async refreshView(): Promise<void> {
+        if (!this._view) return;
+
         try {
-            await this.fileHandler.createNewFile();
-            vscode.window.showInformationMessage('Created new ibm_catalog.json file');
-            
-            // Open the newly created file
-            const filePath = this.fileHandler.getFilePath();
-            const document = await vscode.workspace.openTextDocument(filePath);
-            await vscode.window.showTextDocument(document);
+            const isAuthenticated = await this.apiService.isAuthenticated();
+            this.statusBar.updateStatus(isAuthenticated);
+            await this.sendJsonData();
+            this.log('View refreshed successfully');
         } catch (error) {
-            this.logger.error('Error creating ibm_catalog.json:', error);
-            vscode.window.showErrorMessage('Failed to create ibm_catalog.json');
+            this.handleError('Error refreshing view', error);
         }
-    }
-      private getWebviewOptions(): vscode.WebviewOptions {
-        return {
-            enableScripts: true,
-            localResourceRoots: [
-                vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview'),
-                vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'modules')
-            ]
-        };
     }
 
-    public async initializeApiService(): Promise<void> {
-        try {
-            this.logger.info('Initializing API service');
-            await this.initialize();
-        } catch (error) {
-            this.logger.error('Error initializing API service', error);
-            throw error;
+    /**
+     * Applies decorations to the editor.
+     */
+    public applyDecorations(editor: vscode.TextEditor): void {
+        this.decorationManager.removeAllDecorations(editor);
+        
+        this.enhancementResults.forEach(result => {
+            if (result.highlightColor) {
+                this.decorationManager.highlight(
+                    editor,
+                    `highlight-${result.path}`,
+                    [{
+                        range: new vscode.Range(
+                            new vscode.Position(0, 0),
+                            new vscode.Position(0, 0)
+                        ),
+                        hoverMessage: `Path: ${result.path}`
+                    }],
+                    { backgroundColor: result.highlightColor === 'green' ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)' }
+                );
+            }
+        });
+    }
+
+    /**
+     * Handles errors by logging and showing messages.
+     */
+    private handleError(message: string, error: unknown): void {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        this.log(`${message}: ${errorMessage}`, LogLevel.ERROR);
+        
+        if (this._view) {
+            this._view.webview.postMessage({
+                type: 'error',
+                message: errorMessage
+            });
         }
+
+        vscode.window.showErrorMessage(errorMessage);
+    }
+
+    /**
+     * Logs messages using the output manager.
+     */
+    private log(message: string, level: LogLevel = LogLevel.INFO): void {
+        this.outputManager.log(Components.CATALOG_EDITOR_VIEW_PROVIDER, message, level);
+    }
+
+    /**
+     * Disposes of resources.
+     */
+    public dispose(): void {
+        this.statusBar.dispose();
+        this.decorationManager.dispose();
+        this.messageHandler.dispose();
     }
 }

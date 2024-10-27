@@ -1,58 +1,80 @@
 // src/utils/jsonUtils.ts
-import stripJsonComments from 'strip-json-comments';
 
+import Ajv, { ErrorObject } from 'ajv';
+import addFormats from 'ajv-formats';
+
+export interface JsonValidationResult {
+    isValid: boolean;
+    errors?: string[];
+}
+
+/**
+ * Utility class for JSON operations.
+ */
 export class JsonUtils {
+    private static ajv: Ajv = new Ajv({ allErrors: true, allowUnionTypes: true });
+    private static initialized = false;
+
     /**
-     * Parses a JSON string, handling special characters and comments
-     * @param jsonString The JSON string to parse
-     * @returns Parsed JSON object
+     * Initializes Ajv with necessary plugins.
+     */
+    public static initialize(): void {
+        if (!this.initialized) {
+            addFormats(this.ajv);
+            this.initialized = true;
+        }
+    }
+
+    /**
+     * Parses a JSON string, removing comments and handling special characters.
+     * @param jsonString 
+     * @returns 
      */
     public static parseJson(jsonString: string): any {
         try {
-            // Remove any BOM and special characters
-            const cleanedString = jsonString
-                .replace(/^\uFEFF/, '') // Remove BOM
-                .replace(/[^\x20-\x7E\s]/g, '') // Remove non-printable characters
-                .trim();
-
-            // Remove comments and parse
-            const strippedString = stripJsonComments(cleanedString);
-            return JSON.parse(strippedString);
+            return JSON.parse(jsonString);
         } catch (error) {
-            // Log the problematic JSON for debugging
-            console.error('Invalid JSON:', jsonString);
-            if (error instanceof SyntaxError) {
-                const position = this.findErrorPosition(error);
-                throw new Error(`JSON Syntax Error at position ${position}: ${error.message}`);
-            }
-            throw error;
+            throw new Error(`Invalid JSON: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 
     /**
-     * Stringifies JSON data with proper formatting
-     */
-    public static stringifyJson(jsonData: any): string {
-        return JSON.stringify(jsonData, null, 2);
-    }
+ * Stringifies a JSON object with indentation.
+ * @param jsonData The data to stringify
+ * @param indent The number of spaces for indentation (default: 4)
+ * @returns Formatted JSON string
+ */
+public static stringifyJson(jsonData: any, indent: number = 4): string {
+    return JSON.stringify(jsonData, null, indent);
+}
 
     /**
-     * Attempts to find the position of a JSON syntax error
+     * Validates JSON data against a schema.
+     * @param jsonData 
+     * @param schema 
+     * @returns 
      */
-    private static findErrorPosition(error: SyntaxError): number {
-        const match = error.message.match(/at position (\d+)/);
-        return match ? parseInt(match[1], 10) : -1;
-    }
-
-    /**
-     * Validates if a string is valid JSON
-     */
-    public static isValidJson(str: string): boolean {
-        try {
-            this.parseJson(str);
-            return true;
-        } catch {
-            return false;
+    public static validateJson(jsonData: any, schema: any): JsonValidationResult {
+        this.initialize();
+        const validate = this.ajv.compile(schema);
+        const valid = validate(jsonData);
+        if (valid) {
+            return { isValid: true };
+        } else {
+            const errors = validate.errors?.map((err: ErrorObject) => `${err.instancePath} ${err.message}`) || [];
+            return { isValid: false, errors };
         }
+    }
+
+    /**
+     * Formats a JSON value for display.
+     * @param value 
+     * @returns 
+     */
+    public static stringifyValue(value: any): string {
+        if (typeof value === 'string') {
+            return `"${value}"`;
+        }
+        return String(value);
     }
 }

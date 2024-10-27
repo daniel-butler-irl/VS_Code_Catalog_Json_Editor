@@ -1,3 +1,4 @@
+<!-- src/viewProviders/templates/html/webview.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +12,7 @@
     <div id="login-status" class="{{LOGIN_STATUS_CLASS}}">{{LOGIN_STATUS}}</div>
     <button id="save-button" disabled>Save</button>
     <button id="refresh-catalog-button" {{REFRESH_CATALOG_BUTTON_DISABLED}}>Get Catalog Details</button> 
+    <div id="error-container"></div> <!-- Container for validation errors -->
     <div id="json-viewer"></div>
 
     <!-- Modal Overlay -->

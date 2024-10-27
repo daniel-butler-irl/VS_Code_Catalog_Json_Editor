@@ -1,101 +1,111 @@
 // src/viewProviders/templates/templateLoader.ts
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { FileUtils } from '../../utils/fileUtils';
-import { createLoggerFor } from '../../utils/outputManager';
+import { OutputManager, Components, LogLevel } from '../../utils/outputManager';
+import { TemplateResources } from './templateManager';
 
-export interface TemplateResources {
-    scriptUri: vscode.Uri;
-    styleUri: vscode.Uri;
-    codiconsUri?: vscode.Uri;
-    cspSource: string;
-    nonce: string;
-}
-
-export interface TemplateCache {
-    content: string;
-    timestamp: number;
-}
-
+/**
+ * Handles loading and processing of HTML templates for the webview
+ */
 export class TemplateLoader {
-    private readonly logger = createLoggerFor('TEMPLATE_LOADER');
-    private static readonly CACHE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-    private templateCache: Map<string, TemplateCache> = new Map();
+    private templateCache: Map<string, string> = new Map();
 
     constructor(
         private readonly extensionUri: vscode.Uri,
+        private readonly outputManager: OutputManager
     ) {}
 
     /**
-     * Loads a template from the specified path with caching
+     * Gets resources needed for template rendering
+     * @param webview The webview instance
      */
-    public async loadTemplate(templateName: string): Promise<string> {
-        const templatePath = this.getTemplatePath(templateName);
-        
-        try {
-            // Check cache first
-            const cachedTemplate = this.templateCache.get(templatePath);
-            if (cachedTemplate && this.isCacheValid(cachedTemplate)) {
-                this.logger.info(`Using cached template: ${templateName}`);
-                return cachedTemplate.content;
-            }
-
-            // Load template from file
-            const content = await FileUtils.readFileContent(templatePath);
-            
-            // Update cache
-            this.templateCache.set(templatePath, {
-                content,
-                timestamp: Date.now()
-            });
-
-            this.logger.info(`Successfully loaded template: ${templateName}`);
-            return content;
-        } catch (error) {
-            this.logger.error(`Error loading template ${templateName}:`, error);
-            return this.getFallbackTemplate(templateName);
-        }
+    public getTemplateResources(webview: vscode.Webview): TemplateResources {
+        return {
+            styleUri: webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'webview.css')),
+            scriptUri: webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'webview.js')),
+            cspSource: webview.cspSource,
+            nonce: this.getNonce()
+        };
     }
 
-
     /**
-     * Processes a template by replacing placeholders with actual values
+     * Process a template with replacements
+     * @param templateName Name of the template file (without extension)
+     * @param resources Template resources
+     * @param replacements Key-value pairs for template replacements
      */
     public async processTemplate(
         templateName: string,
         resources: TemplateResources,
-        additionalReplacements: Record<string, string> = {}
+        replacements: Record<string, string>
     ): Promise<string> {
         try {
             let content = await this.loadTemplate(templateName);
-
-            // Replace standard resources
-            content = this.replaceStandardPlaceholders(content, resources);
-
-            // Replace additional custom placeholders
-            content = this.replaceCustomPlaceholders(content, additionalReplacements);
-
+            
+            // Replace all placeholders
+            Object.entries(replacements).forEach(([key, value]) => {
+                content = content.replace(new RegExp(`{{${key}}}`, 'g'), value || '');
+            });
+            
             return content;
         } catch (error) {
-            this.logger.error(`Error processing template ${templateName}:`, error);
+            this.outputManager.log(
+                Components.TEMPLATE_LOADER,
+                `Error processing template ${templateName}: ${error}`,
+                LogLevel.ERROR
+            );
             throw error;
         }
     }
 
     /**
-     * Gets the URIs for webview resources
+     * Loads a template file from disk or cache
+     * @param templateName Name of the template file (without extension)
      */
-    public getTemplateResources(webview: vscode.Webview): TemplateResources {
-        return {
-            scriptUri: webview.asWebviewUri(
-                vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview','webview.js')
-            ),
-            styleUri: webview.asWebviewUri(
-                vscode.Uri.joinPath(this.extensionUri, 'dist','webview', 'webview.css')
-            ),
-            cspSource: webview.cspSource,
-            nonce: this.generateNonce()
-        };
+    private async loadTemplate(templateName: string): Promise<string> {
+        // Check cache first
+        if (this.templateCache.has(templateName)) {
+            return this.templateCache.get(templateName)!;
+        }
+
+        try {
+            const templatePath = path.join(
+                this.extensionUri.fsPath,
+                'src',
+                'viewProviders',
+                'templates',
+                'html',
+                `${templateName}.html`
+            );
+
+            const templateUri = vscode.Uri.file(templatePath);
+            const templateContent = await vscode.workspace.fs.readFile(templateUri);
+            const content = templateContent.toString();
+
+            // Cache the template
+            this.templateCache.set(templateName, content);
+
+            return content;
+        } catch (error) {
+            this.outputManager.log(
+                Components.TEMPLATE_LOADER,
+                `Error loading template ${templateName}: ${error}`,
+                LogLevel.ERROR
+            );
+            throw error;
+        }
+    }
+
+    /**
+     * Generates a nonce for Content Security Policy
+     */
+    private getNonce(): string {
+        let text = '';
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        for (let i = 0; i < 32; i++) {
+            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
     }
 
     /**
@@ -103,141 +113,43 @@ export class TemplateLoader {
      */
     public clearCache(): void {
         this.templateCache.clear();
-        this.logger.info('Template cache cleared');
+        this.outputManager.log(Components.TEMPLATE_LOADER, 'Template cache cleared', LogLevel.INFO);
     }
 
     /**
-     * Gets the path to a template file
+     * Validates a template exists
+     * @param templateName Name of the template to validate
      */
-    private getTemplatePath(templateName: string): string {
-    return path.join(
-        this.extensionUri.fsPath,
-        'src',
-        'viewProviders',
-        'templates',
-        'html',
-        `${templateName}.html`
-    );
-}
-    /**
-     * Checks if cached template is still valid
-     */
-    private isCacheValid(cache?: TemplateCache): boolean {
-        if (!cache) return false;
-        
-        const age = Date.now() - cache.timestamp;
-        return age < TemplateLoader.CACHE_TIMEOUT;
-    }
-
-    /**
-     * Replaces standard resource placeholders in template
-     */
-    private replaceStandardPlaceholders(content: string, resources: TemplateResources): string {
-        return content
-            .replace(/{{SCRIPT_URI}}/g, resources.scriptUri.toString())
-            .replace(/{{STYLE_URI}}/g, resources.styleUri.toString())
-            .replace(/{{CODICON_URI}}/g, resources.codiconsUri?.toString() || '')
-            .replace(/{{CSP_SOURCE}}/g, resources.cspSource)
-            .replace(/{{NONCE}}/g, resources.nonce);
-    }
-
-    /**
-     * Replaces custom placeholders in template
-     */
-    private replaceCustomPlaceholders(
-        content: string,
-        replacements: Record<string, string>
-    ): string {
-        Object.entries(replacements).forEach(([key, value]) => {
-            const regex = new RegExp(`{{${key}}}`, 'g');
-            content = content.replace(regex, value);
-        });
-        return content;
-    }
-
-    /**
-     * Generates a secure nonce for CSP
-     */
-    private generateNonce(): string {
-        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let nonce = '';
-        for (let i = 0; i < 32; i++) {
-            nonce += possible.charAt(Math.floor(Math.random() * possible.length));
-        }
-        return nonce;
-    }
-
-    /**
-     * Provides fallback templates for different template types
-     */
-    private getFallbackTemplate(templateName: string): string {
-        switch (templateName) {
-            case 'webview':
-                return this.getFallbackWebviewTemplate();
-            case 'noWorkspace':
-                return this.getFallbackNoWorkspaceTemplate();
-            case 'error':
-                return this.getFallbackErrorTemplate();
-            default:
-                return this.getFallbackErrorTemplate();
+    public async validateTemplate(templateName: string): Promise<boolean> {
+        try {
+            const templatePath = path.join(
+                this.extensionUri.fsPath,
+                'src',
+                'viewProviders',
+                'templates',
+                'html',
+                `${templateName}.html`
+            );
+            const templateUri = vscode.Uri.file(templatePath);
+            await vscode.workspace.fs.stat(templateUri);
+            return true;
+        } catch {
+            return false;
         }
     }
 
     /**
-     * Fallback templates for different scenarios
+     * Gets the full path to a template file
+     * @param templateName Name of the template file
      */
-    private getFallbackWebviewTemplate(): string {
-        return `<!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src {{CSP_SOURCE}};">
-                <title>IBM Catalog JSON Editor</title>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>IBM Catalog JSON Editor</h1>
-                    <p>Failed to load the main template. Please try refreshing.</p>
-                </div>
-            </body>
-            </html>`;
+    public getTemplatePath(templateName: string): string {
+        return path.join(
+            this.extensionUri.fsPath,
+            'src',
+            'viewProviders',
+            'templates',
+            'html',
+            `${templateName}.html`
+        );
     }
-
-    private getFallbackNoWorkspaceTemplate(): string {
-        return `<!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline'; script-src {{CSP_SOURCE}};">
-                <title>Workspace Required</title>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Workspace Required</h1>
-                    <p>Please open a workspace to use the IBM Catalog JSON Editor.</p>
-                </div>
-            </body>
-            </html>`;
-    }
-
-    private getFallbackErrorTemplate(): string {
-        return `<!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP_SOURCE}} 'unsafe-inline';">
-                <title>Error</title>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Error</h1>
-                    <p>An error occurred while loading the template.</p>
-                </div>
-            </body>
-            </html>`;
-    }
-
 }

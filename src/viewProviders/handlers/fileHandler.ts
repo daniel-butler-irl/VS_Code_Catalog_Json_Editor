@@ -1,272 +1,131 @@
+// src/viewProviders/handlers/fileHandler.ts
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { FileUtils } from '../../utils/fileUtils';
-import { JsonUtils } from '../../utils/jsonUtils';
-import { readSchema } from '../../services/schemaFetcher';
-import { WorkspaceRequiredError, FileOperationError } from '../../utils/errors';
-import { createLoggerFor } from '../../utils/outputManager';
+import { ApiService } from '../../services/apiService';
+import { OutputManager } from '../../utils/outputManager';
+import { CatalogCacheService } from '../../services/catalogCacheService';
+import { JsonUtils, JsonValidationResult } from '../../utils/jsonUtils';
+import { Components, LogLevel } from '../../utils/outputManager';
 
-export interface JsonValidationResult {
-    isValid: boolean;
-    errors?: string[];
-}
-
+/**
+ * Handles operations related to ibm_catalog.json file.
+ */
 export class FileHandler {
-    private readonly logger = createLoggerFor('FILES');
-    private schema: any = null;
-    private lastKnownContent: string = '';
-    private readonly jsonFileName = 'ibm_catalog.json';
+    constructor(
+        private readonly apiService: ApiService,
+        private readonly catalogCacheService: CatalogCacheService,
+        private readonly outputManager: OutputManager,
+        private readonly context: vscode.ExtensionContext 
+    ) {}
 
-    constructor() {
-        this.initializeSchema().catch(error => 
-            this.logger.error('Failed to initialize schema:', error)
-        );
+    /**
+     * Logs messages using the OutputManager.
+     * @param component The component enum.
+     * @param message The message to log.
+     * @param level The severity level.
+     */
+    private log(component: Components, message: string, level: LogLevel = LogLevel.INFO): void {
+        this.outputManager.log(component, message, level);
     }
 
     /**
-     * Gets the full path to the IBM catalog JSON file
+     * Logs errors.
+     * @param message The error message.
+     * @param error The error object.
      */
-    public getFilePath(): string {
-        return FileUtils.getWorkspaceFilePath(this.jsonFileName);
+    public logError(message: string, error: unknown): void {
+        this.log(Components.FILE_HANDLER, `${message} - ${error instanceof Error ? error.message : String(error)}`, LogLevel.ERROR);
     }
 
     /**
-     * Gets the filename being handled
-     */
-    public getFileName(): string {
-        return this.jsonFileName;
-    }
-
-    /**
-     * Initializes the JSON schema for validation
-     */
-    private async initializeSchema(): Promise<void> {
-        try {
-            this.schema = await readSchema();
-            this.logger.info('Schema initialized successfully');
-        } catch (error) {
-            this.logger.error('Error initializing schema:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Gets the current schema
-     */
-    public async getSchema(): Promise<any> {
-        if (!this.schema) {
-            await this.initializeSchema();
-        }
-        return this.schema;
-    }
-
-       /**
-     * Checks if ibm_catalog.json exists in the workspace root
-     * @returns Promise<boolean>
-     */
-    public async checkIbmCatalogExists(): Promise<boolean> {
-        try {
-            const filePath = this.getFilePath();
-            await FileUtils.readFileContent(filePath);
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    /**
-     * Gets the workspace root path
-     * @returns string
-     * @throws WorkspaceRequiredError if no workspace is open
-     */
-    public getWorkspaceRootPath(): string {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            throw new WorkspaceRequiredError();
-        }
-        return workspaceFolders[0].uri.fsPath;
-    }
-    
-    /**
-     * Reads and parses the JSON data from the file
+     * Reads and parses the ibm_catalog.json file.
+     * @returns Parsed JSON data.
      */
     public async readJsonData(): Promise<any> {
         try {
-            const filePath = this.getFilePath();
+            const filePath = FileUtils.getWorkspaceFilePath('ibm_catalog.json');
             const content = await FileUtils.readFileContent(filePath);
-            
-            // Cache the content for change detection
-            this.lastKnownContent = content;
-            
-            const jsonData = JsonUtils.parseJson(content);
-            this.logger.info('Successfully read and parsed JSON data');
-            return jsonData;
+            this.log(Components.FILE_HANDLER, 'Successfully read ibm_catalog.json');
+            return JsonUtils.parseJson(content);
         } catch (error) {
-            if (error instanceof WorkspaceRequiredError) {
-                throw error;
-            }
-            this.logger.error('Error reading JSON data:', error);
-            throw new FileOperationError(
-                'Failed to read or parse JSON data',
-                this.getFilePath()
-            );
+            this.logError('Failed to read ibm_catalog.json', error);
+            throw error;
         }
     }
 
     /**
-     * Saves JSON data to the file
+     * Saves the JSON data back to ibm_catalog.json.
+     * @param jsonData The JSON data to save.
      */
-    public async saveJsonData(data: any): Promise<void> {
+    public async saveJsonData(jsonData: any): Promise<void> {
         try {
-            const filePath = this.getFilePath();
-            
-            // Validate JSON before saving
-            const validationResult = await this.validateJson(data);
-            if (!validationResult.isValid) {
-                const errorMessage = `Invalid JSON data: ${validationResult.errors?.join(', ')}`;
-                this.logger.error(errorMessage);
-                throw new Error(errorMessage);
-            }
-
-            const content = JsonUtils.stringifyJson(data);
-            
-            // Check if content has actually changed
-            if (content === this.lastKnownContent) {
-                this.logger.info('No changes detected in JSON content');
-                return;
-            }
-
+            const filePath = FileUtils.getWorkspaceFilePath('ibm_catalog.json');
+            const content = JsonUtils.stringifyJson(jsonData, 4);
             await FileUtils.writeFileContent(filePath, content);
-            this.lastKnownContent = content;
-            this.logger.info('Successfully saved JSON data');
+            this.log(Components.FILE_HANDLER, 'Successfully saved ibm_catalog.json');
         } catch (error) {
-            if (error instanceof WorkspaceRequiredError) {
-                throw error;
-            }
-            this.logger.error('Error saving JSON data:', error);
-            throw new FileOperationError(
-                'Failed to save JSON data',
-                this.getFilePath()
-            );
+            this.logError('Failed to save ibm_catalog.json', error);
+            throw error;
         }
     }
 
     /**
-     * Validates JSON data against the schema
+     * Validates JSON data against the schema.
+     * @param jsonData The JSON data to validate.
+     * @returns Validation result.
      */
-    public async validateJson(data: any): Promise<JsonValidationResult> {
+    public async validateJson(jsonData: any): Promise<JsonValidationResult> {
         try {
-            if (!this.schema) {
-                await this.initializeSchema();
+            const schema = await this.getSchema();
+            const validation = JsonUtils.validateJson(jsonData, schema);
+            if (validation.isValid) {
+                this.log(Components.FILE_HANDLER, 'JSON validation successful');
+            } else {
+                this.log(Components.FILE_HANDLER, `JSON validation failed: ${validation.errors?.join('; ') || 'Unknown validation error'}`, LogLevel.WARN);
             }
-
-            // TODO: Actual schema validation would be implemented here
-            // This is a placeholder for the validation logic
-            // You might want to use a library like Ajv for proper JSON Schema validation
-            
-            // For now, we'll just check if it's valid JSON
-            JsonUtils.stringifyJson(data);
-            return { isValid: true };
+            return validation;
         } catch (error) {
-            this.logger.error('Error validating JSON:', error);
-            return {
-                isValid: false,
-                errors: [error instanceof Error ? error.message : 'Unknown validation error']
-            };
+            this.logError('Failed to validate JSON data', error);
+            throw error;
         }
     }
 
     /**
-     * Creates a new IBM catalog JSON file with default content
+     * Fetches the JSON schema for ibm_catalog.json.
+     * @returns JSON schema object.
+     */
+    public async getSchema(): Promise<any> {
+        try {
+            const schemaPath = FileUtils.getExtensionPathWithContext(this.context, 'src', 'schemas', 'ibm_catalog.schema.json');
+            const schemaContent = await FileUtils.readFileContent(schemaPath);
+            this.log(Components.FILE_HANDLER, 'Successfully loaded JSON schema');
+            return JsonUtils.parseJson(schemaContent);
+        } catch (error) {
+            this.logError('Failed to load JSON schema', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Creates a new ibm_catalog.json file with default content.
      */
     public async createNewFile(): Promise<void> {
         try {
-            const filePath = this.getFilePath();
-            const defaultContent = {
-                products: {}
-            };
-
-            const content = JsonUtils.stringifyJson(defaultContent);
-            await FileUtils.writeFileContent(filePath, content);
-            this.lastKnownContent = content;
-            this.logger.info('Created new IBM catalog JSON file');
+            const filePath = FileUtils.getWorkspaceFilePath('ibm_catalog.json');
+            const defaultContent = JsonUtils.stringifyJson({ products: [] }, 4);
+            await FileUtils.writeFileContent(filePath, defaultContent);
+            this.log(Components.FILE_HANDLER, 'Successfully created new ibm_catalog.json');
         } catch (error) {
-            this.logger.error('Error creating new file:', error);
+            this.logError('Failed to create ibm_catalog.json', error);
             throw error;
         }
     }
 
     /**
-     * Checks if the IBM catalog JSON file exists
+     * Gets the full file path for ibm_catalog.json.
+     * @returns The file path as a string.
      */
-    public async fileExists(): Promise<boolean> {
-        try {
-            const filePath = this.getFilePath();
-            await FileUtils.readFileContent(filePath);
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    /**
-     * Watches for changes to the IBM catalog JSON file
-     */
-    public watchFile(onChange: (content: string) => void): vscode.Disposable {
-        const watcher = vscode.workspace.createFileSystemWatcher(
-            `**/${this.jsonFileName}`,
-            false, // Don't ignore creates
-            false, // Don't ignore changes
-            false  // Don't ignore deletes
-        );
-
-        watcher.onDidChange(async uri => {
-            try {
-                const content = await FileUtils.readFileContent(uri.fsPath);
-                if (content !== this.lastKnownContent) {
-                    this.lastKnownContent = content;
-                    onChange(content);
-                }
-            } catch (error) {
-                this.logger.error('Error reading file changes:', error);
-            }
-        });
-
-        watcher.onDidDelete(() => {
-            this.logger.warn('IBM catalog JSON file was deleted');
-        });
-
-        return watcher;
-    }
-
-    /**
-     * Creates a backup of the current file
-     */
-    public async createBackup(): Promise<string> {
-        try {
-            const sourceFilePath = this.getFilePath();
-            const backupFilePath = sourceFilePath + '.backup';
-            const content = await FileUtils.readFileContent(sourceFilePath);
-            await FileUtils.writeFileContent(backupFilePath, content);
-            this.logger.info('Created backup file');
-            return backupFilePath;
-        } catch (error) {
-            this.logger.error('Error creating backup:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Restores from a backup file
-     */
-    public async restoreFromBackup(backupFilePath: string): Promise<void> {
-        try {
-            const content = await FileUtils.readFileContent(backupFilePath);
-            await this.saveJsonData(JsonUtils.parseJson(content));
-            this.logger.info('Restored from backup successfully');
-        } catch (error) {
-            this.logger.error('Error restoring from backup:', error);
-            throw error;
-        }
+    public getFilePath(): string {
+        return FileUtils.getWorkspaceFilePath('ibm_catalog.json');
     }
 }

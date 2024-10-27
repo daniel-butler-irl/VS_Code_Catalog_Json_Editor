@@ -1,9 +1,9 @@
 // src/viewProviders/templates/templateManager.ts
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { TemplateLoader, TemplateResources } from './templateLoader';
+import { TemplateLoader } from './templateLoader';
 import { WorkspaceRequiredError } from '../../utils/errors';
-import { createLoggerFor } from '../../utils/outputManager';
+import { OutputManager, Components, LogLevel } from '../../utils/outputManager';
 
 interface TemplateOptions {
     isLoggedIn?: boolean;
@@ -12,18 +12,32 @@ interface TemplateOptions {
     customScripts?: string;
 }
 
+export interface TemplateResources {
+    styleUri: vscode.Uri;
+    scriptUri: vscode.Uri;
+    cspSource: string;
+    nonce: string;
+}
+
 export class TemplateManager {
-    private readonly logger = createLoggerFor('TEMPLATES');
     private readonly templateLoader: TemplateLoader;
 
-    constructor(private readonly extensionUri: vscode.Uri) {
-        this.templateLoader = new TemplateLoader(extensionUri);
+    /**
+     * Creates a new instance of TemplateManager
+     * @param extensionUri The extension's URI for resource loading
+     * @param outputManager The output manager for logging
+     */
+    constructor(
+        private readonly extensionUri: vscode.Uri,
+        private readonly outputManager: OutputManager
+    ) {
+        this.templateLoader = new TemplateLoader(extensionUri, outputManager);
     }
 
     /**
      * Gets the main webview content
      */
-   public async getWebviewContent(webview: vscode.Webview, options: TemplateOptions = {}): Promise<string> {
+    public async getWebviewContent(webview: vscode.Webview, options: TemplateOptions = {}): Promise<string> {
         try {
             const resources = this.templateLoader.getTemplateResources(webview);
             const scripts = this.getWebviewScripts(webview);
@@ -42,7 +56,7 @@ export class TemplateManager {
                 replacements
             );
         } catch (error) {
-            this.logger.error('Error getting webview content:', error);
+            this.outputManager.log(Components.TEMPLATE_LOADER, `Error getting webview content: ${error}`, LogLevel.ERROR);
             return this.getErrorContent(webview);
         }
     }
@@ -63,7 +77,7 @@ export class TemplateManager {
                 }
             );
         } catch (error) {
-            this.logger.error('Error getting no workspace content:', error);
+            this.outputManager.log(Components.TEMPLATE_LOADER, `Error getting no workspace content: ${error}`, LogLevel.ERROR);
             return this.getErrorContent(webview);
         }
     }
@@ -83,7 +97,7 @@ export class TemplateManager {
                 }
             );
         } catch (error) {
-            this.logger.error('Error getting error content:', error);
+            this.outputManager.log(Components.TEMPLATE_LOADER, `Error getting error content: ${error}`, LogLevel.ERROR);
             return this.getFallbackErrorContent(webview.cspSource);
         }
     }
@@ -104,7 +118,7 @@ export class TemplateManager {
                 }
             );
         } catch (error) {
-            this.logger.error('Error getting no file content:', error);
+            this.outputManager.log(Components.TEMPLATE_LOADER, `Error getting no file content: ${error}`, LogLevel.ERROR);
             return this.getErrorContent(webview);
         }
     }
@@ -124,7 +138,7 @@ export class TemplateManager {
                 }
             );
         } catch (error) {
-            this.logger.error('Error getting no ibm_catalog content:', error);
+            this.outputManager.log(Components.TEMPLATE_LOADER, `Error getting no ibm_catalog content: ${error}`, LogLevel.ERROR);
             return this.getErrorContent(webview);
         }
     }
@@ -204,10 +218,13 @@ export class TemplateManager {
      */
     public clearCache(): void {
         this.templateLoader.clearCache();
-        this.logger.info('Template cache cleared');
+        this.outputManager.log(Components.TEMPLATE_LOADER, 'Template cache cleared', LogLevel.INFO);
     }
 
-   private getWebviewScripts(webview: vscode.Webview): string[] {
+    /**
+     * Gets the webview scripts
+     */
+    private getWebviewScripts(webview: vscode.Webview): string[] {
         const modulesPath = vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'modules');
         return [
             webview.asWebviewUri(vscode.Uri.joinPath(modulesPath, 'logger.js')),
@@ -219,12 +236,10 @@ export class TemplateManager {
         ].map(uri => uri.toString());
     }
 
-    
-
     /**
      * Disposes of resources
      */
     public dispose(): void {
-       
+        // Add any cleanup logic here if needed
     }
 }

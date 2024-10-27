@@ -1,83 +1,66 @@
 // src/utils/outputManager.ts
 import * as vscode from 'vscode';
 
+export enum Components {
+    API_SERVICE = 'API_SERVICE',
+    CATALOG_CACHE_SERVICE = 'CATALOG_CACHE_SERVICE',
+    MESSAGE_HANDLER = 'MESSAGE_HANDLER',
+    TEMPLATE_LOADER = 'TEMPLATE_LOADER',
+    CATALOG_EDITOR_VIEW_PROVIDER = 'CATALOG_EDITOR_VIEW_PROVIDER',
+    FILE_HANDLER = 'FILE_HANDLER',
+    JSON_PATH_PROCESSOR = 'JSON_PATH_PROCESSOR',
+    // Add more components as needed
+}
+
+export enum LogLevel {
+    INFO = 'INFO',
+    WARN = 'WARN',
+    ERROR = 'ERROR',
+}
+
 export class OutputManager {
-    private static instance: OutputManager;
-    private channels: Map<string, vscode.OutputChannel> = new Map();
-    private readonly PREFIX = 'Catalog Editor';
-    private useMultipleChannels: boolean = false;
-    
-    private constructor() {
-        // Create main channel by default
-        this.channels.set('main', vscode.window.createOutputChannel(this.PREFIX));
-    }
-
-    public static getInstance(): OutputManager {
-        if (!OutputManager.instance) {
-            OutputManager.instance = new OutputManager();
-        }
-        return OutputManager.instance;
-    }
+    private channels: { [key in Components]: vscode.OutputChannel } = {
+        [Components.API_SERVICE]: vscode.window.createOutputChannel('API Service'),
+        [Components.CATALOG_CACHE_SERVICE]: vscode.window.createOutputChannel('Catalog Cache Service'),
+        [Components.MESSAGE_HANDLER]: vscode.window.createOutputChannel('Message Handler'),
+        [Components.TEMPLATE_LOADER]: vscode.window.createOutputChannel('Template Loader'),
+        [Components.CATALOG_EDITOR_VIEW_PROVIDER]: vscode.window.createOutputChannel('Catalog Editor View Provider'),
+        [Components.FILE_HANDLER]: vscode.window.createOutputChannel('File Handler'),
+        [Components.JSON_PATH_PROCESSOR]: vscode.window.createOutputChannel('JSON Path Processor'),
+        // Initialize more channels as needed
+    };
 
     /**
-     * Configures whether to use multiple channels or a single channel
-     */
-    public setMultiChannelMode(useMultiple: boolean): void {
-        if (this.useMultipleChannels === useMultiple) return;
-        
-        this.useMultipleChannels = useMultiple;
-        
-        if (!useMultiple) {
-            // If switching to single channel, dispose of all except main
-            for (const [key, channel] of this.channels.entries()) {
-                if (key !== 'main') {
-                    channel.dispose();
-                    this.channels.delete(key);
-                }
-            }
-        }
-    }
-
-    /**
-     * Gets or creates a channel for a component
-     */
-    private getChannel(component: keyof typeof Components): vscode.OutputChannel {
-        if (!this.useMultipleChannels) {
-            return this.channels.get('main')!;
-        }
-
-        const channelName = `${this.PREFIX} - ${Components[component]}`;
-        if (!this.channels.has(component)) {
-            this.channels.set(component, vscode.window.createOutputChannel(channelName));
-        }
-        return this.channels.get(component)!;
-    }
-
-    /**
-     * Logs a message to the appropriate output channel
+     * Logs a message to the specified component's output channel.
+     * @param component The component enum.
+     * @param message The message to log.
+     * @param level The severity level.
      */
     public log(
-        component: keyof typeof Components,
+        component: Components,
         message: string,
-        level: LogLevel = 'INFO'
+        level: LogLevel = LogLevel.INFO
     ): void {
         const timestamp = new Date().toISOString();
-        const channel = this.getChannel(component);
-        const componentName = this.useMultipleChannels ? '' : `[${Components[component]}] `;
-        const formattedMessage = `[${timestamp}] [${level}] ${componentName}${message}`;
+        const channel = this.channels[component];
+        const formattedMessage = `[${timestamp}] [${level}] ${message}`;
         channel.appendLine(formattedMessage);
+        channel.show(true);
     }
 
     /**
-     * Creates a detailed log entry with error information
+     * Creates a detailed log entry with error information.
+     * @param message The primary message.
+     * @param error The error object.
+     * @returns The formatted log entry.
      */
     public createLogEntry(
         message: string,
         error?: unknown,
-        component?: string
+        component?: Components
     ): string {
         let errorDetails = '';
-        
+
         if (error instanceof Error) {
             errorDetails = `\nError: ${error.message}`;
             if (error.stack) {
@@ -89,100 +72,15 @@ export class OutputManager {
         } else if (error !== undefined) {
             errorDetails = `\nError: ${String(error)}`;
         }
-        
+
         const componentInfo = component ? `[${component}] ` : '';
         return `${componentInfo}${message}${errorDetails}`;
     }
 
     /**
-     * Shows all output channels
-     */
-    public show(component?: keyof typeof Components): void {
-        if (component && this.useMultipleChannels) {
-            this.getChannel(component).show();
-        } else {
-            this.channels.get('main')?.show();
-        }
-    }
-
-    /**
-     * Clears specified or all output channels
-     */
-    public clear(component?: keyof typeof Components): void {
-        if (component && this.useMultipleChannels) {
-            this.getChannel(component).clear();
-        } else if (!component) {
-            this.channels.forEach(channel => channel.clear());
-        }
-    }
-
-    /**
-     * Gets all active channel names
-     */
-    public getActiveChannels(): string[] {
-        return Array.from(this.channels.keys());
-    }
-
-    /**
-     * Disposes all output channels
+     * Disposes all output channels when the extension is deactivated.
      */
     public dispose(): void {
-        this.channels.forEach(channel => channel.dispose());
-        this.channels.clear();
+        Object.values(this.channels).forEach(channel => channel.dispose());
     }
 }
-
-export const Components = {
-    MAIN: "Main",
-    MESSAGES: "Messages",
-    FILES: "Files",
-    OFFERINGS: "Offerings",
-    TEMPLATES: "Templates",
-    DECORATIONS: "Decorations",
-    TEMPLATE_LOADER: "Template Loader",
-    TEMPLATE_MANAGER: "Template Manager",
-    MESSAGE_HANDLER: "Message Handler",
-    CACHE: "Cache",
-    API: "API Service"
-} as const;
-
-export type LogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | 'TRACE';
-
-// Helper function for components to create consistent log methods
-export function createLoggerFor(component: keyof typeof Components) {
-    const outputManager = OutputManager.getInstance();
-    
-    return {
-        trace(message: string): void {
-            outputManager.log(component, message, 'TRACE');
-        },
-        debug(message: string): void {
-            outputManager.log(component, message, 'DEBUG');
-        },
-        info(message: string): void {
-            outputManager.log(component, message, 'INFO');
-        },
-        warn(message: string): void {
-            outputManager.log(component, message, 'WARN');
-        },
-        error(message: string, error?: unknown): void {
-            const entry = outputManager.createLogEntry(message, error);
-            outputManager.log(component, entry, 'ERROR');
-        },
-        /**
-         * Shows the output channel for this component
-         */
-        show(): void {
-            outputManager.show(component);
-        },
-        /**
-         * Clears the output channel for this component
-         */
-        clear(): void {
-            outputManager.clear(component);
-        }
-    };
-}
-
-// Export singleton instance
-export const outputManager = OutputManager.getInstance();

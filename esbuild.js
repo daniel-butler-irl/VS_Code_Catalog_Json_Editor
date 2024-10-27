@@ -22,8 +22,13 @@ const mainConfig = {
   external: [
     'vscode',
     '@ibm-cloud/platform-services/catalog-management/v1',
-    'ibm-cloud-sdk-core'
+    'ibm-cloud-sdk-core',
+    'jsonpath',
+    'esprima',
+    'fs',
+    'path'
   ]
+  // Removed plugins
 };
 
 // Webview build config
@@ -47,7 +52,8 @@ const webviewConfig = {
 
 async function buildAll() {
   try {
-    // Ensure dist directory exists
+    // Clean dist directory
+    require('fs').rmSync('dist', { recursive: true, force: true });
     require('fs').mkdirSync('dist', { recursive: true });
     require('fs').mkdirSync('dist/webview/modules', { recursive: true });
 

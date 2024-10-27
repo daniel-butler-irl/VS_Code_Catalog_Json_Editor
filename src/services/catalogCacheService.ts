@@ -1,251 +1,237 @@
-import * as vscode from 'vscode';
-import { ApiService } from './apiService';
-import { createLoggerFor } from '../utils/outputManager';
-import { ApiKeyRequiredError } from '../utils/errors';
+// src/services/catalogCacheService.ts
 
-interface CacheEntry {
-    data: ProcessedOffering[];
+import { Components, LogLevel } from '../utils/outputManager';
+import { OutputManager } from '../utils/outputManager';
+import { ApiService } from './apiService';
+import { Offering } from '../models/offerings';
+
+/**
+ * Represents the validation result for a catalog.
+ */
+interface CatalogValidationResult {
+    isValid: boolean;
     timestamp: number;
-    status: CacheStatus;
     error?: string;
 }
 
-interface ProcessedOffering {
-    name: string;
-    id: string;
-    label: string;
-    catalogId: string;
-    catalogName: string;  // Added for multiple catalog support
-    versions: Array<{
-        version: string;
-        versionLocator: string;
-        flavor?: string;
-    }>;
-    metadata?: {
-        [key: string]: any;
-    };
+/**
+ * Represents the overall cache structure.
+ */
+interface CatalogCache {
+    validationResults: Map<string, CatalogValidationResult>;
+    offerings: Map<string, Offering[]>;
+    flavors: Map<string, string[]>;
 }
 
-type CacheStatus = 'ready' | 'loading' | 'error' | 'stale';
-
-interface CatalogInfo {
-    id: string;
-    name: string;
-    description?: string;
-    isPublic: boolean;
+/**
+ * Represents the status of a catalog.
+ */
+interface CatalogStatus {
+    status: 'ready' | 'loading' | 'error';
+    error?: string;
 }
 
+/**
+ * Service to manage caching of catalog validations, offerings, and flavors.
+ */
 export class CatalogCacheService {
-    private readonly logger = createLoggerFor('CACHE');
-    private cache: Map<string, CacheEntry> = new Map();
-    private readonly CACHE_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-    private activeCatalogs: Set<string> = new Set();
-    private fetchPromises: Map<string, Promise<ProcessedOffering[]>> = new Map();
+    private cache: CatalogCache = {
+        validationResults: new Map(),
+        offerings: new Map(),
+        flavors: new Map()
+    };
 
-    constructor(private readonly apiService: ApiService) {}
+    private readonly CACHE_DURATION = 1000 * 60 * 30; // 30 minutes
+
+    constructor(
+        private readonly apiService: ApiService,
+        private readonly outputManager: OutputManager
+    ) {
+        this.log(Components.CATALOG_CACHE_SERVICE, 'CatalogCacheService initialized');
+    }
 
     /**
-     * Gets catalog offerings from cache or fetches them
+     * Validates a catalog ID, using cache if available and not expired
+     * @param catalogId The catalog ID to validate
+     * @returns A promise resolving to true if valid, false if invalid
      */
-    public async getOfferings(catalogId: string, forceFetch: boolean = false): Promise<ProcessedOffering[]> {
+    public async validateCatalogId(catalogId: string): Promise<boolean> {
         try {
-            // Check if there's already a fetch in progress for this catalog
-            const existingFetch = this.fetchPromises.get(catalogId);
-            if (existingFetch) {
-                this.logger.info(`Using existing fetch promise for catalog ${catalogId}`);
-                return existingFetch;
+            const cachedResult = this.cache.validationResults.get(catalogId);
+            const now = Date.now();
+
+            // Check if we have a valid cache entry
+            if (cachedResult && (now - cachedResult.timestamp) < this.CACHE_DURATION) {
+                this.log(Components.CATALOG_CACHE_SERVICE, `Cache hit for catalog validation: ${catalogId}`);
+                return cachedResult.isValid;
             }
 
-            const cached = this.cache.get(catalogId);
-            if (!forceFetch && cached && this.isCacheValid(cached)) {
-                this.logger.info(`Using cached data for catalog ${catalogId}`);
-                return cached.data;
-            }
+            // Perform validation through API service
+            this.log(Components.CATALOG_CACHE_SERVICE, `Cache miss for catalog validation: ${catalogId}`);
+            const isValid = await this.apiService.validateCatalogId(catalogId);
+            
+            // Cache the result
+            this.cache.validationResults.set(catalogId, {
+                isValid,
+                timestamp: now
+            });
 
-            // Create and store the fetch promise
-            const fetchPromise = this.fetchAndProcessOfferings(catalogId);
-            this.fetchPromises.set(catalogId, fetchPromise);
-
-            try {
-                const offerings = await fetchPromise;
-                return offerings;
-            } finally {
-                // Clean up the promise regardless of success/failure
-                this.fetchPromises.delete(catalogId);
-            }
+            return isValid;
         } catch (error) {
-            this.logger.error(`Error getting offerings for catalog ${catalogId}:`, error);
-            this.updateCacheStatus(catalogId, 'error', error);
+            this.logError(`Error validating catalog ID ${catalogId}`, error);
+            // Cache the error state
+            this.cache.validationResults.set(catalogId, {
+                isValid: false,
+                timestamp: Date.now(),
+                error: error instanceof Error ? error.message : 'Unknown error'
+            });
+            return false;
+        }
+    }
+
+    /**
+     * Clears validation results from the cache
+     */
+    public clearValidationCache(): void {
+        this.cache.validationResults.clear();
+        this.log(Components.CATALOG_CACHE_SERVICE, 'Validation cache cleared');
+    }
+
+    /**
+     * Fetches offerings based on catalogId, using cache if available.
+     * @param catalogId The catalog ID to fetch offerings for.
+     * @returns The offerings data.
+     */
+    public async getOfferings(catalogId: string): Promise<Offering[]> {
+        const cachedOfferings = this.cache.offerings.get(catalogId);
+        if (cachedOfferings && cachedOfferings.length > 0) {
+            this.log(Components.CATALOG_CACHE_SERVICE, `Cache hit for offerings of catalogId: ${catalogId}`);
+            return cachedOfferings;
+        }
+
+        try {
+            this.log(Components.CATALOG_CACHE_SERVICE, `Cache miss for offerings of catalogId: ${catalogId}. Fetching from API.`);
+            const offerings = await this.apiService.getOfferings(catalogId);
+            this.cache.offerings.set(catalogId, offerings);
+            this.log(Components.CATALOG_CACHE_SERVICE, `Offerings for catalogId ${catalogId} cached`);
+            return offerings;
+        } catch (error) {
+            this.logError(`Failed to fetch offerings for catalogId ${catalogId}`, error);
             throw error;
         }
     }
 
     /**
-     * Fetches and processes offerings from the API
+     * Fetches flavors based on catalogId, using cache if available.
+     * @param catalogId The catalog ID to fetch flavors for.
+     * @returns An array of flavor names.
      */
-    private async fetchAndProcessOfferings(catalogId: string): Promise<ProcessedOffering[]> {
-        if (!this.apiService.isAuthenticated()) {
-            throw new ApiKeyRequiredError('Authentication required to fetch offerings');
+    public async getFlavors(catalogId: string): Promise<string[]> {
+        const cachedFlavors = this.cache.flavors.get(catalogId);
+        if (cachedFlavors && cachedFlavors.length > 0) {
+            this.log(Components.CATALOG_CACHE_SERVICE, `Cache hit for flavors of catalogId: ${catalogId}`);
+            return cachedFlavors;
         }
 
-        this.updateCacheStatus(catalogId, 'loading');
-
         try {
-            const rawOfferings = await this.apiService.getFilteredOfferings(catalogId);
-            const processedOfferings = this.processOfferings(rawOfferings);
-            
-            this.cache.set(catalogId, {
-                data: processedOfferings,
-                timestamp: Date.now(),
-                status: 'ready'
-            });
-
-            this.activeCatalogs.add(catalogId);
-            this.logger.info(`Cached ${processedOfferings.length} offerings for catalog ${catalogId}`);
-            
-            return processedOfferings;
+            this.log(Components.CATALOG_CACHE_SERVICE, `Cache miss for flavors of catalogId: ${catalogId}. Fetching from API.`);
+            const flavors = await this.apiService.getFlavors(catalogId);
+            this.cache.flavors.set(catalogId, flavors);
+            this.log(Components.CATALOG_CACHE_SERVICE, `Flavors for catalogId ${catalogId} cached`);
+            return flavors;
         } catch (error) {
-            this.updateCacheStatus(catalogId, 'error', error);
+            this.logError(`Failed to fetch flavors for catalogId ${catalogId}`, error);
             throw error;
         }
     }
 
     /**
-     * Updates the status of a catalog in the cache
-     */
-    private updateCacheStatus(catalogId: string, status: CacheStatus, error?: any): void {
-        const cached = this.cache.get(catalogId);
-        if (cached) {
-            cached.status = status;
-            cached.error = error ? (error instanceof Error ? error.message : String(error)) : undefined;
-        } else {
-            this.cache.set(catalogId, {
-                data: [],
-                timestamp: Date.now(),
-                status: status,
-                error: error ? (error instanceof Error ? error.message : String(error)) : undefined
-            });
-        }
-    }
-
-    /**
-     * Gets the status of a catalog in the cache
-     */
-    public getCatalogStatus(catalogId: string): { status: CacheStatus; error?: string } {
-        const cached = this.cache.get(catalogId);
-        if (!cached) {
-            return { status: 'stale' };
-        }
-        return { 
-            status: cached.status,
-            error: cached.error
-        };
-    }
-
-    /**
-     * Processes raw offerings into a standardized format
-     */
-    private processOfferings(rawOfferings: any[]): ProcessedOffering[] {
-        return rawOfferings
-            .filter(offering => 
-                offering.product_kind === 'solution' &&
-                offering.kinds?.some((kind: any) => kind.target_kind === 'terraform')
-            )
-            .map(offering => ({
-                name: offering.name,
-                id: offering.id,
-                label: offering.label || offering.name,
-                catalogId: offering.catalog_id,
-                catalogName: offering.catalog_name || 'Unknown Catalog',
-                versions: offering.kinds
-                    ?.find((kind: any) => kind.target_kind === 'terraform')
-                    ?.versions.map((version: any) => ({
-                        version: version.version,
-                        versionLocator: version.version_locator,
-                        flavor: version.flavor?.name
-                    })) || [],
-                metadata: {
-                    updated: offering.updated,
-                    created: offering.created,
-                    kind: offering.product_kind,
-                    tags: offering.tags || []
-                }
-            }));
-    }
-
-    /**
-     * Fetches offerings for multiple catalogs in parallel
-     */
-    public async getOfferingsForCatalogs(catalogIds: string[]): Promise<Map<string, ProcessedOffering[]>> {
-        const results = new Map<string, ProcessedOffering[]>();
-        
-        await Promise.all(
-            catalogIds.map(async (catalogId) => {
-                try {
-                    const offerings = await this.getOfferings(catalogId);
-                    results.set(catalogId, offerings);
-                } catch (error) {
-                    this.logger.error(`Error fetching catalog ${catalogId}:`, error);
-                    results.set(catalogId, []);
-                }
-            })
-        );
-
-        return results;
-    }
-
-    /**
-     * Gets a list of active catalogs
-     */
-    public getActiveCatalogs(): string[] {
-        return Array.from(this.activeCatalogs);
-    }
-
-    /**
-     * Checks if a cache entry is valid
-     */
-    private isCacheValid(cached: CacheEntry): boolean {
-        return cached.status === 'ready' && 
-               (Date.now() - cached.timestamp) < this.CACHE_TIMEOUT;
-    }
-
-    /**
-     * Clears the entire cache
+     * Clears all caches.
      */
     public clearCache(): void {
-        this.cache.clear();
-        this.activeCatalogs.clear();
-        this.fetchPromises.clear();
-        this.logger.info('Catalog cache cleared');
+        this.cache.validationResults.clear();
+        this.cache.offerings.clear();
+        this.cache.flavors.clear();
+        this.log(Components.CATALOG_CACHE_SERVICE, 'All caches cleared');
     }
 
     /**
-     * Clears cache for a specific catalog
-     */
-    public clearCatalogCache(catalogId: string): void {
-        this.cache.delete(catalogId);
-        this.activeCatalogs.delete(catalogId);
-        this.fetchPromises.delete(catalogId);
-        this.logger.info(`Cache cleared for catalog ${catalogId}`);
-    }
-
-    /**
-     * Forces a refresh of all active catalogs
+     * Refreshes all catalogs by re-fetching their offerings.
      */
     public async refreshAllCatalogs(): Promise<void> {
-        const catalogs = this.getActiveCatalogs();
-        await Promise.all(
-            catalogs.map(catalogId => this.getOfferings(catalogId, true))
-        );
-        this.logger.info('All active catalogs refreshed');
+        try {
+            const catalogIds = Array.from(this.cache.offerings.keys());
+            if (catalogIds.length === 0) {
+                this.log(Components.CATALOG_CACHE_SERVICE, 'No active catalogs to refresh');
+                return;
+            }
+
+            this.log(Components.CATALOG_CACHE_SERVICE, `Refreshing ${catalogIds.length} catalogs`);
+            await Promise.all(catalogIds.map(catalogId => this.getOfferings(catalogId)));
+            this.log(Components.CATALOG_CACHE_SERVICE, 'All catalogs refreshed');
+        } catch (error) {
+            this.logError('Failed to refresh all catalogs', error);
+            throw error;
+        }
     }
 
     /**
-     * Checks if a catalog is cached and valid
+     * Retrieves the list of active catalogs.
+     * @returns An array of catalog IDs.
      */
-    public isCatalogCached(catalogId: string): boolean {
-        const cached = this.cache.get(catalogId);
-        if (!cached) return false;
-        return this.isCacheValid(cached);
+    public getActiveCatalogs(): string[] {
+        return Array.from(this.cache.offerings.keys());
+    }
+
+    /**
+     * Retrieves the status of a catalog.
+     * @param catalogId The catalog ID.
+     * @returns The catalog status.
+     */
+    public getCatalogStatus(catalogId: string): CatalogStatus {
+        if (this.cache.offerings.has(catalogId)) {
+            return { status: 'ready' };
+        }
+
+        const validationResult = this.cache.validationResults.get(catalogId);
+        if (validationResult) {
+            if (validationResult.isValid) {
+                return { status: 'ready' };
+            } else {
+                return { status: 'error', error: validationResult.error };
+            }
+        }
+
+        return { status: 'loading' };
+    }
+
+    /**
+     * Clears cache entries for a specific catalog ID.
+     * @param catalogId The catalog ID to clear from cache.
+     */
+    public clearCatalogCache(catalogId: string): void {
+        this.cache.validationResults.delete(catalogId);
+        this.cache.offerings.delete(catalogId);
+        this.cache.flavors.delete(catalogId);
+        this.log(Components.CATALOG_CACHE_SERVICE, `Cache cleared for catalogId: ${catalogId}`);
+    }
+
+    /**
+     * Logs messages using the OutputManager.
+     * @param component The component enum.
+     * @param message The message to log.
+     * @param level The severity level.
+     */
+    private log(component: Components, message: string, level: LogLevel = LogLevel.INFO): void {
+        this.outputManager.log(component, message, level);
+    }
+
+    /**
+     * Logs errors.
+     * @param message The error message.
+     * @param error The error object.
+     */
+    public logError(message: string, error: unknown): void {
+        this.log(Components.CATALOG_CACHE_SERVICE, `${message} - ${error instanceof Error ? error.message : String(error)}`, LogLevel.ERROR);
     }
 }

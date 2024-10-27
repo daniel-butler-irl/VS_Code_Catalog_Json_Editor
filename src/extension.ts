@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { CatalogEditorViewProvider } from './viewProviders/catalogEditorViewProvider';
 import { WorkspaceRequiredError } from './utils/errors';
+import { ApiService } from './services/apiService';
+import { OutputManager,Components, LogLevel } from './utils/outputManager';
+
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Activating IBM Catalog JSON Editor Extension...');
@@ -21,19 +24,54 @@ export function activate(context: vscode.ExtensionContext) {
     let disposables: vscode.Disposable[] = [];
 
     try {
-        // Register the webview view provider
-        const provider = new CatalogEditorViewProvider(
-            context.extensionUri,
-            context.secrets,
-            context.globalState
-        );
+        // Initialize core services
+        const outputManager = new OutputManager();
+        outputManager.log(Components.API_SERVICE, 'Initializing ApiService...');
         
-        disposables.push(
-            vscode.window.registerWebviewViewProvider(
-                CatalogEditorViewProvider.viewType,
-                provider
-            )
+        const apiService = new ApiService(
+            context.secrets,
+            context.globalState,
+            outputManager
         );
+
+        // Initialize API Service and check authentication state
+        const initializeServices = async () => {
+            try {
+                outputManager.log(Components.API_SERVICE, 'Checking authentication state...');
+                const isAuthenticated = await apiService.isAuthenticated();
+                outputManager.log(Components.API_SERVICE, `Authentication state: ${isAuthenticated ? 'authenticated' : 'not authenticated'}`);
+                
+                // Register the webview view provider
+                const provider = new CatalogEditorViewProvider(
+                    context.extensionUri,
+                    apiService,
+                    outputManager,
+                    context
+                );
+                
+                // Register the provider
+                disposables.push(
+                    vscode.window.registerWebviewViewProvider(
+                        CatalogEditorViewProvider.viewType,
+                        provider
+                    )
+                );
+
+                // Ensure status bar matches authentication state
+                await provider.refreshView();
+                
+                outputManager.log(Components.API_SERVICE, 'Service initialization complete');
+            } catch (error) {
+                outputManager.log(Components.API_SERVICE, `Error during service initialization: ${error}`, LogLevel.ERROR);
+                throw error;
+            }
+        };
+
+        // Initialize services
+        initializeServices().catch(error => {
+            console.error('Error during extension activation:', error);
+            vscode.window.showErrorMessage(`Failed to initialize: ${error.message}`);
+        });
 
         // Register Login Command
         disposables.push(
@@ -50,18 +88,17 @@ export function activate(context: vscode.ExtensionContext) {
                     });
 
                     if (apiKey) {
-                        await context.secrets.store('catalogEditor.apiKey', apiKey);
-                        await provider.initializeApiService();
-                        // MessageHandler will handle showing success message and updating status
-                        if (provider.currentView) {
-                            await provider.currentView.webview.postMessage({
-                                type: 'login',
-                                apiKey: apiKey
-                            });
+                        outputManager.log(Components.API_SERVICE, 'Processing login...');
+                        await apiService.login(apiKey);
+                        const provider = await vscode.commands.executeCommand('catalogEditor.getProvider');
+                        if (provider) {
+                            await (provider as CatalogEditorViewProvider).refreshView();
                         }
+                        vscode.window.showInformationMessage('Successfully logged in to IBM Cloud.');
+                        outputManager.log(Components.API_SERVICE, 'Login successful');
                     }
                 } catch (error) {
-                    console.error('Error during login:', error);
+                    outputManager.log(Components.API_SERVICE, `Login failed: ${error}`, LogLevel.ERROR);
                     vscode.window.showErrorMessage(
                         error instanceof Error ? error.message : 'Failed to login. Please try again.'
                     );
@@ -73,15 +110,16 @@ export function activate(context: vscode.ExtensionContext) {
         disposables.push(
             vscode.commands.registerCommand('catalogEditor.logout', async () => {
                 try {
-                    await context.secrets.delete('catalogEditor.apiKey');
-                    // MessageHandler will handle the cache clearing and status updates
-                    if (provider.currentView) {
-                        await provider.currentView.webview.postMessage({
-                            type: 'logout'
-                        });
+                    outputManager.log(Components.API_SERVICE, 'Processing logout...');
+                    await apiService.logout();
+                    const provider = await vscode.commands.executeCommand('catalogEditor.getProvider');
+                    if (provider) {
+                        await (provider as CatalogEditorViewProvider).refreshView();
                     }
+                    vscode.window.showInformationMessage('Successfully logged out from IBM Cloud.');
+                    outputManager.log(Components.API_SERVICE, 'Logout successful');
                 } catch (error) {
-                    console.error('Error during logout:', error);
+                    outputManager.log(Components.API_SERVICE, `Logout failed: ${error}`, LogLevel.ERROR);
                     vscode.window.showErrorMessage(
                         error instanceof Error ? error.message : 'Failed to logout. Please try again.'
                     );
@@ -89,57 +127,10 @@ export function activate(context: vscode.ExtensionContext) {
             })
         );
 
-        // Initialize Status Bar
-        provider.initializeStatusBar();
-
-        // Listen to workspace folder changes
-        disposables.push(
-            vscode.workspace.onDidChangeWorkspaceFolders(() => {
-                if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
-                    vscode.window.showInformationMessage(
-                        'IBM Catalog JSON Editor requires a workspace. Please open a folder or workspace.',
-                        'Open Folder'
-                    ).then(selection => {
-                        if (selection === 'Open Folder') {
-                            vscode.commands.executeCommand('vscode.openFolder');
-                        }
-                    });
-                }
-            })
-        );
-
-        // Listen to changes in the active editor
-        disposables.push(
-            vscode.window.onDidChangeActiveTextEditor((editor) => {
-                // Only update if this is a real text editor (not output/debug console)
-                if (editor && editor.document && editor.document.uri.scheme === 'file') {
-                    provider.updateWebviewContent(editor.document.fileName).catch(error => {
-                        if (!(error instanceof WorkspaceRequiredError)) {
-                            vscode.window.showErrorMessage(`Error updating webview: ${error.message}`);
-                        }
-                    });
-                }
-            })
-        );
-
-        // Listen to file save events
-        disposables.push(
-            vscode.workspace.onDidSaveTextDocument((document) => {
-                if (document.fileName.endsWith('ibm_catalog.json')) {
-                    console.log(`Detected save on "ibm_catalog.json". Updating webview...`);
-                    provider.updateWebviewContent(document.fileName).catch(error => {
-                        if (!(error instanceof WorkspaceRequiredError)) {
-                            vscode.window.showErrorMessage(`Error updating JSON data: ${error.message}`);
-                        }
-                    });
-                }
-            })
-        );
-
         // Add all disposables to the extension's subscriptions
         context.subscriptions.push(...disposables);
 
-        console.log('IBM Catalog JSON Editor Extension is active.');
+        outputManager.log(Components.API_SERVICE, 'Extension activation complete');
     } catch (error) {
         console.error('Error during extension activation:', error);
         // Clean up any registered disposables in case of error
