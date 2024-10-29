@@ -1,77 +1,82 @@
 {
-  "name": "catalog-editor",
-  "displayName": "catalog_editor",
-  "description": "Simplify catalog entry editing",
+  "name": "ibm-catalog-json-editor",
+  "displayName": "IBM Catalog JSON Editor",
+  "description": "VS Code extension for managing IBM Cloud catalog JSON files",
   "version": "0.0.1",
+  "publisher": "daniel-butler-irl",
   "engines": {
-    "vscode": "^1.94.0"
+    "vscode": "^1.87.0"
   },
-  "categories": [
-    "Other"
-  ],
-  "activationEvents": [],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/ibm_catalog.json"
+  ],
   "contributes": {
+    "commands": [
+      {
+        "command": "ibmCatalog.refresh",
+        "title": "Refresh IBM Catalog View",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ibmCatalog.addElement",
+        "title": "Add Element",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ibmCatalog.editElement",
+        "title": "Edit Element",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "ibmCatalog.locateCatalogFile",
+        "title": "Locate IBM Catalog File",
+        "icon": "$(file-add)"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "catalogEditorView",
-          "title": "Catalog Editor",
-          "icon": "media/edit-content-svgrepo-com.svg"
+          "id": "ibm-catalog-explorer",
+          "title": "IBM Catalog Explorer",
+          "icon": "$(json)"
         }
       ]
     },
     "views": {
-      "catalogEditorView": [
+      "ibm-catalog-explorer": [
         {
-          "type": "webview",
-          "id": "catalogEditor.view",
-          "name": "IBM Catalog JSON Editor"
+          "id": "ibmCatalogTree",
+          "name": "Catalog Structure",
+          "icon": "$(json)",
+          "contextualTitle": "IBM Catalog JSON"
         }
       ]
-    },
-    "commands": [
-      {
-        "command": "catalogEditor.login",
-        "title": "IBM Catalog Editor: Login",
-        "category": "Catalog Editor"
-      },
-      {
-        "command": "catalogEditor.logout",
-        "title": "IBM Catalog Editor: Logout",
-        "category": "Catalog Editor"
-      }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "clean": "rimraf dist/",
-    "prebuild": "npm run clean",
-    "build": "npm run compile",
-    "compile": "node ./esbuild.js",
-    "watch": "node ./esbuild.js --watch",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run build -- --watch",
+    "clean": "rimraf dist",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run build",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
-    "pretest": "npm run compile"
+    "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
-    "@types/chai": "^4.3.4",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^20.4.2",
-    "@types/node-fetch": "^2.6.11",
-    "@types/vscode": "^1.94.0",
-    "@vscode/vsce": "^3.2.0",
-    "chai": "^4.3.7",
-    "esbuild-plugin-copy": "^2.1.1",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.87.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "esbuild": "^0.19.12",
+    "eslint": "^8.54.0",
+    "glob": "^10.3.10",
     "mocha": "^10.2.0",
-    "rimraf": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.1.6"
-  },
-  "dependencies": {
-    "@ibm-cloud/platform-services": "^0.65.2",
-    "ibm-cloud-sdk-core": "^5.1.0",
-    "node-fetch": "^2.6.7",
-    "strip-json-comments": "^3.1.1"
+    "rimraf": "^5.0.10",
+    "typescript": "^5.3.2"
   }
 }

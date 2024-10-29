@@ -1,0 +1,36 @@
+// resources/icon-theme.json
+{
+  "iconDefinitions": {
+    "catalog": {
+      "iconPath": "./light/catalog.svg"
+    },
+    "string": {
+      "iconPath": "./light/string.svg"
+    },
+    "array": {
+      "iconPath": "./light/array.svg"
+    },
+    "object": {
+      "iconPath": "./light/object.svg"
+    }
+  },
+  "file": "string",
+  "folder": "object",
+  "folderExpanded": "object",
+  "rootFolder": "catalog",
+  "rootFolderExpanded": "catalog",
+  "light": {
+    "file": "string",
+    "folder": "object",
+    "folderExpanded": "object",
+    "rootFolder": "catalog",
+    "rootFolderExpanded": "catalog"
+  },
+  "dark": {
+    "file": "./dark/string.svg",
+    "folder": "./dark/object.svg",
+    "folderExpanded": "./dark/object.svg",
+    "rootFolder": "./dark/catalog.svg",
+    "rootFolderExpanded": "./dark/catalog.svg"
+  }
+}

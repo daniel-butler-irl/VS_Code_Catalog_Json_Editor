@@ -1,68 +1,71 @@
-# IBM Catalog JSON Editor (Proof of Concept)
+# ibm-catalog-json-editor README
 
-IBM Catalog JSON Editor is a VS Code extension designed to simplify the process of editing IBM Cloud Catalog JSON files. It provides an easy-to-use interface for managing catalog entries directly within VS Code.
+This is the README for your extension "ibm-catalog-json-editor". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 
-- **Catalog JSON Editing**: Provides a specialized interface for editing `ibm_catalog.json` files.
-- **Webview Integration**: A webview-based editor for a more visual representation of catalog entries.
-- **Login & Logout Commands**: Log in with an IBM Cloud API key to access offerings and features.
-- **Offering Management**: Fetch and manage offerings from IBM Cloud Catalogs.
-- **Custom Status Bar Indicator**: Shows the login state and allows quick access to login/logout.
+Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+
+For example if there is an image subfolder under your extension project workspace:
+
+\!\[feature X\]\(images/feature-x.png\)
+
+> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
 
 ## Requirements
 
-- **IBM Cloud API Key**: To use certain features, you will need an IBM Cloud API Key. This can be generated from the IBM Cloud console.
-- **VS Code Version**: Requires VS Code version 1.94.0 or higher.
+If you have any requirements or dependencies, add a section describing those and how to install and configure them.
 
-## Installation
+## Extension Settings
 
-1. Clone or download this repository.
-2. Run `npm install` to install dependencies.
-3. Use `vsce package` to create a VSIX package.
-4. Install the `.vsix` package in your VS Code environment.
+Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
 
-## Usage
+For example:
 
-1. **Open a Workspace**: Open a folder or workspace in VS Code.
-2. **Open the Catalog JSON File**: The extension only works with the `ibm_catalog.json` file. Please ensure this file is in your workspace.
-3. **Login**: Run the `IBM Catalog Editor: Login` command to provide your IBM Cloud API Key.
-4. **Start Editing**: Use the webview to visually edit the catalog JSON file.
+This extension contributes the following settings:
 
-## Commands
+* `myExtension.enable`: Enable/disable this extension.
+* `myExtension.thing`: Set to `blah` to do something.
 
-- **IBM Catalog Editor: Login**: Log in to IBM Cloud with an API key.
-- **IBM Catalog Editor: Logout**: Log out from IBM Cloud.
+## Known Issues
 
-## Activation Events
+Calling out known issues can help limit users opening duplicate issues against your extension.
 
-The extension activates on the following events:
+## Release Notes
 
-- **Catalog Editor Commands**: When running login/logout commands.
-- **View Activation**: When opening the Catalog Editor view.
+Users appreciate release notes as you update your extension.
 
-## Building from Source
+### 1.0.0
 
-To build this extension from the source:
+Initial release of ...
 
-1. Clone the repository.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Build the extension:
-   ```bash
-   npm run build
-   ```
-4. Watch for changes:
-   ```bash
-   npm run watch
-   ```
+### 1.0.1
 
-## Disclaimer
+Fixed issue #.
 
-This is a Proof of Concept (POC) extension and is not intended for production use.
+### 1.1.0
 
-## License
+Added features X, Y, and Z.
 
-This project is licensed under the Apache 2.0 License.
+---
+
+## Following extension guidelines
+
+Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+
+* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+
+## Working with Markdown
+
+You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+
+* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
+* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
+* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+
+## For more information
+
+* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
+* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+
+**Enjoy!**

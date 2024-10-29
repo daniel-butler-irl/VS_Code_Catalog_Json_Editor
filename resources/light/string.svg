@@ -1,0 +1,6 @@
+// resources/light/string.svg
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M11.5 4L11 3.5H5L4.5 4V12L5 12.5H6V11H5V4.5H11V11H10V12.5H11L11.5 12V4Z" fill="#424242"/>
+    <path d="M7.5 12.5L8 12V6L7.5 5.5H6.5L6 6V12L6.5 12.5H7.5Z" fill="#424242"/>
+    <path d="M9.5 12.5L10 12V6L9.5 5.5H8.5L8 6V12L8.5 12.5H9.5Z" fill="#424242"/>
+</svg>
