@@ -12,7 +12,22 @@
     "workspaceContains:**/ibm_catalog.json"
   ],
   "contributes": {
+    "configuration": {
+      "title": "IBM Catalog",
+      "properties": {
+        "ibmCatalog.enableDebugLogging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable debug level logging for the IBM Catalog extension"
+        }
+      }
+    },
     "commands": [
+       {
+        "command": "ibmCatalog.showLogs",
+        "title": "Show IBM Catalog Logs",
+        "category": "IBM Catalog"
+      },
       {
         "command": "ibmCatalog.refresh",
         "title": "Refresh IBM Catalog View",

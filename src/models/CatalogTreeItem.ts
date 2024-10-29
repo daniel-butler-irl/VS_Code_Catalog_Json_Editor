@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import { IBMCloudService } from '../services/IBMCloudService';
 import { AuthService } from '../services/AuthService';
+import { LoggingService } from '../services/LoggingService';
 
 /**
  * Validation status for tree items
@@ -41,7 +42,8 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private readonly _validationMetadata: ValidationMetadata;
     private readonly _schemaMetadata?: SchemaMetadata;
     private context: vscode.ExtensionContext;
-
+    private logger: LoggingService;
+    private isUpdatingTooltip: boolean = false;
     
     /**
      * Creates a new CatalogTreeItem
@@ -56,6 +58,9 @@ export class CatalogTreeItem extends vscode.TreeItem {
         schemaMetadata?: SchemaMetadata,
     ) {
         super(label, collapsibleState);
+       
+        this.logger = LoggingService.getInstance();
+
         this.context = context;
         this._validationMetadata = {
             status: ValidationStatus.Unknown
@@ -78,6 +83,25 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
     }
 
+    /**
+ * Gets the string representation of a validation status
+ */
+private getStatusString(status: ValidationStatus): string {
+    switch (status) {
+        case ValidationStatus.Valid:
+            return 'Valid';
+        case ValidationStatus.Invalid:
+            return 'Invalid';
+        case ValidationStatus.Validating:
+            return 'Validating';
+        case ValidationStatus.LoginRequired:
+            return 'LoginRequired';
+        case ValidationStatus.Unknown:
+            return 'Unknown';
+        default:
+            return 'Unknown';
+    }
+}
     /**
      * Gets the current validation metadata
      */
@@ -145,59 +169,129 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
 
-    public updateValidationStatus(status: ValidationStatus, message?: string): void {
+ /**
+ * Updates the validation metadata and refreshes UI
+ */
+public updateValidationStatus(status: ValidationStatus, message?: string): void {
+    const logger = LoggingService.getInstance();
+    
+    logger.debug(`Updating validation status for ${this.label}`, {
+        oldStatus: this.getStatusString(this._validationMetadata.status),
+        newStatus: this.getStatusString(status),
+        message,
+        path: this.jsonPath
+    });
+
+    // Only update if there's an actual change in status or message
+    if (status === this._validationMetadata.status && 
+        this._validationMetadata.message === message) {
+        logger.debug(`Skipping validation update - no changes for ${this.label}`);
+        return;
+    }
+
     this._validationMetadata.status = status;
     this._validationMetadata.message = message;
     this._validationMetadata.lastChecked = new Date();
 
+    // Update the icon and other UI elements
+    this.iconPath = this.getValidationIcon();
     this.tooltip = this.createTooltip();
-    this.iconPath = this.getIconPath();
+}
+
+
+
+  /**
+ * Creates a tooltip for the item
+ */
+private createTooltip(): string {
+    const logger = LoggingService.getInstance();
+    const parts: string[] = [
+        `Path: ${this.jsonPath}`,
+        `Type: ${this.getValueType()}`
+    ];
+
+    if (this._schemaMetadata?.description) {
+        parts.push(`Description: ${this._schemaMetadata.description}`);
     }
 
+    if (this.label === 'catalog_id' && typeof this.value === 'string' && !this.isUpdatingTooltip) {
+        logger.debug(`Initializing tooltip update for catalog_id: ${this.value}`);
+        // Use void to explicitly ignore the promise
+        void this.updateTooltipWithOfferingDetails(this.value as string);
+        parts.push('Fetching offering details...');
+    } else if (this.isEditable()) {
+        parts.push(`Value: ${this.formatValue(this.value)}`);
+    }
 
-    /**
-     * Creates a tooltip for the item
-     */
-    private createTooltip(): string {
-  const parts: string[] = [
-    `Path: ${this.jsonPath}`,
-    `Type: ${this.getValueType()}`,
-  ];
-
-  if (this._schemaMetadata?.description) {
-    parts.push(`Description: ${this._schemaMetadata.description}`);
-  }
-
-  if (this.label === 'catalog_id' && typeof this.value === 'string') {
-    parts.push(`Fetching offering details...`);
-    this.updateTooltipWithOfferingDetails(this.value as string);
-  } else if (this.isEditable()) {
-    parts.push(`Value: ${this.formatValue(this.value)}`);
-  }
-
-  return parts.join('\n');
+    return parts.join('\n');
 }
 
-    /**
-     * Updates the tooltip with offering details from IBM Cloud.
-     * @param catalogId The catalog ID.
-     */
-    private async updateTooltipWithOfferingDetails(catalogId: string): Promise<void> {
-  const apiKey = await AuthService.getApiKey(this.context);
-  if (!apiKey) {
-    return;
-  }
+/**
+ * Updates tooltip with offering details.
+ * @param catalogId The catalog ID.
+ */
 
-  const ibmCloudService = new IBMCloudService(apiKey);
+private async updateTooltipWithOfferingDetails(catalogId: string): Promise<void> {
+    const logger = LoggingService.getInstance();
+    
+    if (this.isUpdatingTooltip) {
+        logger.debug(`Skipping tooltip update - already in progress for ${catalogId}`);
+        return;
+    }
 
-  try {
-    const details = await ibmCloudService.getOfferingDetails(catalogId);
-    const offeringName = details.name || 'Unknown Offering';
-    this.tooltip = `Catalog ID: ${catalogId}\nOffering Name: ${offeringName}`;
-  } catch (error) {
-    this.tooltip = `Catalog ID: ${catalogId}\nOffering details not found.`;
-  }
+    this.isUpdatingTooltip = true;
+    logger.debug(`Starting tooltip update process for catalog ID: ${catalogId}`);
+
+    try {
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (!apiKey) {
+            logger.debug(`No API key found for catalog ID: ${catalogId}`);
+            this.updateValidationStatus(ValidationStatus.LoginRequired);
+            this.tooltip = 'Login required to fetch offering details';
+            return;
+        }
+
+        const ibmCloudService = new IBMCloudService(apiKey);
+        const isValid = await ibmCloudService.validateCatalogId(catalogId);
+        
+        logger.debug(`Validation completed for catalog ID: ${catalogId}`, { isValid });
+        
+        if (!isValid) {
+            logger.debug(`Invalid catalog ID: ${catalogId} - updating UI`);
+            this.updateValidationStatus(ValidationStatus.Invalid, 'Invalid catalog ID');
+            this.tooltip = `Catalog ID: ${catalogId}\nStatus: Invalid`;
+            return;
+        }
+
+        try {
+            const details = await ibmCloudService.getOfferingDetails(catalogId);
+            logger.debug(`Successfully retrieved offering details`, {
+                catalogId,
+                label: details.label,
+                id: details.id
+            });
+            
+            this.tooltip = `Catalog ID: ${catalogId}\nOffering Label: ${details.label}`;
+            this.updateValidationStatus(ValidationStatus.Valid);
+        } catch (detailsError) {
+            logger.error(`Failed to fetch offering details for catalog ID: ${catalogId}`, detailsError);
+            this.tooltip = `Catalog ID: ${catalogId}\nStatus: Valid (Unable to fetch details)`;
+            this.updateValidationStatus(ValidationStatus.Valid);
+        }
+    } catch (error) {
+        logger.error(`Error during tooltip update for catalog ID: ${catalogId}`, error);
+        const errorMessage = error instanceof Error ? error.message : 'Error validating catalog ID';
+        this.tooltip = `Catalog ID: ${catalogId}\nStatus: Error - ${errorMessage}`;
+        this.updateValidationStatus(ValidationStatus.Invalid, errorMessage);
+    } finally {
+        logger.debug(`Completing tooltip update process for catalog ID: ${catalogId}`, {
+            finalStatus: this.getStatusString(this._validationMetadata.status)
+        });
+        this.isUpdatingTooltip = false;
+    }
 }
+
+
 
     /**
      * Gets the validation message
@@ -243,34 +337,42 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
-     * Gets the appropriate icon
-     */
-    private getIconPath(): vscode.ThemeIcon {
-        if (this.isValidatable()) {
-            return this.getValidationIcon();
-        }
-
-        return this.getTypeIcon();
+ * Gets the appropriate icon
+ */
+private getIconPath(): vscode.ThemeIcon {
+    // For catalog_id fields, always use validation icon
+    if (this.label === 'catalog_id') {
+        return this.getValidationIcon();
     }
 
-    /**
-     * Gets the validation status icon
-     */
-private getValidationIcon(): vscode.ThemeIcon {
-  switch (this._validationMetadata.status) {
-    case ValidationStatus.Valid:
-      return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('ibmCatalog.ValidationSuccess'));
-    case ValidationStatus.Invalid:
-      return new vscode.ThemeIcon('error', new vscode.ThemeColor('ibmCatalog.ValidationFail'));
-    case ValidationStatus.Validating:
-      return new vscode.ThemeIcon('sync', new vscode.ThemeColor('charts.foreground'));
-    case ValidationStatus.LoginRequired:
-      return new vscode.ThemeIcon('key', new vscode.ThemeColor('charts.foreground'));
-    default:
-      return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.foreground'));
-  }
+    // For other fields, use type-based icon
+    return this.getTypeIcon();
 }
 
+ /**
+ * Gets the validation status icon
+ */
+private getValidationIcon(): vscode.ThemeIcon {
+    const logger = LoggingService.getInstance();
+    
+    logger.debug(`Getting validation icon for ${this.label}`, {
+        status: this.getStatusString(this._validationMetadata.status),
+        path: this.jsonPath
+    });
+
+    switch (this._validationMetadata.status) {
+        case ValidationStatus.Valid:
+            return new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
+        case ValidationStatus.Invalid:
+            return new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
+        case ValidationStatus.Validating:
+            return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.foreground'));
+        case ValidationStatus.LoginRequired:
+            return new vscode.ThemeIcon('key', new vscode.ThemeColor('notificationsInfoIcon.foreground'));
+        default:
+            return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.foreground'));
+    }
+}
     /**
      * Gets the type-based icon
      */

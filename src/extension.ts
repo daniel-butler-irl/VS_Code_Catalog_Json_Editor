@@ -6,41 +6,54 @@ import { EditorHighlightService } from './services/EditorHighlightService';
 import { SchemaService } from './services/SchemaService';
 import { CatalogTreeItem } from './models/CatalogTreeItem';
 import { AuthService } from './services/AuthService';
+import { LoggingService, LogLevel } from './services/LoggingService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    // Create and initialize services
-    // Initialize SchemaService
-     const schemaService = new SchemaService();
-    await schemaService.initialize();
-    // Initialize CatalogService
-    const catalogService = new CatalogService(context);
-    const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
-    const fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
-    const highlightService = new EditorHighlightService();
+    // Initialize and configure logging
+    const logger = LoggingService.getInstance();
+    
+    // Set log level based on configuration or environment
+    const config = vscode.workspace.getConfiguration('ibmCatalog');
+    const debugMode = config.get<boolean>('enableDebugLogging', false);
+    logger.setLogLevel(debugMode ? LogLevel.DEBUG : LogLevel.INFO);
+    
+    logger.info('Activating IBM Catalog Extension');
 
     try {
+        // Initialize services
+        logger.debug('Initializing SchemaService');
+        const schemaService = new SchemaService();
+        await schemaService.initialize();
+
+        logger.debug('Initializing CatalogService');
+        const catalogService = new CatalogService(context);
+        const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
+        const fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
+        const highlightService = new EditorHighlightService();
+
          // Create status bar item
+        logger.debug('Creating status bar items');
         const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
         statusBarItem.command = 'ibmCatalog.login'; // Default command
         statusBarItem.show();
         context.subscriptions.push(statusBarItem);
 
         // Function to update the status bar based on login status
-  async function updateStatusBar() {
-    const isLoggedIn = await AuthService.isLoggedIn(context);
-    if (isLoggedIn) {
-      statusBarItem.text = '$(account) Logged in to IBM Cloud';
-      statusBarItem.tooltip = 'Click to logout';
-      statusBarItem.command = 'ibmCatalog.logout';
-    } else {
-      statusBarItem.text = '$(account) Not logged in to IBM Cloud';
-      statusBarItem.tooltip = 'Click to login';
-      statusBarItem.command = 'ibmCatalog.login';
+        async function updateStatusBar() {
+        const isLoggedIn = await AuthService.isLoggedIn(context);
+        if (isLoggedIn) {
+            statusBarItem.text = '$(account) Logged in to IBM Cloud';
+            statusBarItem.tooltip = 'Click to logout';
+            statusBarItem.command = 'ibmCatalog.logout';
+        } else {
+            statusBarItem.text = '$(account) Not logged in to IBM Cloud';
+            statusBarItem.tooltip = 'Click to login';
+            statusBarItem.command = 'ibmCatalog.login';
+        }
     }
-  }
 
-  // Call the function to set the initial status
-  updateStatusBar();
+        // Call the function to set the initial status
+        updateStatusBar();
 
         // Initialize catalog service
         await catalogService.initialize();
@@ -57,6 +70,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Register commands
         context.subscriptions.push(
             vscode.commands.registerCommand('ibmCatalog.refresh', () => treeProvider.refresh()),
+            vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
+                logger.show();
+            }),
              vscode.commands.registerCommand('ibmCatalog.editElement', async (node) => {
         await catalogService.editElement(node);
         // Re-highlight the element after editing
@@ -105,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         });
 
         context.subscriptions.push(treeView);
-
+        logger.info('IBM Catalog Extension activated successfully');
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
@@ -113,5 +129,5 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
-    // Clean up will be handled by the disposables in context.subscriptions
+    LoggingService.getInstance().info('Deactivating IBM Catalog Extension');
 }

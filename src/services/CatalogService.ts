@@ -5,7 +5,10 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
 import { AddElementDialog } from '../ui/AddElementDialog';
+import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from '../services/SchemaService';
+import { AuthService } from './AuthService';
+import { LoggingService } from './LoggingService';
 
 /**
  * Service for managing IBM Catalog JSON data and operations
@@ -14,7 +17,7 @@ export class CatalogService {
     private initialized: boolean = false;
     private _onDidChangeContent = new vscode.EventEmitter<void>();
     public readonly onDidChangeContent = this._onDidChangeContent.event;
-
+    private logger = LoggingService.getInstance();
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -261,22 +264,19 @@ private async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void
     }
 }
 
-
-
-
-    /**
+       /**
      * Prompts the user for a value based on the node type
-     * @param node The node being edited or the parent node for new elements
-     * @param currentValue The current value when editing
-     * @returns The new value or undefined if cancelled
      */
     private async promptForValue(node: CatalogTreeItem, currentValue?: unknown): Promise<unknown> {
-        // For Phase 1, we'll handle basic types. Phase 2 will add more sophisticated input handling
+        if (node.label === 'catalog_id') {
+            return this.promptForCatalogId(currentValue as string);
+        }
+
+        // Handle other types as before
         const value = await vscode.window.showInputBox({
             prompt: `Enter value for ${node.label}`,
             value: currentValue?.toString() ?? '',
             validateInput: (value) => {
-                // Basic validation for Phase 1
                 if (!value.trim()) {
                     return 'Value cannot be empty';
                 }
@@ -288,14 +288,91 @@ private async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void
             return undefined;
         }
 
-        // Try to parse as number or boolean if appropriate
-        if (value.toLowerCase() === 'true') {return true;}
-        if (value.toLowerCase() === 'false') {return false;}
-        if (!isNaN(Number(value))) {return Number(value);}
+        // Parse value as before...
+        if (value.toLowerCase() === 'true') return true;
+        if (value.toLowerCase() === 'false') return false;
+        if (!isNaN(Number(value))) return Number(value);
         return value;
     }
 
-    public async reloadCatalogData(): Promise<void> {
-    await this.loadCatalogData();
-}
+  /**
+     * Prompts the user to select or enter a catalog ID
+     */
+    private async promptForCatalogId(currentValue?: string): Promise<string | undefined> {
+        const logger = this.logger;
+        const apiKey = await AuthService.getApiKey(this.context);
+        
+        if (!apiKey) {
+            logger.debug('No API key available for catalog lookup');
+            return this.promptForManualCatalogId(currentValue);
+        }
+
+        try {
+            const ibmCloudService = new IBMCloudService(apiKey);
+            const catalogs = await ibmCloudService.getAvailableCatalogs();
+
+            // Create QuickPick items
+            const items: vscode.QuickPickItem[] = [
+                // Add option to enter custom ID
+                {
+                    label: "$(edit) Enter Custom Catalog ID",
+                    description: "Manually enter a catalog ID",
+                    alwaysShow: true
+                },
+                // Add separator
+                {
+                    label: "Available Catalogs",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                // Add available catalogs
+                ...catalogs.map(catalog => ({
+                    label: catalog.label,
+                    description: catalog.id,
+                    detail: catalog.shortDescription
+                }))
+            ];
+
+            // Show QuickPick
+            const selection = await vscode.window.showQuickPick(items, {
+                title: 'Select Catalog',
+                placeHolder: currentValue || 'Select a catalog or enter a custom ID',
+                matchOnDescription: true, // Allow matching on catalog ID
+                matchOnDetail: true // Allow matching on description
+            });
+
+            if (!selection) {
+                return undefined; // User cancelled
+            }
+
+            // If user chose to enter custom ID, show input box
+            if (selection.label === "$(edit) Enter Custom Catalog ID") {
+                return this.promptForManualCatalogId(currentValue);
+            }
+
+            // Return the selected catalog ID
+            return selection.description;
+
+        } catch (error) {
+            logger.error('Failed to fetch catalogs', error);
+            // Fallback to manual entry
+            return this.promptForManualCatalogId(currentValue);
+        }
+    }
+
+    /**
+     * Prompts for manual catalog ID entry
+     */
+    private async promptForManualCatalogId(currentValue?: string): Promise<string | undefined> {
+        return vscode.window.showInputBox({
+            prompt: 'Enter the catalog ID',
+            value: currentValue,
+            validateInput: (value) => {
+                if (!value.trim()) {
+                    return 'Catalog ID cannot be empty';
+                }
+                // Add any additional validation rules here
+                return null;
+            }
+        });
+    }
 }
