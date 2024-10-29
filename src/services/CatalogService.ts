@@ -10,11 +10,14 @@ import { CatalogTreeItem } from '../models/CatalogTreeItem';
  */
 export class CatalogService {
     private initialized: boolean = false;
+    private _onDidChangeContent = new vscode.EventEmitter<void>();
+    public readonly onDidChangeContent = this._onDidChangeContent.event;
+
 
     constructor(
         private readonly context: vscode.ExtensionContext,
         private catalogFilePath?: string,
-        private catalogData: unknown = {},  // Initialize with empty object
+        private catalogData: any = {},  
         private readonly testFilePath?: string
     ) {}
 
@@ -53,12 +56,12 @@ export class CatalogService {
      * Gets the current catalog data
      * @returns The loaded catalog data or empty object if not loaded
      */
-    public async getCatalogData(): Promise<unknown> {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-        return this.catalogData || {};
+    public async getCatalogData(): Promise<unknown | undefined> {
+    if (!this.initialized) {
+        await this.initialize();
     }
+    return this.catalogData;
+}
 
     /**
      * Gets the current catalog file path
@@ -87,7 +90,7 @@ export class CatalogService {
                 return; // User cancelled
             }
 
-            await this.updateJsonValue(parentNode.path, newValue);
+            await this.updateJsonValue(parentNode.jsonPath, newValue);
             await this.loadCatalogData(); // Reload to ensure consistency
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to add element: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -106,7 +109,7 @@ export class CatalogService {
                 return; // User cancelled
             }
 
-            await this.updateJsonValue(node.path, newValue);
+            await this.updateJsonValue(node.jsonPath, newValue);
             await this.loadCatalogData(); // Reload to ensure consistency
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to edit element: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -148,65 +151,116 @@ export class CatalogService {
      * @throws Error if the file cannot be read or parsed
      */
     private async loadCatalogData(): Promise<void> {
-        if (!this.catalogFilePath) {
-            this.catalogData = {};
-            return;
-        }
-
-        try {
-            const content = await fs.readFile(this.catalogFilePath, 'utf8');
-            this.catalogData = JSON.parse(content);
-        } catch (error) {
-            this.catalogData = {};
-            if (error instanceof Error) {
-                throw new Error(`Failed to load catalog data: ${error.message}`);
-            }
-            throw error;
-        }
+    if (!this.catalogFilePath) {
+        this.catalogData = {};
+        return;
     }
 
-    /**
-     * Updates a value in the JSON file at the specified path
-     * @param jsonPath The path to the value in the JSON
-     * @param newValue The new value to set
-     */
-    private async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void> {
-        if (!this.catalogFilePath || !this.catalogData) {
-            throw new Error('Catalog file not initialized');
+    try {
+        const content = await fs.readFile(this.catalogFilePath, 'utf8');
+        this.catalogData = JSON.parse(content) as any; // Explicitly cast as any
+        this._onDidChangeContent.fire(); // Fire the event
+    } catch (error) {
+        this.catalogData = {};
+        if (error instanceof Error) {
+            throw new Error(`Failed to load catalog data: ${error.message}`);
         }
+        throw error;
+    }
+}
 
-        try {
-            const data = this.catalogData as Record<string, unknown>;
-            const pathParts = jsonPath.split('.');
-            let current = data;
 
-            // Navigate to the parent of the target
-            for (let i = 0; i < pathParts.length - 1; i++) {
-                const part = pathParts[i];
-                if (typeof current[part] === 'object' && current[part] !== null) {
-                    current = current[part] as Record<string, unknown>;
+private parseJsonPath(jsonPath: string): (string | number)[] {
+    const segments: (string | number)[] = [];
+    const regex = /\[(\d+)\]|\.([^.\[\]]+)/g;
+    let match;
+    while ((match = regex.exec(jsonPath)) !== null) {
+        if (match[1] !== undefined) {
+            // Array index
+            segments.push(parseInt(match[1], 10));
+        } else if (match[2] !== undefined) {
+            // Object key
+            segments.push(match[2]);
+        }
+    }
+    return segments;
+}
+
+private async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void> {
+    if (!this.catalogFilePath || !this.catalogData) {
+        throw new Error('Catalog file not initialized');
+    }
+
+    try {
+        const data = this.catalogData;
+        const pathParts = this.parseJsonPath(jsonPath);
+        console.log(`Parsed jsonPath: ${jsonPath} into pathParts: ${JSON.stringify(pathParts)}`);
+        let current: any = data;
+
+        // Navigate to the parent of the target
+        for (let i = 0; i < pathParts.length - 1; i++) {
+            const part = pathParts[i];
+            console.log(`At path part ${i}, part: ${part}, current type: ${typeof current}, current: ${JSON.stringify(current)}`);
+            if (typeof part === 'string') {
+                if (current !== null && !Array.isArray(current) && typeof current === 'object' && part in current) {
+                    current = current[part];
                 } else {
+                    console.log(`Invalid path at part '${part}' for current: ${JSON.stringify(current)}`);
                     throw new Error(`Invalid path: ${jsonPath}`);
                 }
+            } else if (typeof part === 'number') {
+                if (Array.isArray(current) && part >= 0 && part < current.length) {
+                    current = current[part];
+                } else {
+                    console.log(`Invalid array index '${part}' for current: ${JSON.stringify(current)}`);
+                    throw new Error(`Invalid path: ${jsonPath}`);
+                }
+            } else {
+                console.log(`Invalid part type '${typeof part}' for part '${part}'`);
+                throw new Error(`Invalid path: ${jsonPath}`);
             }
-
-            // Update the value
-            const lastPart = pathParts[pathParts.length - 1];
-            current[lastPart] = newValue;
-
-            // Write back to file
-            await fs.writeFile(
-                this.catalogFilePath,
-                JSON.stringify(this.catalogData, null, 2),
-                'utf8'
-            );
-        } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Failed to update JSON value: ${error.message}`);
-            }
-            throw error;
         }
+
+        // Update the value
+        const lastPart = pathParts[pathParts.length - 1];
+        console.log(`Last part: ${lastPart}, current: ${JSON.stringify(current)}`);
+        if (typeof lastPart === 'string') {
+            if (current !== null && !Array.isArray(current) && typeof current === 'object') {
+                current[lastPart] = newValue;
+            } else {
+                console.log(`Cannot set property '${lastPart}' on current: ${JSON.stringify(current)}`);
+                throw new Error(`Invalid path: ${jsonPath}`);
+            }
+        } else if (typeof lastPart === 'number') {
+            if (Array.isArray(current) && lastPart >= 0 && lastPart < current.length) {
+                current[lastPart] = newValue;
+            } else {
+                console.log(`Invalid array index '${lastPart}' on current: ${JSON.stringify(current)}`);
+                throw new Error(`Invalid path: ${jsonPath}`);
+            }
+        } else {
+            console.log(`Invalid last part type '${typeof lastPart}' for part '${lastPart}'`);
+            throw new Error(`Invalid path: ${jsonPath}`);
+        }
+
+        // Write back to file
+        await fs.writeFile(
+            this.catalogFilePath,
+            JSON.stringify(this.catalogData, null, 2),
+            'utf8'
+        );
+
+        this._onDidChangeContent.fire(); // Fire the event
+    } catch (error) {
+        if (error instanceof Error) {
+            throw new Error(`Failed to update JSON value: ${error.message}`);
+        }
+        throw error;
     }
+}
+
+
+
 
     /**
      * Prompts the user for a value based on the node type
@@ -238,4 +292,8 @@ export class CatalogService {
         if (!isNaN(Number(value))) {return Number(value);}
         return value;
     }
+
+    public async reloadCatalogData(): Promise<void> {
+    await this.loadCatalogData();
+}
 }

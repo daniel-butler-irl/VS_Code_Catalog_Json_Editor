@@ -90,10 +90,7 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
 
         try {
             // Reload the catalog data
-            await this.catalogService.initialize();
-            
-            // Refresh the tree view
-            this.treeProvider.refresh();
+            await this.catalogService.reloadCatalogData();
 
             // Show success message only for manual saves
             const activeEditor = vscode.window.activeTextEditor;

@@ -53,23 +53,23 @@
         }
       ]
     },
-      "colors": [
+    "colors": [
       {
         "id": "ibmCatalog.stringColor",
         "description": "Color for string values",
         "defaults": {
-          "dark": "#89D185",
-          "light": "#267F45",
-          "highContrast": "#89D185"
+          "dark": "#da9465",
+          "light": "#bf5024",
+          "highContrast": "#FF8C00"
         }
       },
       {
         "id": "ibmCatalog.numberColor",
         "description": "Color for number values",
         "defaults": {
-          "dark": "#9CDCFE",
-          "light": "#0451A5",
-          "highContrast": "#9CDCFE"
+          "dark": "#B5B6F8",
+          "light": "#1E4ACB",
+          "highContrast": "#8A2BE2"
         }
       },
       {
@@ -77,15 +77,69 @@
         "description": "Color for boolean values",
         "defaults": {
           "dark": "#D7BA7D",
-          "light": "#B5200D",
+          "light": "#b2b50d",
           "highContrast": "#D7BA7D"
+        }
+      },
+      {
+        "id": "ibmCatalog.objectColor",
+        "description": "Color for object values",
+        "defaults": {
+          "dark": "#C586C0",
+          "light": "#6A0080",
+          "highContrast": "#C586C0"
+        }
+      },
+      {
+        "id": "ibmCatalog.arrayColor",
+        "description": "Color for array values",
+        "defaults": {
+          "dark": "#569CD6",
+          "light": "#1D4D7A",
+          "highContrast": "#569CD6"
+        }
+      },
+      {
+        "id": "ibmCatalog.nullColor",
+        "description": "Color for null/undefined values",
+        "defaults": {
+          "dark": "#575859",
+          "light": "#2c3136",
+          "highContrast": "#868f97"
+        }
+      },
+      {
+        "id": "ibmCatalog.enumColor",
+        "description": "Color for symbol/enum values",
+        "defaults": {
+          "dark": "#B5CEA8",
+          "light": "#31806c",
+          "highContrast": "#B5CEA8"
+        }
+      },
+      {
+        "id": "ibmCatalog.ValidationSuccess",
+        "description": "Color for validation success",
+        "defaults": {
+          "dark": "#007700",
+          "light": "#0E6300",
+          "highContrast": "#00FF00"
+        }
+      },
+      {
+        "id": "ibmCatalog.ValidationFail",
+        "description": "Color for validation failure",
+        "defaults": {
+          "dark": "#FF0000",
+          "light": "#B50000",
+          "highContrast": "#FF0000"
         }
       }
     ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:jsonc-parser --format=cjs --platform=node",
     "watch": "npm run build -- --watch",
     "clean": "rimraf dist",
     "compile-tests": "tsc -p . --outDir out",
