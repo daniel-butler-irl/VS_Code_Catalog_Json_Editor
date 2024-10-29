@@ -1,7 +1,7 @@
 // src/providers/CatalogTreeProvider.ts
 
 import * as vscode from 'vscode';
-import { CatalogTreeItem } from '../models/CatalogTreeItem';
+import { CatalogTreeItem, ValidationStatus } from '../models/CatalogTreeItem';
 import { CatalogService } from '../services/CatalogService';
 
 /**
@@ -15,6 +15,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     readonly onDidChangeTreeData: vscode.Event<CatalogTreeItem | undefined | void> = 
         this._onDidChangeTreeData.event;
 
+    // Track expanded nodes for state persistence
+    private expandedNodes: Set<string> = new Set();
+
     constructor(
         private readonly catalogService: CatalogService
     ) {}
@@ -22,9 +25,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Refreshes the tree view
      */
-   public refresh(): void {
-    this._onDidChangeTreeData.fire(undefined);
-}
+    public refresh(): void {
+        this._onDidChangeTreeData.fire(undefined);
+    }
 
     /**
      * Gets the tree item for a given element
@@ -32,6 +35,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * @returns The VS Code TreeItem
      */
     getTreeItem(element: CatalogTreeItem): vscode.TreeItem {
+        if (element.collapsibleState === vscode.TreeItemCollapsibleState.Expanded) {
+            this.expandedNodes.add(element.path);
+        } else {
+            this.expandedNodes.delete(element.path);
+        }
         return element;
     }
 
@@ -43,12 +51,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
         try {
             if (!element) {
-                // Root level - get the main JSON structure
                 const catalog = await this.catalogService.getCatalogData();
                 return this.createTreeItems(catalog, '');
             }
 
-            // Child level - get the children of the current node
             return this.createTreeItems(element.value, element.path);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to get tree items: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -71,18 +77,41 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
 
         for (const [key, val] of Object.entries(value)) {
             const currentPath = parentPath ? `${parentPath}.${key}` : key;
+            const collapsibleState = this.expandedNodes.has(currentPath)
+                ? vscode.TreeItemCollapsibleState.Expanded
+                : this.getCollapsibleState(val);
+
             const item = new CatalogTreeItem(
                 key,
                 val,
                 currentPath,
-                this.getCollapsibleState(val),
+                collapsibleState,
                 this.getContextValue(val)
             );
 
             items.push(item);
         }
 
-        return items;
+        return this.sortTreeItems(items);
+    }
+
+    /**
+     * Sorts tree items for consistent display
+     * @param items The items to sort
+     * @returns Sorted array of items
+     */
+    private sortTreeItems(items: CatalogTreeItem[]): CatalogTreeItem[] {
+        return items.sort((a, b) => {
+            // Sort containers and arrays first
+            const aIsContainer = a.contextValue === 'container' || a.contextValue === 'array';
+            const bIsContainer = b.contextValue === 'container' || b.contextValue === 'array';
+            
+            if (aIsContainer && !bIsContainer) return -1;
+            if (!aIsContainer && bIsContainer) return 1;
+            
+            // Then sort by label
+            return a.label.localeCompare(b.label);
+        });
     }
 
     /**

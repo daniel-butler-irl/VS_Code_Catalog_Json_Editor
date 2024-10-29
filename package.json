@@ -52,7 +52,36 @@
           "contextualTitle": "IBM Catalog JSON"
         }
       ]
-    }
+    },
+      "colors": [
+      {
+        "id": "ibmCatalog.stringColor",
+        "description": "Color for string values",
+        "defaults": {
+          "dark": "#89D185",
+          "light": "#267F45",
+          "highContrast": "#89D185"
+        }
+      },
+      {
+        "id": "ibmCatalog.numberColor",
+        "description": "Color for number values",
+        "defaults": {
+          "dark": "#9CDCFE",
+          "light": "#0451A5",
+          "highContrast": "#9CDCFE"
+        }
+      },
+      {
+        "id": "ibmCatalog.booleanColor",
+        "description": "Color for boolean values",
+        "defaults": {
+          "dark": "#D7BA7D",
+          "light": "#B5200D",
+          "highContrast": "#D7BA7D"
+        }
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
