@@ -5,8 +5,10 @@ import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-manag
 import { BaseService } from 'ibm-cloud-sdk-core/lib/base-service';
 import { LoggingService } from './LoggingService';
 import { CacheService } from './CacheService';
+import { throttle } from 'lodash';
 
 interface CatalogResponse {
+
     id: string;
     rev?: string;
     label: string;
@@ -22,9 +24,6 @@ interface CatalogResponse {
     updated?: string;
 }
 
-/**
- * Represents a catalog item with its details
- */
 export interface CatalogItem {
     id: string;
     label: string;
@@ -32,6 +31,11 @@ export interface CatalogItem {
     disabled?: boolean;
 }
 
+export interface OfferingItem {
+    id: string;
+    name: string;
+    shortDescription?: string;
+}
 
 interface IBMCloudError extends Error {
     status?: number;
@@ -40,11 +44,23 @@ interface IBMCloudError extends Error {
     body?: any;
 }
 
+/**
+ * Service for interacting with IBM Cloud APIs and managing catalog data
+ */
 export class IBMCloudService {
     private catalogManagement: CatalogManagementV1;
     private cacheService: CacheService;
     private logger: LoggingService;
     private pendingValidations: Map<string, Promise<boolean>> = new Map();
+    private backgroundCacheQueue: Set<string> = new Set();
+    private isProcessingQueue: boolean = false;
+
+    // Throttle the background processing to avoid API rate limits
+    private processBackgroundCacheThrottled = throttle(
+        () => this.processBackgroundCache(),
+        5000, // Process every 5 seconds
+        { leading: true, trailing: true }
+    );
 
     constructor(private apiKey: string) {
         this.logger = LoggingService.getInstance();
@@ -59,34 +75,102 @@ export class IBMCloudService {
     }
 
     /**
-     * Validates a catalog ID against IBM Cloud
-     * @param catalogId The catalog ID to validate
-     * @returns Promise<boolean> True if the catalog ID is valid
+     * Enqueues a catalog ID for background caching
+     * @param catalogId The catalog ID to cache
      */
+    private enqueueCatalogId(catalogId: string): void {
+        if (!this.backgroundCacheQueue.has(catalogId)) {
+            this.logger.debug(`Enqueuing catalog ID for background caching: ${catalogId}`);
+            this.backgroundCacheQueue.add(catalogId);
+            void this.processBackgroundCacheThrottled();
+        }
+    }
+
+    /**
+     * Processes the background cache queue
+     */
+    private async processBackgroundCache(): Promise<void> {
+        if (this.isProcessingQueue || this.backgroundCacheQueue.size === 0) {
+            return;
+        }
+
+        this.isProcessingQueue = true;
+        this.logger.debug(`Processing background cache queue: ${this.backgroundCacheQueue.size} items`);
+
+        try {
+            const catalogIds = Array.from(this.backgroundCacheQueue);
+            this.backgroundCacheQueue.clear();
+
+            for (const catalogId of catalogIds) {
+                try {
+                    const cacheKey = `offering:${catalogId}`;
+                    if (!this.cacheService.get(cacheKey)) {
+                        const details = await this.fetchOfferingDetails(catalogId);
+                        this.cacheService.set(cacheKey, details);
+                        this.logger.debug(`Background cached offering details for: ${catalogId}`);
+                    }
+                } catch (error) {
+                    this.logger.error(`Failed to background cache offering: ${catalogId}`, error);
+                    // Don't throw - continue with next item
+                }
+
+                // Small delay between requests
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        } finally {
+            this.isProcessingQueue = false;
+        }
+    }
+
+    /**
+     * Fetches offering details from IBM Cloud
+     * @param catalogId The catalog ID to fetch details for
+     * @returns Promise<CatalogResponse> The offering details
+     */
+    private async fetchOfferingDetails(catalogId: string): Promise<CatalogResponse> {
+        const response = await this.catalogManagement.getCatalog({
+            catalogIdentifier: catalogId,
+        });
+
+        return response.result as CatalogResponse;
+    }
+
+    /**
+    * Validates a catalog ID against IBM Cloud
+    * @param catalogId The catalog ID to validate
+    * @returns Promise<boolean> True if the catalog ID is valid
+    */
     public async validateCatalogId(catalogId: string): Promise<boolean> {
         const cacheKey = `catalogId:${catalogId}`;
         this.logger.debug(`Validating catalog ID: ${catalogId}`);
 
-        // Check cache first
-        const cachedValue = this.cacheService.get(cacheKey);
+        const cachedValue = this.cacheService.get<boolean>(cacheKey);
         if (cachedValue !== undefined) {
             this.logger.debug(`Using cached validation result for ${catalogId}`, { isValid: cachedValue });
+
+            // If valid, ensure we have the offering details cached
+            if (cachedValue) {
+                this.enqueueCatalogId(catalogId);
+            }
+
             return cachedValue;
         }
 
-        // Check if validation is already in progress
         let pendingValidation = this.pendingValidations.get(catalogId);
         if (pendingValidation) {
             this.logger.debug(`Using pending validation for ${catalogId}`);
             return pendingValidation;
         }
 
-        // Create new validation promise
         pendingValidation = this.performValidation(catalogId, cacheKey);
         this.pendingValidations.set(catalogId, pendingValidation);
 
         try {
-            return await pendingValidation;
+            const isValid = await pendingValidation;
+            if (isValid) {
+                this.enqueueCatalogId(catalogId);
+            }
+            return isValid;
         } finally {
             this.pendingValidations.delete(catalogId);
         }
@@ -104,7 +188,7 @@ export class IBMCloudService {
             const response = await this.catalogManagement.getCatalog({
                 catalogIdentifier: catalogId,
             });
-            
+
             const isValid = response.status === 200;
             const responseData = response.result;
 
@@ -117,7 +201,7 @@ export class IBMCloudService {
             });
 
             this.cacheService.set(cacheKey, isValid);
-            
+
             // If valid, also cache the details
             if (isValid && responseData) {
                 const detailsCacheKey = `catalogDetails:${catalogId}`;
@@ -132,10 +216,74 @@ export class IBMCloudService {
                 error: errorDetails,
                 maskedApiKey: this.maskApiKey(this.apiKey)
             });
-            
+
             this.cacheService.set(cacheKey, false);
             return false;
         }
+    }
+
+    /**
+     * Fetches offerings for a given catalog ID.
+     * @param catalogId The catalog ID.
+     * @returns Promise<OfferingItem[]> Array of offerings.
+     */
+    public async getOfferingsForCatalog(catalogId: string): Promise<OfferingItem[]> {
+        const cacheKey = `offerings:${catalogId}`;
+        const logger = this.logger;
+
+        // Check cache first
+        const cachedOfferings = this.cacheService.get<OfferingItem[]>(cacheKey);
+        if (cachedOfferings) {
+            logger.debug(`Using cached offerings for catalog ID: ${catalogId}`, { count: cachedOfferings.length });
+            return cachedOfferings;
+        }
+
+        try {
+            // Fetch offerings using the IBM Cloud SDK
+            const response = await this.catalogManagement.listOfferings({
+                catalogIdentifier: catalogId
+            });
+
+            const offerings: OfferingItem[] = (response.result.resources ?? [])
+                .filter(offering => offering.id && offering.name)
+                .map(offering => ({
+                    id: offering.id!,
+                    name: offering.name!,
+                    shortDescription: offering.short_description
+                }));
+
+            logger.debug('Successfully fetched offerings', { catalogId, count: offerings.length });
+
+            // Cache the results
+            this.cacheService.set(cacheKey, offerings);
+
+            return offerings;
+        } catch (error) {
+            logger.error(`Failed to fetch offerings for catalog ID: ${catalogId}`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Validates an offering ID within a catalog.
+     * @param catalogId The catalog ID.
+     * @param offeringId The offering ID.
+     * @returns Promise<boolean> True if the offering ID is valid within the catalog.
+     */
+    public async validateOfferingId(catalogId: string, offeringId: string): Promise<boolean> {
+        const cacheKey = `offeringValidation:${catalogId}:${offeringId}`;
+        const cachedValue = this.cacheService.get<boolean>(cacheKey);
+        if (cachedValue !== undefined) {
+            return cachedValue;
+        }
+
+        const offerings = await this.getOfferingsForCatalog(catalogId);
+        const isValid = offerings.some(offering => offering.id === offeringId);
+
+        // Cache the result
+        this.cacheService.set(cacheKey, isValid);
+
+        return isValid;
     }
 
     /**
@@ -147,7 +295,7 @@ export class IBMCloudService {
         const cacheKey = `catalogDetails:${catalogId}`;
         this.logger.debug(`Fetching offering details for catalog ID: ${catalogId}`);
 
-        const cachedValue = this.cacheService.get(cacheKey);
+        const cachedValue = this.cacheService.get<CatalogResponse>(cacheKey);
         if (cachedValue !== undefined) {
             this.logger.debug(`Using cached offering details for ${catalogId}`, {
                 label: cachedValue.label,
@@ -161,7 +309,7 @@ export class IBMCloudService {
             const response = await this.catalogManagement.getCatalog({
                 catalogIdentifier: catalogId,
             });
-            
+
             const details = response.result as CatalogResponse;
             this.logger.debug('Received offering details', {
                 catalogId,
@@ -180,7 +328,7 @@ export class IBMCloudService {
                 error: errorDetails,
                 maskedApiKey: this.maskApiKey(this.apiKey)
             });
-            
+
             throw new Error(this.getErrorMessage(error));
         }
     }
@@ -190,42 +338,41 @@ export class IBMCloudService {
      * @returns Promise<CatalogItem[]> Array of available catalogs
      */
     public async getAvailableCatalogs(): Promise<CatalogItem[]> {
-    const cacheKey = 'available_catalogs';
-    const logger = this.logger;
-    
-    logger.debug('Fetching available catalogs');
+        const cacheKey = 'available_catalogs';
+        const logger = this.logger;
 
-    // Check cache first
-    const cachedCatalogs = this.cacheService.get(cacheKey);
-    if (cachedCatalogs) {
-        logger.debug('Using cached catalogs', { count: cachedCatalogs.length });
-        return cachedCatalogs;
+        logger.debug('Fetching available catalogs');
+
+        // Check cache first
+        const cachedCatalogs = this.cacheService.get<CatalogItem[]>(cacheKey);
+        if (cachedCatalogs) {
+            logger.debug('Using cached catalogs', { count: cachedCatalogs.length });
+            return cachedCatalogs;
+        }
+
+        try {
+            const response = await this.catalogManagement.listCatalogs();
+
+            const catalogs: CatalogItem[] = (response.result.resources ?? [])
+                .filter(catalog => !catalog.disabled && catalog.id && catalog.label)
+                .map(catalog => ({
+                    id: catalog.id!,
+                    label: catalog.label!,
+                    shortDescription: catalog.short_description,
+                    disabled: catalog.disabled
+                }));
+
+            logger.debug('Successfully fetched catalogs', { count: catalogs.length });
+
+            // Cache the results
+            this.cacheService.set(cacheKey, catalogs);
+
+            return catalogs;
+        } catch (error) {
+            logger.error('Failed to fetch available catalogs', error);
+            throw error;
+        }
     }
-
-    try {
-        const response = await this.catalogManagement.listCatalogs();
-        
-        const catalogs: CatalogItem[] = (response.result.resources ?? [])
-            .filter(catalog => !catalog.disabled && catalog.id && catalog.label)
-            .map(catalog => ({
-                id: catalog.id!,
-                label: catalog.label!,
-                shortDescription: catalog.short_description,
-                disabled: catalog.disabled
-            }));
-
-        logger.debug('Successfully fetched catalogs', { count: catalogs.length });
-        
-        // Cache the results
-        this.cacheService.set(cacheKey, catalogs);
-        
-        return catalogs;
-    } catch (error) {
-        logger.error('Failed to fetch available catalogs', error);
-        throw error;
-    }
-}
-
 
     /**
      * Gets cached validation result
@@ -234,7 +381,7 @@ export class IBMCloudService {
      */
     public async getCachedValidation(catalogId: string): Promise<boolean | undefined> {
         const cacheKey = `catalogId:${catalogId}`;
-        return this.cacheService.get(cacheKey);
+        return this.cacheService.get<boolean>(cacheKey);
     }
 
     /**
@@ -244,7 +391,7 @@ export class IBMCloudService {
      */
     public async getCachedOfferingDetails(catalogId: string): Promise<CatalogResponse | undefined> {
         const cacheKey = `catalogDetails:${catalogId}`;
-        return this.cacheService.get(cacheKey);
+        return this.cacheService.get<CatalogResponse>(cacheKey);
     }
 
     /**
@@ -253,8 +400,8 @@ export class IBMCloudService {
      * @returns string The masked API key
      */
     private maskApiKey(apiKey: string): string {
-        if (!apiKey) return '';
-        if (apiKey.length <= 8) return '***';
+        if (!apiKey) { return ''; }
+        if (apiKey.length <= 8) { return '***'; }
         return `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`;
     }
 

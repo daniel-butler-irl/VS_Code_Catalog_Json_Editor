@@ -3,32 +3,65 @@
 import { LoggingService } from './LoggingService';
 
 /**
+ * Configuration for different cache types
+ */
+interface CacheConfig {
+    /** Time-to-live in seconds */
+    ttlSeconds: number;
+    /** Whether to persist across sessions */
+    persistent?: boolean;
+}
+
+/**
+ * Cache record structure
+ */
+interface CacheRecord {
+    value: any;
+    expiry: number;
+}
+
+/**
  * Service for caching API responses and other data with TTL
  */
 export class CacheService {
     private static instance: CacheService;
-    private cache: Map<string, { value: any; expiry: number }> = new Map();
+    private cache: Map<string, CacheRecord> = new Map();
     private logger: LoggingService;
 
-    private constructor(private ttlSeconds: number = 3600) {
+    // Cache configuration for different types of data
+    private readonly cacheConfigs: Record<string, CacheConfig> = {
+        'catalog': { ttlSeconds: 7 * 24 * 60 * 60, persistent: true },    // 1 week
+        'offering': { ttlSeconds: 24 * 60 * 60, persistent: true },       // 1 day
+        'validation': { ttlSeconds: 24 * 60 * 60, persistent: true },     // 1 day
+        'catalogId': { ttlSeconds: 12 * 60 * 60, persistent: true },      // 12 hours
+        'default': { ttlSeconds: 3600 }                                   // 1 hour
+    };
+    private constructor() {
         this.logger = LoggingService.getInstance();
-        this.logger.debug(`Creating CacheService instance with TTL: ${ttlSeconds} seconds`);
+        this.logger.debug('Initializing CacheService');
     }
 
-    public static getInstance(ttlSeconds: number = 3600): CacheService {
+    public static getInstance(): CacheService {
         if (!CacheService.instance) {
-            CacheService.instance = new CacheService(ttlSeconds);
+            CacheService.instance = new CacheService();
         }
         return CacheService.instance;
     }
 
+      /**
+     * Gets the appropriate cache configuration for a key
+     */
+    private getConfigForKey(key: string): CacheConfig {
+        const prefix = key.split(':')[0];
+        return this.cacheConfigs[prefix] || this.cacheConfigs.default;
+    }
 
     /**
      * Retrieves a value from the cache
      * @param key The cache key
      * @returns The cached value or undefined if not found or expired
      */
-    public get(key: string): any | undefined {
+    public get<T>(key: string): T | undefined {
         this.logger.debug(`Cache lookup for key: ${key}`);
         
         const record = this.cache.get(key);
@@ -38,25 +71,21 @@ export class CacheService {
         }
 
         const now = Date.now();
-        const isExpired = now >= record.expiry;
-        
-        if (isExpired) {
+        if (now >= record.expiry) {
             this.logger.debug(`Cache MISS - Expired entry for key: ${key}`, {
                 expiredAt: new Date(record.expiry).toISOString(),
-                now: new Date(now).toISOString(),
-                age: Math.round((now - (record.expiry - this.ttlSeconds * 1000)) / 1000)
+                now: new Date(now).toISOString()
             });
             this.cache.delete(key);
             return undefined;
         }
 
-        const timeLeft = Math.round((record.expiry - now) / 1000);
         this.logger.debug(`Cache HIT for key: ${key}`, {
-            timeLeftSeconds: timeLeft,
+            timeLeftSeconds: Math.round((record.expiry - now) / 1000),
             expiresAt: new Date(record.expiry).toISOString()
         });
         
-        return record.value;
+        return record.value as T;
     }
 
     /**
@@ -65,86 +94,95 @@ export class CacheService {
      * @param value The value to cache
      */
     public set(key: string, value: any): void {
-        const expiry = Date.now() + this.ttlSeconds * 1000;
+        const config = this.getConfigForKey(key);
+        const expiry = Date.now() + config.ttlSeconds * 1000;
+        
         this.cache.set(key, { value, expiry });
         
         this.logger.debug(`Cache SET for key: ${key}`, {
             expiresAt: new Date(expiry).toISOString(),
-            ttlSeconds: this.ttlSeconds,
-            valueType: typeof value,
-            isNull: value === null
+            ttlSeconds: config.ttlSeconds,
+            isPersistent: config.persistent
         });
     }
 
     /**
-     * Gets the current cache size
-     * @returns The number of entries in the cache
+     * Updates expiry for all cached items matching a prefix
+     * @param prefix The key prefix to refresh
      */
-    public size(): number {
-        return this.cache.size;
-    }
-
-    /**
-     * Clears expired entries from the cache
-     * @returns The number of entries cleared
-     */
-    public clearExpired(): number {
+    public refreshPrefix(prefix: string): void {
+        const config = this.getConfigForKey(prefix);
         const now = Date.now();
-        let cleared = 0;
-        
+        const newExpiry = now + config.ttlSeconds * 1000;
+
+        let refreshCount = 0;
         this.cache.forEach((record, key) => {
-            if (now >= record.expiry) {
-                this.cache.delete(key);
-                cleared++;
+            if (key.startsWith(prefix)) {
+                record.expiry = newExpiry;
+                refreshCount++;
             }
         });
 
-        if (cleared > 0) {
-            this.logger.debug(`Cleared ${cleared} expired cache entries`, {
-                remainingEntries: this.cache.size
+        if (refreshCount > 0) {
+            this.logger.debug(`Refreshed ${refreshCount} cache entries with prefix: ${prefix}`, {
+                newExpiryTime: new Date(newExpiry).toISOString()
             });
+        }
+    }
+
+    /**
+     * Clears the entire cache
+     */
+    public clearAll(): void {
+        const size = this.cache.size;
+        this.cache.clear();
+        this.logger.info(`Cleared entire cache (${size} entries)`);
+    }
+
+    /**
+     * Clears cache entries matching a prefix
+     * @param prefix The key prefix to clear
+     * @returns Number of entries cleared
+     */
+    public clearPrefix(prefix: string): number {
+        let cleared = 0;
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix)) {
+                this.cache.delete(key);
+                cleared++;
+            }
+        }
+        
+        if (cleared > 0) {
+            this.logger.info(`Cleared ${cleared} cache entries with prefix: ${prefix}`);
         }
         
         return cleared;
     }
 
     /**
-     * Clears all entries from the cache
-     */
-    public clear(): void {
-        const size = this.cache.size;
-        this.cache.clear();
-        this.logger.debug(`Cache cleared - removed ${size} entries`);
-    }
-
-    /**
      * Gets cache statistics
-     * @returns Object containing cache statistics
      */
     public getStats(): Record<string, any> {
         const now = Date.now();
         const stats = {
-            size: this.cache.size,
+            totalSize: this.cache.size,
+            entriesByPrefix: {} as Record<string, number>,
             activeEntries: 0,
-            expiredEntries: 0,
-            averageTimeLeft: 0
+            expiredEntries: 0
         };
 
-        let totalTimeLeft = 0;
-        this.cache.forEach((record) => {
+        this.cache.forEach((record, key) => {
+            const prefix = key.split(':')[0];
+            stats.entriesByPrefix[prefix] = (stats.entriesByPrefix[prefix] || 0) + 1;
+            
             if (now < record.expiry) {
                 stats.activeEntries++;
-                totalTimeLeft += (record.expiry - now) / 1000;
             } else {
                 stats.expiredEntries++;
             }
         });
 
-        if (stats.activeEntries > 0) {
-            stats.averageTimeLeft = Math.round(totalTimeLeft / stats.activeEntries);
-        }
-
-        this.logger.debug('Cache statistics', stats);
         return stats;
     }
 }

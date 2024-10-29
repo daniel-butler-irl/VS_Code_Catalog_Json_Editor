@@ -13,7 +13,7 @@ import { IBMCloudService } from '../services/IBMCloudService';
 export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-    
+
     private readonly expandedNodes: Set<string>;
     private static readonly EXPANDED_NODES_KEY = 'ibmCatalog.expandedNodes';
     private treeView?: vscode.TreeView<CatalogTreeItem>;
@@ -36,12 +36,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         this.treeView = treeView;
 
         // Track expanded/collapsed state changes
-        this.treeView.onDidExpandElement(e => {
+        this.treeView.onDidExpandElement((e) => {
             this.expandedNodes.add(e.element.jsonPath);
             this.saveExpandedState();
         });
 
-        this.treeView.onDidCollapseElement(e => {
+        this.treeView.onDidCollapseElement((e) => {
             this.expandedNodes.delete(e.element.jsonPath);
             this.saveExpandedState();
         });
@@ -55,14 +55,6 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     public refresh(item?: CatalogTreeItem): void {
         this._onDidChangeTreeData.fire(item);
-    }
-
-    /**
-     * Updates validation status for a specific path
-     */
-    public updateValidation(path: string, status: ValidationStatus, message?: string): void {
-        // Find and update the specific item
-        this.refresh(); // For now, refresh the whole tree. This can be optimized later
     }
 
     /**
@@ -82,9 +74,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         try {
             if (!element) {
                 const catalogData = await this.catalogService.getCatalogData();
-                return await this.createTreeItems(catalogData, '$');
+                return await this.createTreeItems(catalogData, '$', undefined);
             }
-            return await this.createTreeItems(element.value, element.jsonPath);
+            return await this.createTreeItems(element.value, element.jsonPath, element);
         } catch (error) {
             this.handleError('Failed to get tree items', error);
             return [];
@@ -94,7 +86,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Creates tree items from a JSON value
      */
-    private async createTreeItems(value: unknown, parentPath: string): Promise<CatalogTreeItem[]> {
+    private async createTreeItems(
+        value: unknown,
+        parentPath: string,
+        parentItem?: CatalogTreeItem
+    ): Promise<CatalogTreeItem[]> {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
@@ -104,7 +100,21 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         for (const [key, val] of Object.entries(value)) {
             const path = this.buildJsonPath(parentPath, key);
             const schemaMetadata = this.getSchemaMetadata(path);
-            
+
+            // Determine if this is an 'id' under 'dependencies'
+            const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
+            let catalogId: string | undefined = undefined;
+
+            if (isIdNode && parentItem?.catalogId) {
+                catalogId = parentItem.catalogId;
+            }
+
+            // If this node is 'catalog_id', pass its value as catalogId to children
+            if (key === 'catalog_id' && typeof val === 'string') {
+                // Next child nodes should have this catalogId
+                // This will be handled when creating child nodes
+            }
+
             const item = new CatalogTreeItem(
                 this.context,
                 key,
@@ -112,11 +122,15 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 path,
                 this.getCollapsibleState(val, this.expandedNodes.has(path)),
                 this.getContextValue(val),
-                schemaMetadata
+                schemaMetadata,
+                parentItem, // Pass the parent item
+                isIdNode && typeof parentItem?.value === 'object' && parentItem.value !== null
+                    ? (parentItem.value as Record<string, any>)['catalog_id']
+                    : undefined // Pass the catalog_id if this is an 'id' node
             );
 
-            if (this.needsValidation(key, schemaMetadata)) {
-                await this.validateItem(item);
+            if (item.needsValidation()) {
+                await item.validateItem();
             }
 
             items.push(item);
@@ -125,28 +139,6 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         return this.sortTreeItems(items);
     }
 
-    // Determines if a field needs validation
-    private needsValidation(key: string, schemaMetadata?: SchemaMetadata): boolean {
-        return key === 'catalog_id'; // Add other fields as necessary
-    }
-
-    // Validates a tree item
-    private async validateItem(item: CatalogTreeItem): Promise<void> {
-  const apiKey = await AuthService.getApiKey(this.context);
-  if (!apiKey) {
-    item.updateValidationStatus(ValidationStatus.LoginRequired);
-    return;
-  }
-
-  item.updateValidationStatus(ValidationStatus.Validating);
-
-  const ibmCloudService = new IBMCloudService(apiKey);
-  const isValid = await ibmCloudService.validateCatalogId(item.value as string);
-  item.updateValidationStatus(
-    isValid ? ValidationStatus.Valid : ValidationStatus.Invalid,
-    isValid ? undefined : 'Invalid catalog ID'
-  );
-}
     /**
      * Builds a JSONPath expression
      */
@@ -201,20 +193,21 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     private getTypeOrder(item: CatalogTreeItem): number {
         switch (item.contextValue) {
-            case 'editable': return 0;    // Simple values first
-            case 'container': return 1;   // Objects second
-            case 'array': return 2;       // Arrays last
-            default: return 3;
+            case 'editable':
+                return 0; // Simple values first
+            case 'container':
+                return 1; // Objects second
+            case 'array':
+                return 2; // Arrays last
+            default:
+                return 3;
         }
     }
 
     /**
      * Determines the collapsible state for a value
      */
-    private getCollapsibleState(
-        value: unknown, 
-        isExpanded: boolean
-    ): vscode.TreeItemCollapsibleState {
+    private getCollapsibleState(value: unknown, isExpanded: boolean): vscode.TreeItemCollapsibleState {
         if (typeof value !== 'object' || value === null) {
             return vscode.TreeItemCollapsibleState.None;
         }
@@ -241,7 +234,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     private loadExpandedState(): string[] {
         return this.context.globalState.get<string[]>(
-            CatalogTreeProvider.EXPANDED_NODES_KEY, 
+            CatalogTreeProvider.EXPANDED_NODES_KEY,
             []
         );
     }

@@ -7,6 +7,7 @@ import { SchemaService } from './services/SchemaService';
 import { CatalogTreeItem } from './models/CatalogTreeItem';
 import { AuthService } from './services/AuthService';
 import { LoggingService, LogLevel } from './services/LoggingService';
+import { CacheService } from './services/CacheService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     // Initialize and configure logging
@@ -80,6 +81,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setTimeout(async () => {
             await highlightService.highlightJsonPath(node.jsonPath);
         }, 100); // Delay in milliseconds
+    }),
+    vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
+        const cacheService = CacheService.getInstance();
+        cacheService.clearAll();
+        vscode.window.showInformationMessage('IBM Catalog cache cleared');
+        treeProvider.refresh(); // Refresh the tree view to reflect changes
+    }),
+    vscode.commands.registerCommand('ibmCatalog.clearCatalogCache', () => {
+        const cacheService = CacheService.getInstance();
+        const cleared = cacheService.clearPrefix('catalog');
+        vscode.window.showInformationMessage(`Cleared ${cleared} catalog cache entries`);
+        treeProvider.refresh(); // Refresh the tree view to reflect changes
     }),
     vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
     await catalogService.addElement(parentNode, schemaService);
