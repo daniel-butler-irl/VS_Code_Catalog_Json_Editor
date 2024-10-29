@@ -9,46 +9,63 @@ import { CatalogTreeItem } from '../models/CatalogTreeItem';
  * Service for managing IBM Catalog JSON data and operations
  */
 export class CatalogService {
-        constructor(
+    private initialized: boolean = false;
+
+    constructor(
         private readonly context: vscode.ExtensionContext,
         private catalogFilePath?: string,
-        private catalogData?: unknown,
-        // Add optional parameter for testing
+        private catalogData: unknown = {},  // Initialize with empty object
         private readonly testFilePath?: string
     ) {}
 
-       /**
+    /**
      * Initializes the service by locating and loading the catalog file
-     * @throws Error if the catalog file cannot be found or loaded
+     * @returns True if initialization was successful, false otherwise
      */
-   public async initialize(): Promise<void> {
-        // If test file path is provided, use it directly
-        if (this.testFilePath) {
-            this.catalogFilePath = this.testFilePath;
-        } else {
-            const catalogFile = await this.findCatalogFile();
-            if (catalogFile) {
-                this.catalogFilePath = catalogFile;
-                await this.loadCatalogData();
+    public async initialize(): Promise<boolean> {
+        try {
+            // If test file path is provided, use it directly
+            if (this.testFilePath) {
+                this.catalogFilePath = this.testFilePath;
             } else {
-                // Don't throw, just log the state
-                console.log('No ibm_catalog.json file found in workspace');
-                return;
+                const catalogFile = await this.findCatalogFile();
+                if (catalogFile) {
+                    this.catalogFilePath = catalogFile;
+                    await this.loadCatalogData();
+                    this.initialized = true;
+                    return true;
+                } else {
+                    // No file found, but we're still initialized with empty state
+                    this.initialized = true;
+                    console.log('No ibm_catalog.json file found in workspace');
+                    return false;
+                }
             }
+            return true;
+        } catch (error) {
+            console.error('Initialization error:', error);
+            this.initialized = true; // Still mark as initialized to prevent loops
+            return false;
         }
     }
 
-
     /**
      * Gets the current catalog data
-     * @returns The loaded catalog data
-     * @throws Error if the catalog data hasn't been initialized
+     * @returns The loaded catalog data or empty object if not loaded
      */
     public async getCatalogData(): Promise<unknown> {
-        if (!this.catalogData) {
-            await this.loadCatalogData();
+        if (!this.initialized) {
+            await this.initialize();
         }
-        return this.catalogData;
+        return this.catalogData || {};
+    }
+
+    /**
+     * Gets the current catalog file path
+     * @returns The path to the catalog file or undefined if not set
+     */
+    public getCatalogFilePath(): string | undefined {
+        return this.catalogFilePath;
     }
 
     /**
@@ -56,6 +73,10 @@ export class CatalogService {
      * @param parentNode The parent node to add the element to
      */
     public async addElement(parentNode?: CatalogTreeItem): Promise<void> {
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
         try {
             if (!parentNode) {
                 throw new Error('No parent node specified');
@@ -122,19 +143,21 @@ export class CatalogService {
         return null;
     }
 
-    /**
+      /**
      * Loads the catalog data from the file
      * @throws Error if the file cannot be read or parsed
      */
     private async loadCatalogData(): Promise<void> {
         if (!this.catalogFilePath) {
-            throw new Error('Catalog file path not initialized');
+            this.catalogData = {};
+            return;
         }
 
         try {
             const content = await fs.readFile(this.catalogFilePath, 'utf8');
             this.catalogData = JSON.parse(content);
         } catch (error) {
+            this.catalogData = {};
             if (error instanceof Error) {
                 throw new Error(`Failed to load catalog data: ${error.message}`);
             }

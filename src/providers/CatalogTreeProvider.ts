@@ -9,18 +9,79 @@ import { CatalogService } from '../services/CatalogService';
  * Implements VS Code's TreeDataProvider interface to render JSON data in a tree view
  */
 export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<CatalogTreeItem | undefined | void> = 
-        new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
-
-    readonly onDidChangeTreeData: vscode.Event<CatalogTreeItem | undefined | void> = 
-        this._onDidChangeTreeData.event;
-
-    // Track expanded nodes for state persistence
-    private expandedNodes: Set<string> = new Set();
+    private _onDidChangeTreeData: vscode.EventEmitter<CatalogTreeItem | undefined | void> = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
+    readonly onDidChangeTreeData: vscode.Event<CatalogTreeItem | undefined | void> = this._onDidChangeTreeData.event;
+    private expandedNodes: Set<string>;
+    private static readonly EXPANDED_NODES_KEY = 'ibmCatalog.expandedNodes';
+    private treeView: vscode.TreeView<CatalogTreeItem>;
 
     constructor(
-        private readonly catalogService: CatalogService
-    ) {}
+        private readonly catalogService: CatalogService,
+        private readonly context: vscode.ExtensionContext
+    ) {
+        this.expandedNodes = new Set(this.loadExpandedState());
+        this.treeView = vscode.window.createTreeView('ibmCatalogTree', {
+            treeDataProvider: this,
+            showCollapseAll: true
+        });
+
+        // Register state change handlers
+        this.treeView.onDidExpandElement(e => {
+            this.expandedNodes.add(e.element.path);
+            this.saveExpandedState();
+        });
+
+        this.treeView.onDidCollapseElement(e => {
+            this.expandedNodes.delete(e.element.path);
+            this.saveExpandedState();
+        });
+    }
+
+    /**
+     * Loads the expanded state from persistent storage
+     */
+    private loadExpandedState(): string[] {
+        return this.context.globalState.get<string[]>(CatalogTreeProvider.EXPANDED_NODES_KEY, []);
+    }
+
+    /**
+     * Saves the current expanded state to persistent storage
+     */
+    private saveExpandedState(): void {
+        this.context.globalState.update(
+            CatalogTreeProvider.EXPANDED_NODES_KEY,
+            Array.from(this.expandedNodes)
+        );
+    }
+
+    /**
+     * Gets the tree view instance
+     */
+    public getTreeView(): vscode.TreeView<CatalogTreeItem> {
+        return this.treeView;
+    }
+
+    /**
+     * Registers handlers to track tree view state changes
+     */
+    private registerTreeViewStateHandler(): void {
+        const treeView = vscode.window.createTreeView('ibmCatalogTree', {
+            treeDataProvider: this,
+            showCollapseAll: true
+        });
+
+        // Track expanded/collapsed state changes
+        treeView.onDidExpandElement(e => {
+            this.expandedNodes.add(e.element.path);
+            this.saveExpandedState();
+        });
+
+        treeView.onDidCollapseElement(e => {
+            this.expandedNodes.delete(e.element.path);
+            this.saveExpandedState();
+        });
+    }
+
 
     /**
      * Refreshes the tree view
@@ -35,14 +96,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * @returns The VS Code TreeItem
      */
     getTreeItem(element: CatalogTreeItem): vscode.TreeItem {
-        if (element.collapsibleState === vscode.TreeItemCollapsibleState.Expanded) {
-            this.expandedNodes.add(element.path);
-        } else {
-            this.expandedNodes.delete(element.path);
-        }
-        return element;
-    }
-
+    const isExpanded = this.expandedNodes.has(element.path);
+    const collapsibleState = this.getCollapsibleState(element.value, isExpanded);
+    return element.withCollapsibleState(collapsibleState);
+}
     /**
      * Gets the children for a given element
      * @param element The parent element, undefined for root
@@ -51,10 +108,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
         try {
             if (!element) {
-                const catalog = await this.catalogService.getCatalogData();
-                return this.createTreeItems(catalog, '');
+                const catalogData = await this.catalogService.getCatalogData();
+                return this.createTreeItems(catalogData, '');
             }
-
             return this.createTreeItems(element.value, element.path);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to get tree items: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -68,62 +124,67 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * @param parentPath The JSON path to the parent
      * @returns Array of CatalogTreeItems
      */
-    private createTreeItems(value: unknown, parentPath: string): CatalogTreeItem[] {
+     private createTreeItems(value: unknown, parentPath: string): CatalogTreeItem[] {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
 
-        const items: CatalogTreeItem[] = [];
-
-        for (const [key, val] of Object.entries(value)) {
-            const currentPath = parentPath ? `${parentPath}.${key}` : key;
-            const collapsibleState = this.expandedNodes.has(currentPath)
-                ? vscode.TreeItemCollapsibleState.Expanded
-                : this.getCollapsibleState(val);
-
-            const item = new CatalogTreeItem(
+        const items = Object.entries(value).map(([key, val]) => {
+            const path = parentPath ? `${parentPath}.${key}` : key;
+            const isExpanded = this.expandedNodes.has(path);
+            return new CatalogTreeItem(
                 key,
                 val,
-                currentPath,
-                collapsibleState,
+                path,
+                this.getCollapsibleState(val, isExpanded),
                 this.getContextValue(val)
             );
-
-            items.push(item);
-        }
+        });
 
         return this.sortTreeItems(items);
     }
 
     /**
-     * Sorts tree items for consistent display
-     * @param items The items to sort
-     * @returns Sorted array of items
-     */
-    private sortTreeItems(items: CatalogTreeItem[]): CatalogTreeItem[] {
-        return items.sort((a, b) => {
-            // Sort containers and arrays first
-            const aIsContainer = a.contextValue === 'container' || a.contextValue === 'array';
-            const bIsContainer = b.contextValue === 'container' || b.contextValue === 'array';
-            
-            if (aIsContainer && !bIsContainer) return -1;
-            if (!aIsContainer && bIsContainer) return 1;
-            
-            // Then sort by label
-            return a.label.localeCompare(b.label);
-        });
-    }
+ * Sorts tree items for consistent display
+ * @param items The items to sort
+ * @returns Sorted array of items
+ */
+private sortTreeItems(items: CatalogTreeItem[]): CatalogTreeItem[] {
+    return items.sort((a, b) => {
+        // First sort by type: editable (simple values) first, then objects, then arrays
+        const getTypeOrder = (item: CatalogTreeItem): number => {
+            switch (item.contextValue) {
+                case 'editable': return 0;  // Simple values first
+                case 'container': return 1; // Objects second
+                case 'array': return 2;     // Arrays last
+                default: return 3;
+            }
+        };
+
+        const aOrder = getTypeOrder(a);
+        const bOrder = getTypeOrder(b);
+
+        if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+        }
+
+        // If same type, sort alphabetically
+        return a.label.localeCompare(b.label);
+    });
+}
 
     /**
      * Determines the collapsible state for a value
      * @param value The value to check
      * @returns The appropriate collapsible state
      */
-    private getCollapsibleState(value: unknown): vscode.TreeItemCollapsibleState {
-        if (typeof value === 'object' && value !== null && Object.keys(value).length > 0) {
-            return vscode.TreeItemCollapsibleState.Collapsed;
+    private getCollapsibleState(value: unknown, isExpanded: boolean): vscode.TreeItemCollapsibleState {
+        if (typeof value !== 'object' || value === null) {
+            return vscode.TreeItemCollapsibleState.None;
         }
-        return vscode.TreeItemCollapsibleState.None;
+        return isExpanded
+            ? vscode.TreeItemCollapsibleState.Expanded
+            : vscode.TreeItemCollapsibleState.Collapsed;
     }
 
     /**

@@ -31,7 +31,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
         public readonly label: string,
         public readonly value: unknown,
         public readonly path: string,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+        collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly contextValue: string
     ) {
         super(label, collapsibleState);
@@ -49,6 +49,21 @@ export class CatalogTreeItem extends vscode.TreeItem {
                 arguments: [this]
             };
         }
+    }
+
+    /**
+     * Creates a new instance with an updated collapsible state
+     * @param newState The new collapsible state
+     * @returns A new CatalogTreeItem with the updated state
+     */
+    public withCollapsibleState(newState: vscode.TreeItemCollapsibleState): CatalogTreeItem {
+        return new CatalogTreeItem(
+            this.label,
+            this.value,
+            this.path,
+            newState,
+            this.contextValue
+        );
     }
 
     /**
@@ -112,10 +127,6 @@ export class CatalogTreeItem extends vscode.TreeItem {
         return '';
     }
 
-    /**
-     * Gets the appropriate icon for the tree item based on its type and validation status
-     */
-    
     /**
      * Gets the appropriate icon for the tree item based on its type and validation status
      */
