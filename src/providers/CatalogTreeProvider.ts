@@ -1,22 +1,19 @@
-// src/providers/CatalogTreeProvider.ts
-
 import * as vscode from 'vscode';
 import { CatalogTreeItem, ValidationStatus, SchemaMetadata } from '../models/CatalogTreeItem';
 import { CatalogService } from '../services/CatalogService';
 import { SchemaService } from '../services/SchemaService';
-import { AuthService } from '../services/AuthService';
-import { IBMCloudService } from '../services/IBMCloudService';
+import { LoggingService } from '../services/LoggingService';
 
 /**
- * Provides a tree data provider for the IBM Catalog JSON structure
+ * Provides a tree data provider for the IBM Catalog JSON structure with optimized loading
  */
 export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-
     private readonly expandedNodes: Set<string>;
     private static readonly EXPANDED_NODES_KEY = 'ibmCatalog.expandedNodes';
     private treeView?: vscode.TreeView<CatalogTreeItem>;
+    private logger = LoggingService.getInstance();
 
     constructor(
         private readonly catalogService: CatalogService,
@@ -24,8 +21,6 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         private readonly schemaService: SchemaService
     ) {
         this.expandedNodes = new Set(this.loadExpandedState());
-
-        // Subscribe to catalog service events
         this.catalogService.onDidChangeContent(() => this.refresh());
     }
 
@@ -46,7 +41,6 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             this.saveExpandedState();
         });
 
-        // Dispose the tree view when the provider is disposed
         this.context.subscriptions.push(this.treeView);
     }
 
@@ -74,11 +68,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         try {
             if (!element) {
                 const catalogData = await this.catalogService.getCatalogData();
-                return await this.createTreeItems(catalogData, '$', undefined);
+                return this.createTreeItems(catalogData, '$', undefined);
             }
-            return await this.createTreeItems(element.value, element.jsonPath, element);
+            return this.createTreeItems(element.value, element.jsonPath, element);
         } catch (error) {
-            this.handleError('Failed to get tree items', error);
+            this.logger.error('Failed to get tree items', error);
             return [];
         }
     }
@@ -86,11 +80,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Creates tree items from a JSON value
      */
-    private async createTreeItems(
+    private createTreeItems(
         value: unknown,
         parentPath: string,
         parentItem?: CatalogTreeItem
-    ): Promise<CatalogTreeItem[]> {
+    ): CatalogTreeItem[] {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
@@ -109,11 +103,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 catalogId = parentItem.catalogId;
             }
 
-            // If this node is 'catalog_id', pass its value as catalogId to children
-            if (key === 'catalog_id' && typeof val === 'string') {
-                // Next child nodes should have this catalogId
-                // This will be handled when creating child nodes
-            }
+            // Set initial validation status based on field type
+            const initialStatus = (key === 'catalog_id' || isIdNode) ?
+                ValidationStatus.Pending :
+                ValidationStatus.Unknown;
 
             const item = new CatalogTreeItem(
                 this.context,
@@ -123,20 +116,28 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 this.getCollapsibleState(val, this.expandedNodes.has(path)),
                 this.getContextValue(val),
                 schemaMetadata,
-                parentItem, // Pass the parent item
-                isIdNode && typeof parentItem?.value === 'object' && parentItem.value !== null
-                    ? (parentItem.value as Record<string, any>)['catalog_id']
-                    : undefined // Pass the catalog_id if this is an 'id' node
+                parentItem,
+                catalogId,
+                initialStatus
             );
 
-            if (item.needsValidation()) {
-                await item.validateItem();
+            // Queue validation if needed
+            if (initialStatus === ValidationStatus.Pending) {
+                void this.queueValidation(item);
             }
 
             items.push(item);
         }
 
         return this.sortTreeItems(items);
+    }
+
+    /**
+     * Queues an item for background validation
+     */
+    private async queueValidation(item: CatalogTreeItem): Promise<void> {
+        // Don't await - let validation happen in background
+        void item.queueForValidation();
     }
 
     /**
@@ -247,14 +248,5 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             CatalogTreeProvider.EXPANDED_NODES_KEY,
             Array.from(this.expandedNodes)
         );
-    }
-
-    /**
-     * Handles errors consistently
-     */
-    private handleError(message: string, error: unknown): void {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        vscode.window.showErrorMessage(`${message}: ${errorMessage}`);
-        console.error(`${message}:`, error);
     }
 }
