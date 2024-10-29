@@ -1,4 +1,7 @@
+// src/models/CatalogTreeItem.ts
 import * as vscode from 'vscode';
+import { IBMCloudService } from '../services/IBMCloudService';
+import { AuthService } from '../services/AuthService';
 
 /**
  * Validation status for tree items
@@ -7,7 +10,8 @@ export enum ValidationStatus {
     Unknown = 'unknown',
     Valid = 'valid',
     Invalid = 'invalid',
-    Validating = 'validating'  // Added for async validation support
+    Validating = 'validating',
+    LoginRequired = 'loginRequired', 
 }
 
 /**
@@ -36,20 +40,23 @@ export interface SchemaMetadata {
 export class CatalogTreeItem extends vscode.TreeItem {
     private readonly _validationMetadata: ValidationMetadata;
     private readonly _schemaMetadata?: SchemaMetadata;
+    private context: vscode.ExtensionContext;
 
+    
     /**
      * Creates a new CatalogTreeItem
      */
     constructor(
+        context: vscode.ExtensionContext,
         public readonly label: string,
         public readonly value: unknown,
         public readonly jsonPath: string,
         collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly contextValue: string,
-        schemaMetadata?: SchemaMetadata
+        schemaMetadata?: SchemaMetadata,
     ) {
         super(label, collapsibleState);
-
+        this.context = context;
         this._validationMetadata = {
             status: ValidationStatus.Unknown
         };
@@ -105,6 +112,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
      */
     public withCollapsibleState(newState: vscode.TreeItemCollapsibleState): CatalogTreeItem {
         return new CatalogTreeItem(
+            this.context,
             this.label,
             this.value,
             this.jsonPath,
@@ -128,28 +136,68 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
+     * Updates the display properties of the tree item.
+     */
+    public updateDisplayProperties(): void {
+        this.tooltip = this.createTooltip();
+        this.description = this.createDescription();
+        this.iconPath = this.getIconPath();
+    }
+
+
+    public updateValidationStatus(status: ValidationStatus, message?: string): void {
+    this._validationMetadata.status = status;
+    this._validationMetadata.message = message;
+    this._validationMetadata.lastChecked = new Date();
+
+    this.tooltip = this.createTooltip();
+    this.iconPath = this.getIconPath();
+    }
+
+
+    /**
      * Creates a tooltip for the item
      */
     private createTooltip(): string {
-        const parts: string[] = [
-            `Path: ${this.jsonPath}`,
-            `Type: ${this.getValueType()}`
-        ];
+  const parts: string[] = [
+    `Path: ${this.jsonPath}`,
+    `Type: ${this.getValueType()}`,
+  ];
 
-        if (this._schemaMetadata?.description) {
-            parts.push(`Description: ${this._schemaMetadata.description}`);
-        }
+  if (this._schemaMetadata?.description) {
+    parts.push(`Description: ${this._schemaMetadata.description}`);
+  }
 
-        if (this.isValidatable()) {
-            parts.push(this.getValidationMessage());
-        }
+  if (this.label === 'catalog_id' && typeof this.value === 'string') {
+    parts.push(`Fetching offering details...`);
+    this.updateTooltipWithOfferingDetails(this.value as string);
+  } else if (this.isEditable()) {
+    parts.push(`Value: ${this.formatValue(this.value)}`);
+  }
 
-        if (this.isEditable()) {
-            parts.push(`Value: ${this.formatValue(this.value)}`);
-        }
+  return parts.join('\n');
+}
 
-        return parts.join('\n');
-    }
+    /**
+     * Updates the tooltip with offering details from IBM Cloud.
+     * @param catalogId The catalog ID.
+     */
+    private async updateTooltipWithOfferingDetails(catalogId: string): Promise<void> {
+  const apiKey = await AuthService.getApiKey(this.context);
+  if (!apiKey) {
+    return;
+  }
+
+  const ibmCloudService = new IBMCloudService(apiKey);
+
+  try {
+    const details = await ibmCloudService.getOfferingDetails(catalogId);
+    const offeringName = details.name || 'Unknown Offering';
+    this.tooltip = `Catalog ID: ${catalogId}\nOffering Name: ${offeringName}`;
+  } catch (error) {
+    this.tooltip = `Catalog ID: ${catalogId}\nOffering details not found.`;
+  }
+}
 
     /**
      * Gets the validation message
@@ -157,16 +205,18 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private getValidationMessage(): string {
         const { status, message, lastChecked } = this._validationMetadata;
         const timestamp = lastChecked ? ` (Last checked: ${lastChecked.toLocaleTimeString()})` : '';
-        
+
         switch (status) {
             case ValidationStatus.Valid:
-                return `Validation: ✓ Valid${timestamp}`;
+            return `Validation: ✓ Valid${timestamp}`;
             case ValidationStatus.Invalid:
-                return `Validation: ✗ Invalid${message ? `: ${message}` : ''}${timestamp}`;
+            return `Validation: ✗ Invalid${message ? `: ${message}` : ''}${timestamp}`;
             case ValidationStatus.Validating:
-                return 'Validation: ⟳ In progress...';
+            return 'Validation: ⟳ In progress...';
+            case ValidationStatus.LoginRequired:
+            return 'Validation: Login required for validation';
             default:
-                return 'Validation: Pending';
+            return 'Validation: Pending';
         }
     }
 
@@ -206,22 +256,20 @@ export class CatalogTreeItem extends vscode.TreeItem {
     /**
      * Gets the validation status icon
      */
-    private getValidationIcon(): vscode.ThemeIcon {
-        switch (this._validationMetadata.status) {
-            case ValidationStatus.Valid:
-                return new vscode.ThemeIcon('pass-filled', 
-                    new vscode.ThemeColor('ibmCatalog.validationSuccess'));
-            case ValidationStatus.Invalid:
-                return new vscode.ThemeIcon('error', 
-                    new vscode.ThemeColor('ibmCatalog.validationError'));
-            case ValidationStatus.Validating:
-                return new vscode.ThemeIcon('sync', 
-                    new vscode.ThemeColor('ibmCatalog.validationPending'));
-            default:
-                return new vscode.ThemeIcon('question', 
-                    new vscode.ThemeColor('charts.foreground'));
-        }
-    }
+private getValidationIcon(): vscode.ThemeIcon {
+  switch (this._validationMetadata.status) {
+    case ValidationStatus.Valid:
+      return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('ibmCatalog.ValidationSuccess'));
+    case ValidationStatus.Invalid:
+      return new vscode.ThemeIcon('error', new vscode.ThemeColor('ibmCatalog.ValidationFail'));
+    case ValidationStatus.Validating:
+      return new vscode.ThemeIcon('sync', new vscode.ThemeColor('charts.foreground'));
+    case ValidationStatus.LoginRequired:
+      return new vscode.ThemeIcon('key', new vscode.ThemeColor('charts.foreground'));
+    default:
+      return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.foreground'));
+  }
+}
 
     /**
      * Gets the type-based icon

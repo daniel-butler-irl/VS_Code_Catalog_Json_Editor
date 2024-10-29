@@ -4,6 +4,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
+import { AddElementDialog } from '../ui/AddElementDialog';
+import { SchemaService } from '../services/SchemaService';
 
 /**
  * Service for managing IBM Catalog JSON data and operations
@@ -71,32 +73,32 @@ export class CatalogService {
         return this.catalogFilePath;
     }
 
-    /**
-     * Adds a new element to the catalog
-     * @param parentNode The parent node to add the element to
-     */
-    public async addElement(parentNode?: CatalogTreeItem): Promise<void> {
-        if (!this.initialized) {
-            await this.initialize();
-        }
 
-        try {
-            if (!parentNode) {
-                throw new Error('No parent node specified');
-            }
+/**
+ * Adds a new element to the catalog at the specified path.
+ * @param parentNode The parent node where the new element will be added.
+ * @param schemaService The schema service instance.
+ */
+public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
+  if (!this.initialized) {
+    await this.initialize();
+  }
 
-            const newValue = await this.promptForValue(parentNode);
-            if (newValue === undefined) {
-                return; // User cancelled
-            }
+  try {
+    const newElement = await AddElementDialog.show(parentNode, schemaService);
 
-            await this.updateJsonValue(parentNode.jsonPath, newValue);
-            await this.loadCatalogData(); // Reload to ensure consistency
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to add element: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            throw error;
-        }
+    if (newElement === undefined) {
+      return; // User cancelled
     }
+
+    // Update the JSON data
+    await this.updateJsonValue(`${parentNode.jsonPath}`, newElement);
+    await this.loadCatalogData(); // Reload to ensure consistency
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to add element: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
+  }
+}
 
     /**
      * Edits an existing element in the catalog

@@ -1,7 +1,11 @@
+// src/providers/CatalogTreeProvider.ts
+
 import * as vscode from 'vscode';
 import { CatalogTreeItem, ValidationStatus, SchemaMetadata } from '../models/CatalogTreeItem';
 import { CatalogService } from '../services/CatalogService';
 import { SchemaService } from '../services/SchemaService';
+import { AuthService } from '../services/AuthService';
+import { IBMCloudService } from '../services/IBMCloudService';
 
 /**
  * Provides a tree data provider for the IBM Catalog JSON structure
@@ -78,9 +82,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         try {
             if (!element) {
                 const catalogData = await this.catalogService.getCatalogData();
-                return this.createTreeItems(catalogData, '$');
+                return await this.createTreeItems(catalogData, '$');
             }
-            return this.createTreeItems(element.value, element.jsonPath);
+            return await this.createTreeItems(element.value, element.jsonPath);
         } catch (error) {
             this.handleError('Failed to get tree items', error);
             return [];
@@ -90,16 +94,19 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Creates tree items from a JSON value
      */
-    private createTreeItems(value: unknown, parentPath: string): CatalogTreeItem[] {
+    private async createTreeItems(value: unknown, parentPath: string): Promise<CatalogTreeItem[]> {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
 
-        const items = Object.entries(value).map(([key, val]) => {
+        const items: CatalogTreeItem[] = [];
+
+        for (const [key, val] of Object.entries(value)) {
             const path = this.buildJsonPath(parentPath, key);
             const schemaMetadata = this.getSchemaMetadata(path);
             
-            return new CatalogTreeItem(
+            const item = new CatalogTreeItem(
+                this.context,
                 key,
                 val,
                 path,
@@ -107,29 +114,56 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 this.getContextValue(val),
                 schemaMetadata
             );
-        });
+
+            if (this.needsValidation(key, schemaMetadata)) {
+                await this.validateItem(item);
+            }
+
+            items.push(item);
+        }
 
         return this.sortTreeItems(items);
     }
 
+    // Determines if a field needs validation
+    private needsValidation(key: string, schemaMetadata?: SchemaMetadata): boolean {
+        return key === 'catalog_id'; // Add other fields as necessary
+    }
+
+    // Validates a tree item
+    private async validateItem(item: CatalogTreeItem): Promise<void> {
+  const apiKey = await AuthService.getApiKey(this.context);
+  if (!apiKey) {
+    item.updateValidationStatus(ValidationStatus.LoginRequired);
+    return;
+  }
+
+  item.updateValidationStatus(ValidationStatus.Validating);
+
+  const ibmCloudService = new IBMCloudService(apiKey);
+  const isValid = await ibmCloudService.validateCatalogId(item.value as string);
+  item.updateValidationStatus(
+    isValid ? ValidationStatus.Valid : ValidationStatus.Invalid,
+    isValid ? undefined : 'Invalid catalog ID'
+  );
+}
     /**
      * Builds a JSONPath expression
      */
     private buildJsonPath(parentPath: string, key: string): string {
-    if (/^\[\d+\]$/.test(key)) {
-        // Key is already an array index
-        return `${parentPath}${key}`;
+        if (/^\[\d+\]$/.test(key)) {
+            // Key is already an array index
+            return `${parentPath}${key}`;
+        }
+        if (/^\d+$/.test(key)) {
+            // Numeric key indicates array index
+            return `${parentPath}[${key}]`;
+        }
+        if (parentPath === '$') {
+            return `$.${key}`;
+        }
+        return `${parentPath}.${key}`;
     }
-    if (/^\d+$/.test(key)) {
-        // Numeric key indicates array index
-        return `${parentPath}[${key}]`;
-    }
-    if (parentPath === '$') {
-        return `$.${key}`;
-    }
-    return `${parentPath}.${key}`;
-}
-
 
     /**
      * Gets schema metadata for a JSON path
@@ -230,6 +264,4 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         vscode.window.showErrorMessage(`${message}: ${errorMessage}`);
         console.error(`${message}:`, error);
     }
-
-    
 }

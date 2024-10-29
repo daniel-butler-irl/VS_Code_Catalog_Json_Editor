@@ -4,6 +4,8 @@ import { CatalogFileSystemWatcher } from './services/CatalogFileSystemWatcher';
 import { CatalogService } from './services/CatalogService';
 import { EditorHighlightService } from './services/EditorHighlightService';
 import { SchemaService } from './services/SchemaService';
+import { CatalogTreeItem } from './models/CatalogTreeItem';
+import { AuthService } from './services/AuthService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     // Create and initialize services
@@ -17,11 +19,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const highlightService = new EditorHighlightService();
 
     try {
-        // Create status bar item
+         // Create status bar item
         const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-        statusBarItem.text = "$(search) Looking for IBM Catalog files...";
+        statusBarItem.command = 'ibmCatalog.login'; // Default command
         statusBarItem.show();
         context.subscriptions.push(statusBarItem);
+
+        // Function to update the status bar based on login status
+  async function updateStatusBar() {
+    const isLoggedIn = await AuthService.isLoggedIn(context);
+    if (isLoggedIn) {
+      statusBarItem.text = '$(account) Logged in to IBM Cloud';
+      statusBarItem.tooltip = 'Click to logout';
+      statusBarItem.command = 'ibmCatalog.logout';
+    } else {
+      statusBarItem.text = '$(account) Not logged in to IBM Cloud';
+      statusBarItem.tooltip = 'Click to login';
+      statusBarItem.command = 'ibmCatalog.login';
+    }
+  }
+
+  // Call the function to set the initial status
+  updateStatusBar();
 
         // Initialize catalog service
         await catalogService.initialize();
@@ -45,6 +64,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setTimeout(async () => {
             await highlightService.highlightJsonPath(node.jsonPath);
         }, 100); // Delay in milliseconds
+    }),
+    vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
+    await catalogService.addElement(parentNode, schemaService);
+    treeProvider.refresh();
+  }), vscode.commands.registerCommand('ibmCatalog.login', async () => {
+      await AuthService.promptForApiKey(context);
+      await updateStatusBar();
+      treeProvider.refresh();
+    }),
+    vscode.commands.registerCommand('ibmCatalog.logout', async () => {
+      await AuthService.clearApiKey(context);
+      vscode.window.showInformationMessage('Logged out of IBM Cloud.');
+      await updateStatusBar();
+      treeProvider.refresh();
     }),
             vscode.commands.registerCommand('ibmCatalog.locateCatalogFile', async () => {
                 const files = await vscode.workspace.findFiles('**/ibm_catalog.json', '**/node_modules/**');
@@ -72,15 +105,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         });
 
         context.subscriptions.push(treeView);
-
-        // Update status bar based on catalog data
-        const catalogData = await catalogService.getCatalogData();
-if (catalogData && Object.keys(catalogData).length > 0) {
-    statusBarItem.text = "$(file-code) IBM Catalog file found";
-    treeProvider.refresh();
-} else {
-    statusBarItem.text = "$(warning) No IBM Catalog file found";
-}
 
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
