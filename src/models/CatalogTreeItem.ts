@@ -1,4 +1,5 @@
 // src/models/CatalogTreeItem.ts
+
 import * as vscode from 'vscode';
 import { IBMCloudService } from '../services/IBMCloudService';
 import { AuthService } from '../services/AuthService';
@@ -32,6 +33,14 @@ export interface ValidationMetadata {
     details?: Record<string, unknown>;
 }
 
+export interface FlavorNodeValue {
+    configuration: Array<{
+        key: string;
+        type: string;
+        default_value?: string | number | boolean;
+        required: boolean;
+    }>;
+}
 /**
  * Metadata about a tree item's schema definition
  */
@@ -124,6 +133,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
             this._validationMetadata.status
         );
     }
+
     /**
      * Gets the parent dependency node that contains this item
      * @returns The dependency node or undefined if not in a dependency
@@ -155,6 +165,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
             offeringId: typeof value.id === 'string' ? value.id : undefined
         };
     }
+
     /**
      * Updates the item's display properties based on current state.
      * This includes tooltip, description, icon, and edit command if applicable.
@@ -170,12 +181,14 @@ export class CatalogTreeItem extends vscode.TreeItem {
                 title: 'Edit Value',
                 arguments: [this],
             };
+        } else {
+            this.command = undefined;
         }
     }
 
     /**
- * Checks if this item represents a flavor within a dependency structure
- */
+     * Checks if this item represents a flavor within a dependency structure
+     */
     public isDependencyFlavor(): boolean {
         const flavorPattern = /\$\.products\[\d+\]\.flavors\[\d+\]\.dependencies\[\d+\]\.flavors\[\d+\]$/;
         return flavorPattern.test(this.jsonPath);
@@ -226,6 +239,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
         const flavorPattern = /\.dependencies\[\d+\]\.flavors\[\d+\]$/;
         return flavorPattern.test(this.jsonPath);
     }
+
     /**
      * Queues this item for background validation if needed.
      * Starts the validation processor if not already running.
@@ -248,7 +262,6 @@ export class CatalogTreeItem extends vscode.TreeItem {
             }, CatalogTreeItem.QUEUE_PROCESS_DELAY);
         }
     }
-
 
     /**
      * Process validation queue safely
@@ -278,11 +291,12 @@ export class CatalogTreeItem extends vscode.TreeItem {
             this.isProcessingQueue = false;
         }
     }
+
     /**
-         * Performs the actual validation of the item.
-         * For catalog_ids, validates against IBM Cloud.
-         * For offering IDs within dependencies, validates against the parent catalog.
-         */
+     * Performs the actual validation of the item.
+     * For catalog_ids, validates against IBM Cloud.
+     * For offering IDs within dependencies, validates against the parent catalog.
+     */
     public async validateItem(): Promise<void> {
         const logger = LoggingService.getInstance();
         this.updateValidationStatus(ValidationStatus.Validating);
@@ -525,8 +539,8 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
- * Checks if this item needs validation
- */
+     * Checks if this item needs validation
+     */
     public needsValidation(): boolean {
         return this.label === 'catalog_id' ||
             this.isOfferingIdInDependency() ||
@@ -675,10 +689,23 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
-     * Checks if this item is editable in the tree view
+     * Determines if the item is editable based on its context
      */
     public isEditable(): boolean {
-        return this.contextValue === 'editable';
+        return this.contextValue === 'editable' ||
+            this.label === 'catalog_id' ||
+            this.isOfferingIdInDependency() ||
+            this.isDependencyFlavor() ||
+            this.isInputMappingField();
+    }
+
+    /**
+     * Determines if the item is an input mapping field
+     */
+    public isInputMappingField(): boolean {
+        return Boolean(
+            this.jsonPath.match(/\.input_mapping\[\d+\]\.(dependency_(?:input|output)|version_input)$/)
+        );
     }
 
     /**
@@ -710,4 +737,76 @@ export class CatalogTreeItem extends vscode.TreeItem {
         });
         return undefined;
     }
+
+    /**
+     * Retrieves the root node of the tree.
+     * @returns The root CatalogTreeItem or undefined if not found.
+     */
+    public getRoot(): CatalogTreeItem | undefined {
+        let current: CatalogTreeItem | undefined = this;
+        while (current.parent) {
+            current = current.parent;
+        }
+        return current;
+    }
+
+    /**
+     * Finds the nearest ancestor with the specified label.
+     * @param label The label to search for.
+     * @returns The CatalogTreeItem with the matching label or undefined if not found.
+     */
+    public findAncestorByLabel(label: string): CatalogTreeItem | undefined {
+        let current: CatalogTreeItem | undefined = this.parent;
+        while (current) {
+            if (current.label === label) {
+                return current;
+            }
+            current = current.parent;
+        }
+        return undefined;
+    }
+
+    /**
+    * Type guard to check if the current node is a flavor node.
+    * @returns boolean indicating if the node is a flavor node.
+    */
+    public isFlavorNode(): this is CatalogTreeItem & { value: FlavorNodeValue } {
+        return (
+            typeof this.value === 'object' &&
+            this.value !== null &&
+            'configuration' in this.value &&
+            Array.isArray((this.value as any).configuration)
+        );
+    }
+
+    /**
+     * Finds the ancestor node that is a flavor node.
+     * @returns CatalogTreeItem & { value: FlavorNodeValue } The flavor node or undefined if not found.
+     */
+    public findAncestorFlavorNode(): (CatalogTreeItem & { value: FlavorNodeValue }) | undefined {
+        let current: CatalogTreeItem | undefined = this.parent;
+        while (current) {
+            if (current.isFlavorNode()) {
+                return current;
+            }
+            current = current.parent;
+        }
+        return undefined;
+    }
+
+    /**
+     * Additional helper methods can be added below as needed.
+     */
+
+    /**
+     * Retrieves the root node of the tree.
+     * This is an alias for getRoot() to maintain consistency if needed.
+     */
+    public getRootNode(): CatalogTreeItem | undefined {
+        return this.getRoot();
+    }
+
+    /**
+     * Additional methods or overrides can be implemented here if necessary.
+     */
 }

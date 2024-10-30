@@ -2,7 +2,6 @@
 
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
 import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-management/v1');
-import { BaseService } from 'ibm-cloud-sdk-core/lib/base-service';
 import { LoggingService } from './LoggingService';
 import { CacheService } from './CacheService';
 import { throttle } from 'lodash';
@@ -62,9 +61,11 @@ export interface Kind {
     metadata?: Record<string, unknown>;
 }
 
-/**
- * Represents a version of an offering
- */
+export interface Output {
+    key: string;
+    description?: string;
+}
+
 export interface OfferingVersion {
     id: string;
     version: string;
@@ -75,6 +76,8 @@ export interface OfferingVersion {
     offering_id?: string;
     kind_id?: string;
     tags?: string[];
+    configuration?: Configuration[];
+    outputs?: Output[];
 }
 
 /**
@@ -87,6 +90,14 @@ export interface OfferingFlavor {
     index?: number;
     description?: string;
     displayName?: string;
+}
+
+export interface Configuration {
+    key: string;
+    type: string;
+    description?: string;
+    default_value?: string | number | boolean;
+    required?: boolean;
 }
 
 interface IBMCloudError extends Error {
@@ -409,7 +420,9 @@ export class IBMCloudService {
             catalog_id: catalogId,
             offering_id: offeringId,
             kind_id: kindId,
-            tags: version.tags
+            tags: version.tags,
+            configuration: version.configuration,  
+            outputs: version.outputs  
         }));
     }
 
@@ -806,6 +819,8 @@ export class IBMCloudService {
         const cacheKey = `catalogDetails:${catalogId}`;
         return this.cacheService.get<CatalogResponse>(cacheKey);
     }
+
+
     /**
      * Masks an API key for secure logging
      * @param apiKey The API key to mask

@@ -9,7 +9,9 @@ import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from '../services/SchemaService';
 import { AuthService } from './AuthService';
 import { LoggingService } from './LoggingService';
+import { InputMappingService, } from './InputMappingService';
 import type { OfferingFlavor } from './IBMCloudService';
+
 
 interface DependencyUpdate {
     id: string;
@@ -321,6 +323,11 @@ export class CatalogService {
         // Handle boolean values with QuickPick
         if (typeof currentValue === 'boolean' || node.schemaMetadata?.type === 'boolean') {
             return this.promptForBoolean(node.label, currentValue as boolean);
+        }
+
+        // Handle input mappings with QuickPick
+        if (node.isInputMappingField()) {
+            return this.promptForInputMapping(node, currentValue as string);
         }
 
         // Handle other types as before
@@ -792,6 +799,157 @@ export class CatalogService {
         return result;
     }
 
+
+    private async promptForInputMapping(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+
+        const dependencyNode = node.getDependencyParent();
+        if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
+            this.logger.error('Dependency node is invalid', dependencyNode);
+            return undefined;
+        }
+
+        const depValue = dependencyNode.value as Record<string, any>;
+        this.logger.debug('Dependency Node Value', depValue);
+
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (!apiKey) {
+            vscode.window.showWarningMessage('IBM Cloud API Key required for mapping suggestions');
+            return undefined;
+        }
+
+        const context = {
+            catalogId: depValue.catalog_id,
+            offeringId: depValue.id,
+            flavorName: Array.isArray(depValue.flavors) ? depValue.flavors[0] : undefined,
+            version: depValue.version
+        };
+        this.logger.debug('Input Mapping Context', context);
+
+        if (!context.catalogId || !context.offeringId || !context.version) {
+            this.logger.error('Context missing required fields', context);
+            return undefined;
+        }
+
+        const inputMappingService = new InputMappingService(
+            new IBMCloudService(apiKey)
+        );
+
+        const options = await inputMappingService.fetchMappingOptions(context);
+        if (options.length === 0) {
+            this.logger.error('No mapping options available');
+            return undefined;
+        }
+        const fieldType = this.getInputMappingFieldType(node);
+
+        if (fieldType === 'version_input') {
+            const keys = await this.getLocalConfigurationKeys(node);
+            this.logger.debug('Local Configuration Keys', keys);
+
+            if (!keys.length) {
+                vscode.window.showWarningMessage('No configuration keys found in the local catalog data.');
+                return undefined;
+            }
+
+            return this.promptWithQuickPick(
+                keys.map(key => ({ label: key })),
+                {
+                    placeHolder: currentValue || 'Select version input',
+                    title: 'Version Input'
+                }
+            );
+        }
+
+        if (fieldType === 'dependency_input' || fieldType === 'dependency_output') {
+            const options = await inputMappingService.fetchMappingOptions(context);
+
+            if (!options.length) {
+                vscode.window.showWarningMessage('No mapping options available from the offering.');
+                return undefined;
+            }
+
+            const filteredOptions = options.filter(opt =>
+                fieldType === 'dependency_input' ? opt.type === 'input' : opt.type === 'output'
+            );
+
+            if (!filteredOptions.length) {
+                vscode.window.showWarningMessage(`No ${fieldType.replace('_', ' ')} options available.`);
+                return undefined;
+            }
+
+            return this.promptWithQuickPick(
+                filteredOptions.map(opt => ({
+                    label: opt.value,
+                    description: opt.description,
+                    detail: opt.detail
+                })),
+                {
+                    placeHolder: currentValue || `Select ${fieldType.replace('_', ' ')}`,
+                    title: fieldType.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                }
+            );
+        }
+    }
+
+    private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' {
+        const match = node.jsonPath.match(/\.input_mapping\[\d+\]\.([^.]+)$/);
+        return (match?.[1] || 'version_input') as any;
+    }
+
+    private async promptWithQuickPick(
+        items: string[] | vscode.QuickPickItem[],
+        options: vscode.QuickPickOptions
+    ): Promise<string | undefined> {
+        const quickPickItems = items.map(item =>
+            typeof item === 'string' ? { label: item } : item
+        );
+
+        this.logger.debug('QuickPick Items', quickPickItems);
+        if (quickPickItems.length === 0) {
+            this.logger.error('QuickPick called with empty items');
+            return undefined;
+        }
+        const selection = await vscode.window.showQuickPick(
+            quickPickItems,
+            { ...options, canPickMany: false }
+        );
+
+        return selection?.label;
+    }
+
+    /**
+     * Retrieves configuration keys from the local ibm_catalog.json for the current dependency's flavor.
+     * @param node The CatalogTreeItem representing the dependency.
+     * @returns Promise<string[]> An array of configuration keys.
+     */
+    private async getLocalConfigurationKeys(node: CatalogTreeItem): Promise<string[]> {
+        // Use the type guard to find the flavor node
+        const flavorNode = node.findAncestorFlavorNode();
+
+        if (!flavorNode) {
+            this.logger.error('Could not find the flavor node containing this dependency.');
+            return [];
+        }
+
+        // TypeScript now knows flavorNode.value has 'configuration' as an array
+        const configuration = flavorNode.value.configuration as Array<{ key: string }>;
+
+        if (!Array.isArray(configuration)) {
+            this.logger.error('No configuration array found in the flavor node.');
+            return [];
+        }
+
+        // Extract configuration keys
+        const keys = configuration
+            .map((configItem) => configItem.key)
+            .filter((key): key is string => typeof key === 'string');
+
+        if (keys.length === 0) {
+            this.logger.error('No valid configuration keys found in the flavor configuration.');
+        }
+
+        return keys;
+    }
+
     /**
     * Retrieves the catalog_id associated with a given node.
     */
@@ -916,6 +1074,22 @@ export class CatalogService {
     private isDependencyNode(node: CatalogTreeItem): boolean {
         return /\.dependencies\[\d+\]$/.test(node.jsonPath);
     }
+
+    // Update the editInputMapping method in CatalogService
+
+    // public async editInputMapping(node: CatalogTreeItem): Promise<void> {
+    //     const apiKey = await AuthService.getApiKey(this.context);
+    //     const inputMappingService = new InputMappingService(
+    //         apiKey ? new IBMCloudService(apiKey) : undefined
+    //     );
+
+    //     const dependencyNode = node.parent;
+    //     if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
+    //         return;
+    //     }
+
+
+    // }
 
     /**
      * Determines the collapsible state for a value
