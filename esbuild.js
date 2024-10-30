@@ -1,85 +1,56 @@
-// esbuild.js
-const esbuild = require('esbuild');
-const path = require('path');
+const esbuild = require("esbuild");
 
+const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
-/** @type {import('esbuild').BuildOptions} */
-const baseConfig = {
-  logLevel: 'info',
-  bundle: true,
-  minify: false,
-  sourcemap: true,
-  platform: 'node'
+/**
+ * @type {import('esbuild').Plugin}
+ */
+const esbuildProblemMatcherPlugin = {
+	name: 'esbuild-problem-matcher',
+
+	setup(build) {
+		build.onStart(() => {
+			console.log('[watch] build started');
+		});
+		build.onEnd((result) => {
+			result.errors.forEach(({ text, location }) => {
+				console.error(`✘ [ERROR] ${text}`);
+				console.error(`    ${location.file}:${location.line}:${location.column}:`);
+			});
+			console.log('[watch] build finished');
+		});
+	},
 };
 
-// Main extension build config
-const mainConfig = {
-  ...baseConfig,
-  entryPoints: ['./src/extension.ts'],
-  outfile: 'dist/extension.js',
-  format: 'cjs',
-  external: [
-    'vscode',
-    '@ibm-cloud/platform-services/catalog-management/v1',
-    'ibm-cloud-sdk-core'
-  ]
-};
-
-// Webview build config
-const webviewConfig = {
-  ...baseConfig,
-  platform: 'browser',
-  entryPoints: {
-    'webview': './src/webview/webview.js',
-    'modules/logger': './src/webview/modules/logger.js',
-    'modules/jsonRenderer': './src/webview/modules/jsonRenderer.js',
-    'modules/messageHandler': './src/webview/modules/messageHandler.js',
-    'modules/modalManager': './src/webview/modules/modalManager.js',
-    'modules/stateManager': './src/webview/modules/stateManager.js'
-  },
-  outdir: 'dist/webview',
-  format: 'esm',
-  loader: {
-    '.css': 'copy'
-  }
-};
-
-async function buildAll() {
-  try {
-    // Ensure dist directory exists
-    require('fs').mkdirSync('dist', { recursive: true });
-    require('fs').mkdirSync('dist/webview/modules', { recursive: true });
-
-    if (watch) {
-      console.log('Starting watch mode...');
-      const mainCtx = await esbuild.context(mainConfig);
-      const webviewCtx = await esbuild.context(webviewConfig);
-
-      await Promise.all([
-        mainCtx.watch(),
-        webviewCtx.watch()
-      ]);
-      console.log('Watching for changes...');
-    } else {
-      console.log('Building extension...');
-      await esbuild.build(mainConfig);
-      console.log('Building webview...');
-      await esbuild.build(webviewConfig);
-
-      // Copy CSS file
-      const fs = require('fs');
-      fs.copyFileSync(
-        path.join(__dirname, 'src/webview/webview.css'),
-        path.join(__dirname, 'dist/webview/webview.css')
-      );
-
-      console.log('Build complete!');
-    }
-  } catch (error) {
-    console.error('Build failed:', error);
-    process.exit(1);
-  }
+async function main() {
+	const ctx = await esbuild.context({
+		entryPoints: [
+			'src/extension.ts'
+		],
+		bundle: true,
+		format: 'cjs',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'node',
+		outfile: 'dist/extension.js',
+		external: ['vscode'],
+		logLevel: 'silent',
+		plugins: [
+			/* add to the end of plugins array */
+			esbuildProblemMatcherPlugin,
+		],
+	});
+	if (watch) {
+		await ctx.watch();
+	} else {
+		await ctx.rebuild();
+		await ctx.dispose();
+	}
 }
 
-buildAll();
+main().catch(e => {
+	console.error(e);
+	process.exit(1);
+});

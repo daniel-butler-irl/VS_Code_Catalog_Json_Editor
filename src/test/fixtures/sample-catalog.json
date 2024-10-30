@@ -1,0 +1,22 @@
+{
+    "name": "test-catalog",
+    "version": "1.0.0",
+    "catalog_id": "test-123",
+    "offerings": [
+        {
+            "name": "test-offering-1",
+            "catalog_id": "offering-123",
+            "kinds": [
+                {
+                    "id": "kind-1",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "catalog_id": "version-123"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

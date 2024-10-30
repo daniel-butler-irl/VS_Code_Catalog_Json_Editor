@@ -1,77 +1,213 @@
 {
-  "name": "catalog-editor",
-  "displayName": "catalog_editor",
-  "description": "Simplify catalog entry editing",
+  "name": "ibm-catalog-json-editor",
+  "displayName": "IBM Catalog JSON Editor",
+  "description": "VS Code extension for managing IBM Cloud catalog JSON files",
   "version": "0.0.1",
+  "publisher": "daniel-butler-irl",
   "engines": {
-    "vscode": "^1.94.0"
+    "vscode": "^1.87.0"
   },
-  "categories": [
-    "Other"
-  ],
-  "activationEvents": [],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/ibm_catalog.json"
+  ],
   "contributes": {
+    "configuration": {
+      "title": "IBM Catalog",
+      "properties": {
+        "ibmCatalog.enableDebugLogging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable debug level logging for the IBM Catalog extension"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ibmCatalog.clearCache",
+        "title": "Clear Cache",
+        "category": "IBM Catalog"
+      },
+      {
+        "command": "ibmCatalog.clearCatalogCache",
+        "title": "Clear Catalog Cache",
+        "category": "IBM Catalog"
+      },
+      {
+        "command": "ibmCatalog.showLogs",
+        "title": "Show IBM Catalog Logs",
+        "category": "IBM Catalog"
+      },
+      {
+        "command": "ibmCatalog.refresh",
+        "title": "Refresh IBM Catalog View",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ibmCatalog.addElement",
+        "title": "Add Element",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ibmCatalog.editElement",
+        "title": "Edit Element",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "ibmCatalog.locateCatalogFile",
+        "title": "Locate IBM Catalog File",
+        "icon": "$(file-add)"
+      },
+      {
+        "command": "ibmCatalog.login",
+        "title": "Login to IBM Cloud"
+      },
+      {
+        "command": "ibmCatalog.logout",
+        "title": "Logout from IBM Cloud"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "catalogEditorView",
-          "title": "Catalog Editor",
-          "icon": "media/edit-content-svgrepo-com.svg"
+          "id": "ibm-catalog-explorer",
+          "title": "IBM Catalog Explorer",
+          "icon": "$(json)"
         }
       ]
     },
     "views": {
-      "catalogEditorView": [
+      "ibm-catalog-explorer": [
         {
-          "type": "webview",
-          "id": "catalogEditor.view",
-          "name": "IBM Catalog JSON Editor"
+          "id": "ibmCatalogTree",
+          "name": "Catalog Structure",
+          "icon": "$(json)",
+          "contextualTitle": "IBM Catalog JSON"
         }
       ]
     },
-    "commands": [
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "ibmCatalog.addElement",
+          "when": "view == ibmCatalogTree && viewItem == container",
+          "group": "inline"
+        }
+      ]
+    },
+    "colors": [
       {
-        "command": "catalogEditor.login",
-        "title": "IBM Catalog Editor: Login",
-        "category": "Catalog Editor"
+        "id": "ibmCatalog.stringColor",
+        "description": "Color for string values",
+        "defaults": {
+          "dark": "#da9465",
+          "light": "#bf5024",
+          "highContrast": "#FF8C00"
+        }
       },
       {
-        "command": "catalogEditor.logout",
-        "title": "IBM Catalog Editor: Logout",
-        "category": "Catalog Editor"
+        "id": "ibmCatalog.numberColor",
+        "description": "Color for number values",
+        "defaults": {
+          "dark": "#B5B6F8",
+          "light": "#1E4ACB",
+          "highContrast": "#8A2BE2"
+        }
+      },
+      {
+        "id": "ibmCatalog.booleanColor",
+        "description": "Color for boolean values",
+        "defaults": {
+          "dark": "#D7BA7D",
+          "light": "#b2b50d",
+          "highContrast": "#D7BA7D"
+        }
+      },
+      {
+        "id": "ibmCatalog.objectColor",
+        "description": "Color for object values",
+        "defaults": {
+          "dark": "#C586C0",
+          "light": "#6A0080",
+          "highContrast": "#C586C0"
+        }
+      },
+      {
+        "id": "ibmCatalog.arrayColor",
+        "description": "Color for array values",
+        "defaults": {
+          "dark": "#569CD6",
+          "light": "#1D4D7A",
+          "highContrast": "#569CD6"
+        }
+      },
+      {
+        "id": "ibmCatalog.nullColor",
+        "description": "Color for null/undefined values",
+        "defaults": {
+          "dark": "#575859",
+          "light": "#2c3136",
+          "highContrast": "#868f97"
+        }
+      },
+      {
+        "id": "ibmCatalog.enumColor",
+        "description": "Color for symbol/enum values",
+        "defaults": {
+          "dark": "#B5CEA8",
+          "light": "#31806c",
+          "highContrast": "#B5CEA8"
+        }
+      },
+      {
+        "id": "ibmCatalog.ValidationSuccess",
+        "description": "Color for validation success",
+        "defaults": {
+          "dark": "#007700",
+          "light": "#0E6300",
+          "highContrast": "#00FF00"
+        }
+      },
+      {
+        "id": "ibmCatalog.ValidationFail",
+        "description": "Color for validation failure",
+        "defaults": {
+          "dark": "#FF0000",
+          "light": "#B50000",
+          "highContrast": "#FF0000"
+        }
       }
     ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "clean": "rimraf dist/",
-    "prebuild": "npm run clean",
-    "build": "npm run compile",
-    "compile": "node ./esbuild.js",
-    "watch": "node ./esbuild.js --watch",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:jsonc-parser --format=cjs --platform=node",
+    "watch": "npm run build -- --watch",
+    "clean": "rimraf dist",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run build",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
-    "pretest": "npm run compile"
+    "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
-    "@types/chai": "^4.3.4",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^20.4.2",
-    "@types/node-fetch": "^2.6.11",
-    "@types/vscode": "^1.94.0",
-    "@vscode/vsce": "^3.2.0",
-    "chai": "^4.3.7",
-    "esbuild-plugin-copy": "^2.1.1",
+    "@types/glob": "^8.1.0",
+    "@types/lodash": "^4.17.12",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.87.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "esbuild": "^0.19.12",
+    "eslint": "^8.54.0",
+    "glob": "^10.3.10",
+    "lodash": "^4.17.21",
     "mocha": "^10.2.0",
-    "rimraf": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.1.6"
+    "rimraf": "^5.0.10",
+    "typescript": "^5.3.2"
   },
   "dependencies": {
-    "@ibm-cloud/platform-services": "^0.65.2",
-    "ibm-cloud-sdk-core": "^5.1.0",
-    "node-fetch": "^2.6.7",
-    "strip-json-comments": "^3.1.1"
+    "@ibm-cloud/platform-services": "^0.67.0",
+    "ibm-cloud-sdk-core": "^5.1.0"
   }
 }
