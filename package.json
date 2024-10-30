@@ -4,6 +4,10 @@
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
   "version": "0.0.1",
   "publisher": "daniel-butler-irl",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor"
+  },
   "engines": {
     "vscode": "^1.87.0"
   },
@@ -17,7 +21,7 @@
       "properties": {
         "ibmCatalog.enableDebugLogging": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Enable debug level logging for the IBM Catalog extension"
         }
       }
@@ -184,6 +188,7 @@
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:jsonc-parser --format=cjs --platform=node",
     "watch": "npm run build -- --watch",
     "clean": "rimraf dist",
+     "compile": "tsc -p ./",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run build",
