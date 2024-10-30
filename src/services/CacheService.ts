@@ -38,27 +38,27 @@ export class CacheService {
 
     // Cache configuration for different types of data
     private readonly cacheConfigs: Record<string, CacheConfig> = {
-        'catalog': { 
+        'catalog': {
             ttlSeconds: 7 * 24 * 60 * 60,     // 1 week
             persistent: true,
             storagePrefix: 'catalog_cache_'
         },
-        'offering': { 
+        'offering': {
             ttlSeconds: 24 * 60 * 60,         // 1 day
             persistent: true,
             storagePrefix: 'offering_cache_'
         },
-        'validation': { 
+        'validation': {
             ttlSeconds: 24 * 60 * 60,         // 1 day
             persistent: true,
             storagePrefix: 'validation_cache_'
         },
-        'catalogId': { 
+        'catalogId': {
             ttlSeconds: 12 * 60 * 60,         // 12 hours
             persistent: true,
             storagePrefix: 'catalogid_cache_'
         },
-        'default': { 
+        'default': {
             ttlSeconds: 3600,                 // 1 hour
             persistent: false,
             storagePrefix: 'default_cache_'
@@ -113,7 +113,7 @@ export class CacheService {
      */
     public get<T>(key: string): T | undefined {
         this.logger.debug(`Cache lookup for key: ${key}`);
-        
+
         const record = this.cache.get(key);
         if (!record) {
             this.logger.debug(`Cache MISS - Key not found: ${key}`);
@@ -135,7 +135,7 @@ export class CacheService {
             expiresAt: new Date(record.expiry).toISOString(),
             metadata: record.metadata
         });
-        
+
         return record.value as T;
     }
 
@@ -148,19 +148,19 @@ export class CacheService {
     public set(key: string, value: any, metadata?: Record<string, unknown>): void {
         const config = this.getConfigForKey(key);
         const expiry = Date.now() + config.ttlSeconds * 1000;
-        
+
         const record: CacheRecord = {
             value,
             expiry,
             metadata
         };
-        
+
         this.cache.set(key, record);
-        
+
         if (config.persistent && this.context) {
             void this.persistCacheEntry(key, record);
         }
-        
+
         this.logger.debug(`Cache SET for key: ${key}`, {
             expiresAt: new Date(expiry).toISOString(),
             ttlSeconds: config.ttlSeconds,
@@ -177,7 +177,7 @@ export class CacheService {
 
         const config = this.getConfigForKey(key);
         const storageKey = `${config.storagePrefix}${key}`;
-        
+
         try {
             await this.context.globalState.update(storageKey, record);
             this.logger.debug(`Persisted cache entry: ${key}`);
@@ -231,7 +231,7 @@ export class CacheService {
      */
     private async invalidateKey(key: string): Promise<void> {
         this.cache.delete(key);
-        
+
         if (this.context) {
             const config = this.getConfigForKey(key);
             const storageKey = `${config.storagePrefix}${key}`;
@@ -272,21 +272,21 @@ export class CacheService {
     public async clearAll(): Promise<void> {
         const size = this.cache.size;
         this.cache.clear();
-        
+
         if (this.context) {
             // Clear all persisted cache entries
             for (const config of Object.values(this.cacheConfigs)) {
                 if (config.persistent) {
                     const keys = this.context.globalState.keys()
                         .filter(key => key.startsWith(config.storagePrefix));
-                    
+
                     for (const key of keys) {
                         await this.context.globalState.update(key, undefined);
                     }
                 }
             }
         }
-        
+
         this.logger.info(`Cleared entire cache (${size} entries)`);
     }
 
@@ -298,7 +298,7 @@ export class CacheService {
     public async clearPrefix(prefix: string): Promise<number> {
         let cleared = 0;
         const config = this.getConfigForKey(prefix);
-        
+
         // Clear in-memory cache
         for (const key of this.cache.keys()) {
             if (key.startsWith(prefix)) {
@@ -306,21 +306,21 @@ export class CacheService {
                 cleared++;
             }
         }
-        
+
         // Clear persistent storage if applicable
         if (config.persistent && this.context) {
             const storageKeys = this.context.globalState.keys()
                 .filter(key => key.startsWith(config.storagePrefix));
-            
+
             for (const key of storageKeys) {
                 await this.context.globalState.update(key, undefined);
             }
         }
-        
+
         if (cleared > 0) {
             this.logger.info(`Cleared ${cleared} cache entries with prefix: ${prefix}`);
         }
-        
+
         return cleared;
     }
 
@@ -340,7 +340,7 @@ export class CacheService {
         this.cache.forEach((record, key) => {
             const prefix = key.split(':')[0];
             stats.entriesByPrefix[prefix] = (stats.entriesByPrefix[prefix] || 0) + 1;
-            
+
             if (now < record.expiry) {
                 stats.activeEntries++;
             } else {
