@@ -124,7 +124,37 @@ export class CatalogTreeItem extends vscode.TreeItem {
             this._validationMetadata.status
         );
     }
+    /**
+     * Gets the parent dependency node that contains this item
+     * @returns The dependency node or undefined if not in a dependency
+     */
+    public getDependencyParent(): CatalogTreeItem | undefined {
+        let current: CatalogTreeItem | undefined = this;
+        const dependencyPattern = /\.dependencies\[\d+\]$/;
 
+        while (current && !dependencyPattern.test(current.jsonPath)) {
+            current = current.parent;
+        }
+
+        return current;
+    }
+
+    /**
+     * Gets the dependency context for this node
+     * @returns Object containing catalogId and offeringId if available
+     */
+    public getDependencyContext(): { catalogId?: string; offeringId?: string } {
+        const dependencyNode = this.getDependencyParent();
+        if (!dependencyNode || typeof dependencyNode.value !== 'object' || !dependencyNode.value) {
+            return {};
+        }
+
+        const value = dependencyNode.value as Record<string, unknown>;
+        return {
+            catalogId: typeof value.catalog_id === 'string' ? value.catalog_id : undefined,
+            offeringId: typeof value.id === 'string' ? value.id : undefined
+        };
+    }
     /**
      * Updates the item's display properties based on current state.
      * This includes tooltip, description, icon, and edit command if applicable.
@@ -188,6 +218,14 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
     }
 
+    /**
+     * Checks if this item represents a flavor within a dependency
+     */
+    public isFlavorInDependency(): boolean {
+        // Updated pattern to match individual flavor items in a dependency
+        const flavorPattern = /\.dependencies\[\d+\]\.flavors\[\d+\]$/;
+        return flavorPattern.test(this.jsonPath);
+    }
     /**
      * Queues this item for background validation if needed.
      * Starts the validation processor if not already running.

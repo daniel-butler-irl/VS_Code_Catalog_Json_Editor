@@ -9,6 +9,7 @@ import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from '../services/SchemaService';
 import { AuthService } from './AuthService';
 import { LoggingService } from './LoggingService';
+import type { OfferingFlavor } from './IBMCloudService';
 
 /**
  * Service for managing IBM Catalog JSON data and operations
@@ -294,6 +295,7 @@ export class CatalogService {
             throw error;
         }
     }
+
     /**
      * Prompts the user for a value based on the node type
      */
@@ -304,6 +306,11 @@ export class CatalogService {
 
         if (node.isOfferingIdInDependency()) {
             return this.promptForOfferingId(node, currentValue as string);
+        }
+
+        // Add flavor handling
+        if (this.isFlavorSelection(node)) {
+            return this.promptForFlavor(node, currentValue as string);
         }
 
         // Handle other types as before
@@ -499,6 +506,239 @@ export class CatalogService {
                 return null;
             }
         });
+    }
+
+    /**
+     * Prompts the user to select or enter a flavor for a dependency
+     * @param node The node representing the flavor field
+     * @param currentValue The current flavor value
+     * @returns Promise<string | undefined> The selected flavor name
+     */
+    private async promptForFlavor(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+        const logger = this.logger;
+        const apiKey = await AuthService.getApiKey(this.context);
+
+        if (!apiKey) {
+            logger.debug('No API key available for flavor lookup');
+            return this.promptForManualFlavorInput(currentValue);
+        }
+
+        // Get dependency context using CatalogTreeItem methods
+        const dependencyNode = node.getDependencyParent();
+        logger.debug('Finding dependency context', {
+            currentPath: node.jsonPath,
+            dependencyNodeFound: !!dependencyNode,
+            dependencyPath: dependencyNode?.jsonPath,
+            dependencyValue: dependencyNode?.value
+        });
+
+        const context = node.getDependencyContext();
+        logger.debug('Resolved dependency context', {
+            context,
+            currentNodePath: node.jsonPath,
+            parentNodePath: dependencyNode?.jsonPath
+        });
+
+        if (!context.catalogId || !context.offeringId) {
+            logger.error('Missing dependency context', {
+                node: node.jsonPath,
+                context,
+                parentNode: dependencyNode?.jsonPath,
+                parentValue: dependencyNode?.value
+            });
+            vscode.window.showErrorMessage('Cannot determine catalog ID or offering ID for flavor selection.');
+            return this.promptForManualFlavorInput(currentValue);
+        }
+
+        try {
+            const ibmCloudService = new IBMCloudService(apiKey);
+            logger.debug('Fetching flavors for offering', {
+                catalogId: context.catalogId,
+                offeringId: context.offeringId
+            });
+
+            const flavors = await ibmCloudService.getAvailableFlavors(context.catalogId, context.offeringId);
+            logger.debug('Retrieved flavors', {
+                count: flavors.length,
+                flavors
+            });
+
+            if (flavors.length === 0) {
+                logger.debug('No flavors available for offering', {
+                    catalogId: context.catalogId,
+                    offeringId: context.offeringId
+                });
+                vscode.window.showWarningMessage('No flavors available for this offering.');
+                return this.promptForManualFlavorInput(currentValue);
+            }
+
+            // Create QuickPick items
+            const items: vscode.QuickPickItem[] = [
+                {
+                    label: "$(edit) Enter Custom Flavor",
+                    description: "Manually enter a flavor name",
+                    alwaysShow: true
+                },
+                {
+                    label: "Available Flavors",
+                    kind: vscode.QuickPickItemKind.Separator
+                }
+            ];
+
+            // Add available flavors with details
+            for (const flavorName of flavors) {
+                try {
+                    const details = await ibmCloudService.getFlavorDetails(
+                        context.catalogId,
+                        context.offeringId,
+                        flavorName
+                    );
+
+                    logger.debug('Retrieved flavor details', {
+                        flavorName,
+                        details,
+                        isCurrentValue: flavorName === currentValue
+                    });
+
+                    items.push({
+                        // If this is the current value, add a checkmark
+                        label: `${flavorName === currentValue ? '$(check) ' : ''}${details?.label || flavorName}`,
+                        description: flavorName,
+                        detail: this.createFlavorDetail(flavorName, details, currentValue)
+                    });
+                } catch (error) {
+                    logger.error('Failed to get flavor details', {
+                        flavorName,
+                        error,
+                        catalogId: context.catalogId,
+                        offeringId: context.offeringId
+                    });
+                    // Still add the flavor, just with minimal information
+                    items.push({
+                        label: `${flavorName === currentValue ? '$(check) ' : ''}${flavorName}`,
+                        description: flavorName,
+                        detail: flavorName === currentValue ? '(Current Selection)' : undefined
+                    });
+                }
+            }
+
+            // Show QuickPick
+            const selection = await vscode.window.showQuickPick(items, {
+                title: 'Select Flavor',
+                placeHolder: currentValue || 'Select a flavor or enter a custom name',
+                matchOnDescription: true, // Allow matching on flavor ID
+                matchOnDetail: true // Allow matching on description
+            });
+
+            if (!selection) {
+                return undefined; // User cancelled
+            }
+
+            // If user chose to enter custom flavor, show input box
+            if (selection.label === "$(edit) Enter Custom Flavor") {
+                return this.promptForManualFlavorInput(currentValue);
+            }
+
+            // Return the selected flavor name
+            return selection.description;
+        } catch (error) {
+            logger.error('Failed to fetch flavors', error);
+            // Fallback to manual entry
+            return this.promptForManualFlavorInput(currentValue);
+        }
+    }
+
+    /**
+     * Prompts for manual flavor name entry
+     * @param currentValue The current flavor value
+     * @returns Promise<string | undefined> The entered flavor name
+     */
+    private async promptForManualFlavorInput(currentValue?: string): Promise<string | undefined> {
+        const logger = this.logger;
+        logger.debug('Prompting for manual flavor input', { currentValue });
+
+        const result = await vscode.window.showInputBox({
+            prompt: 'Enter the flavor name',
+            value: currentValue,
+            validateInput: (value) => {
+                if (!value.trim()) {
+                    return 'Flavor name cannot be empty';
+                }
+                return null;
+            }
+        });
+
+        logger.debug('Manual flavor input result', {
+            result,
+            currentValue,
+            changed: result !== currentValue
+        });
+
+        return result;
+    }
+
+    /**
+     * Creates a detail string for a flavor in the QuickPick
+     * @param flavorName The name of the flavor
+     * @param details The flavor details if available
+     * @param currentValue The current selected value if any
+     * @returns A formatted detail string
+     */
+    private createFlavorDetail(
+        flavorName: string,
+        details: OfferingFlavor | undefined,
+        currentValue?: string
+    ): string {
+        const parts: string[] = [];
+
+        // Add current selection indicator
+        if (flavorName === currentValue) {
+            parts.push('(Current Selection)');
+        }
+
+        // Add localized label if available
+        if (details?.label_i18n?.['en']) {
+            parts.push(details.label_i18n['en']);
+        }
+
+        // Add name if different from label
+        if (details?.name && details.name !== details?.label) {
+            parts.push(`Name: ${details.name}`);
+        }
+
+        // Add display name if available and different
+        if (details?.displayName &&
+            details.displayName !== details.label &&
+            details.displayName !== details.name) {
+            parts.push(`Display: ${details.displayName}`);
+        }
+
+        // Use raw flavor name if no other details available
+        if (parts.length === 0) {
+            return 'No additional details available';
+        }
+
+        return parts.join(' • ');
+    }
+
+    /**
+     * Checks if the node represents a flavor selection within a dependency
+     * @param node The tree item to check
+     * @returns boolean True if the node is a flavor selection
+     */
+    private isFlavorSelection(node: CatalogTreeItem): boolean {
+        const logger = this.logger;
+        // Matches items in a dependency's flavors array
+        const flavorPattern = /\.dependencies\[\d+\]\.flavors\[\d+\]$/;
+        const result = flavorPattern.test(node.jsonPath);
+
+        logger.debug('Checking if node is flavor selection', {
+            path: node.jsonPath,
+            isFlavorSelection: result,
+            pattern: flavorPattern.toString()
+        });
+
+        return result;
     }
 
     /**

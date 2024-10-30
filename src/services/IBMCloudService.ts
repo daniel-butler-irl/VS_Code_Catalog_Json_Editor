@@ -85,6 +85,8 @@ export interface OfferingFlavor {
     label: string;
     label_i18n?: Record<string, string>;
     index?: number;
+    description?: string;
+    displayName?: string;
 }
 
 interface IBMCloudError extends Error {
