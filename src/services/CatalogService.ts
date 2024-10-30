@@ -11,6 +11,11 @@ import { AuthService } from './AuthService';
 import { LoggingService } from './LoggingService';
 import type { OfferingFlavor } from './IBMCloudService';
 
+interface DependencyUpdate {
+    id: string;
+    name: string;
+}
+
 /**
  * Service for managing IBM Catalog JSON data and operations
  */
@@ -456,11 +461,11 @@ export class CatalogService {
     }
 
     /**
-     * Prompts the user to select or enter an offering ID within a dependency
-     * @param node The dependency node.
-     * @param currentValue The current offering ID.
-     * @returns The selected or entered offering ID.
-     */
+      * Prompts for and validates an offering ID, automatically updating the name field
+      * @param node The dependency node being edited
+      * @param currentValue The current offering ID value
+      * @returns Promise<string | undefined> The selected offering ID or undefined if cancelled
+      */
     private async promptForOfferingId(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
         const logger = this.logger;
         const apiKey = await AuthService.getApiKey(this.context);
@@ -470,7 +475,7 @@ export class CatalogService {
             return this.promptForManualOfferingId(currentValue);
         }
 
-        // Retrieve the corresponding catalog_id from the parent nodes
+        // Get the catalog ID from the dependency structure
         const catalogId = await this.getCatalogIdForNode(node);
         if (!catalogId) {
             vscode.window.showErrorMessage('Cannot determine catalog_id for offering validation.');
@@ -483,18 +488,15 @@ export class CatalogService {
 
             // Create QuickPick items
             const items: vscode.QuickPickItem[] = [
-                // Add option to enter custom ID
                 {
                     label: "$(edit) Enter Custom Offering ID",
                     description: "Manually enter an offering ID",
                     alwaysShow: true
                 },
-                // Add separator
                 {
                     label: "Available Offerings",
                     kind: vscode.QuickPickItemKind.Separator
                 },
-                // Add available offerings
                 ...offerings.map(offering => ({
                     label: offering.name,
                     description: offering.id,
@@ -506,8 +508,8 @@ export class CatalogService {
             const selection = await vscode.window.showQuickPick(items, {
                 title: 'Select Offering',
                 placeHolder: currentValue || 'Select an offering or enter a custom ID',
-                matchOnDescription: true, // Allow matching on offering ID
-                matchOnDetail: true // Allow matching on description
+                matchOnDescription: true,
+                matchOnDetail: true
             });
 
             if (!selection) {
@@ -516,16 +518,27 @@ export class CatalogService {
 
             // If user chose to enter custom ID, show input box
             if (selection.label === "$(edit) Enter Custom Offering ID") {
-                return this.promptForManualOfferingId(currentValue);
+                const customId = await this.promptForManualOfferingId(currentValue);
+                if (customId) {
+                    await this.updateDependencyName(node, customId);
+                }
+                return customId;
             }
 
-            // Return the selected offering ID
+            // Update the name field with the offering name
+            if (selection.description) {
+                await this.updateDependencyName(node, selection.description, selection.label);
+            }
+
             return selection.description;
 
         } catch (error) {
             logger.error('Failed to fetch offerings', error);
-            // Fallback to manual entry
-            return this.promptForManualOfferingId(currentValue);
+            const manualId = await this.promptForManualOfferingId(currentValue);
+            if (manualId) {
+                await this.updateDependencyName(node, manualId);
+            }
+            return manualId;
         }
     }
 
@@ -792,5 +805,142 @@ export class CatalogService {
             }
         }
         return undefined;
+    }
+
+    /**
+    * Updates the name field in a dependency based on the offering ID
+    * @param node The dependency ID node
+    * @param offeringId The offering ID
+    * @param knownName Optional known offering name to avoid additional API call
+    */
+    private async updateDependencyName(node: CatalogTreeItem, offeringId: string, knownName?: string): Promise<void> {
+        try {
+            // Get the parent dependency node
+            const dependencyNode = this.findDependencyParentNode(node);
+            if (!dependencyNode) {
+                this.logger.error('Could not find parent dependency node', {
+                    path: node.jsonPath
+                });
+                return;
+            }
+
+            let name: string | undefined = knownName;
+
+            // If we don't have the name, try to fetch it
+            if (!name) {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (apiKey) {
+                    const catalogId = await this.getCatalogIdForNode(node);
+                    if (catalogId) {
+                        const ibmCloudService = new IBMCloudService(apiKey);
+                        const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+                        const offering = offerings.find(o => o.id === offeringId);
+                        name = offering?.name;
+                    }
+                }
+            }
+
+            // Update the name field if we have one
+            if (name) {
+                const nameField = this.findNameField(dependencyNode);
+                if (nameField) {
+                    await this.updateJsonValue(nameField.jsonPath, name);
+                } else {
+                    // Handle case where name field doesn't exist
+                    const dependencyValue = dependencyNode.value as Record<string, any>;
+                    dependencyValue.name = name;
+                    await this.updateJsonValue(dependencyNode.jsonPath, dependencyValue);
+                }
+            }
+
+        } catch (error) {
+            this.logger.error('Failed to update dependency name', error);
+            // Don't throw - this is a non-critical enhancement
+        }
+    }
+
+    /**
+     * Finds the parent dependency node for an offering ID node
+     * @param node The offering ID node
+     * @returns The parent dependency node or undefined
+     */
+    private findDependencyParentNode(node: CatalogTreeItem): CatalogTreeItem | undefined {
+        let current = node.parent;
+        while (current) {
+            if (this.isDependencyNode(current)) {
+                return current;
+            }
+            current = current.parent;
+        }
+        return undefined;
+    }
+
+    /**
+     * Finds the name field within a dependency node
+     * @param dependencyNode The dependency node
+     * @returns The name field node or undefined
+     */
+    private findNameField(dependencyNode: CatalogTreeItem): CatalogTreeItem | undefined {
+        const children = this.getNodeChildren(dependencyNode);
+        return children.find(child => child.label === 'name');
+    }
+
+    /**
+     * Gets the children of a node
+     * @param node The parent node
+     * @returns Array of child nodes
+     */
+    private getNodeChildren(node: CatalogTreeItem): CatalogTreeItem[] {
+        if (typeof node.value === 'object' && node.value !== null) {
+            return Object.entries(node.value).map(([key, value]) => {
+                return new CatalogTreeItem(
+                    this.context,
+                    key,
+                    value,
+                    `${node.jsonPath}.${key}`,
+                    this.getCollapsibleState(value),
+                    this.getContextValue(value),
+                    undefined,
+                    node
+                );
+            });
+        }
+        return [];
+    }
+
+    /**
+     * Checks if a node represents a dependency
+     * @param node The node to check
+     * @returns boolean True if the node is a dependency
+     */
+    private isDependencyNode(node: CatalogTreeItem): boolean {
+        return /\.dependencies\[\d+\]$/.test(node.jsonPath);
+    }
+
+    /**
+     * Determines the collapsible state for a value
+     * @param value The value to check
+     * @returns The appropriate collapsible state
+     */
+    private getCollapsibleState(value: unknown): vscode.TreeItemCollapsibleState {
+        if (typeof value === 'object' && value !== null) {
+            return vscode.TreeItemCollapsibleState.Collapsed;
+        }
+        return vscode.TreeItemCollapsibleState.None;
+    }
+
+    /**
+     * Determines the context value for a node
+     * @param value The value to check
+     * @returns The appropriate context value
+     */
+    private getContextValue(value: unknown): string {
+        if (Array.isArray(value)) {
+            return 'array';
+        }
+        if (typeof value === 'object' && value !== null) {
+            return 'container';
+        }
+        return 'editable';
     }
 }
