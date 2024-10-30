@@ -144,6 +144,51 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
+ * Checks if this item represents a flavor within a dependency structure
+ */
+    public isDependencyFlavor(): boolean {
+        const flavorPattern = /\$\.products\[\d+\]\.flavors\[\d+\]\.dependencies\[\d+\]\.flavors\[\d+\]$/;
+        return flavorPattern.test(this.jsonPath);
+    }
+
+    /**
+     * Validates a dependency flavor against its offering
+     */
+    private async validateDependencyFlavor(): Promise<void> {
+        try {
+            const dependencyNode = this.parent?.parent; // Navigate up to the dependency node
+            if (!dependencyNode) {
+                return;
+            }
+
+            const catalogId = (dependencyNode.value as Record<string, any>)['catalog_id'];
+            const offeringId = (dependencyNode.value as Record<string, any>)['id'];
+
+            if (!catalogId || !offeringId || typeof this.value !== 'string') {
+                return;
+            }
+
+            const apiKey = await AuthService.getApiKey(this.context);
+            if (!apiKey) {
+                this.updateValidationStatus(ValidationStatus.LoginRequired);
+                return;
+            }
+
+            const ibmCloudService = new IBMCloudService(apiKey);
+            const isValid = await ibmCloudService.validateFlavor(catalogId, offeringId, this.value);
+
+            this.updateValidationStatus(
+                isValid ? ValidationStatus.Valid : ValidationStatus.Invalid,
+                isValid ? undefined : 'Invalid flavor for this offering'
+            );
+
+        } catch (error) {
+            this.logger.error('Failed to validate dependency flavor', error);
+            this.updateValidationStatus(ValidationStatus.Invalid, 'Failed to validate flavor');
+        }
+    }
+
+    /**
      * Queues this item for background validation if needed.
      * Starts the validation processor if not already running.
      */
@@ -442,10 +487,12 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
-     * Checks if this item needs validation (catalog_id or dependency id)
-     */
+ * Checks if this item needs validation
+ */
     public needsValidation(): boolean {
-        return this.label === 'catalog_id' || this.isOfferingIdInDependency();
+        return this.label === 'catalog_id' ||
+            this.isOfferingIdInDependency() ||
+            this.isDependencyFlavor();
     }
 
     /**

@@ -31,10 +31,60 @@ export interface CatalogItem {
     isPublic: boolean; // Indicates if the catalog is public
 }
 
+// Update the interfaces in IBMCloudService.ts
+
+/**
+ * Represents a complete offering with all its details
+ */
 export interface OfferingItem {
     id: string;
     name: string;
+    label?: string;
     shortDescription?: string;
+    kinds?: Kind[];
+    created?: string;
+    updated?: string;
+    metadata?: Record<string, unknown>;
+}
+
+/**
+ * Represents a kind within an offering
+ */
+export interface Kind {
+    id: string;
+    format_kind?: string;
+    format_kind_label?: string;
+    install_kind?: string;
+    install_kind_label?: string;
+    target_kind?: string;
+    target_kind_label?: string;
+    versions?: OfferingVersion[];
+    metadata?: Record<string, unknown>;
+}
+
+/**
+ * Represents a version of an offering
+ */
+export interface OfferingVersion {
+    id: string;
+    version: string;
+    flavor?: OfferingFlavor;
+    created?: string;
+    updated?: string;
+    catalog_id?: string;
+    offering_id?: string;
+    kind_id?: string;
+    tags?: string[];
+}
+
+/**
+ * Represents a flavor configuration within an offering version
+ */
+export interface OfferingFlavor {
+    name: string;
+    label: string;
+    label_i18n?: Record<string, string>;
+    index?: number;
 }
 
 interface IBMCloudError extends Error {
@@ -223,10 +273,10 @@ export class IBMCloudService {
     }
 
     /**
-     * Fetches all offerings for a given catalog ID, handling pagination.
-     * @param catalogId The catalog ID.
-     * @returns Promise<OfferingItem[]> Array of all offerings.
-     */
+   * Fetches all offerings for a given catalog ID, including versions and flavors
+   * @param catalogId The catalog ID
+   * @returns Promise<OfferingItem[]> Array of all offerings with their details
+   */
     public async getOfferingsForCatalog(catalogId: string): Promise<OfferingItem[]> {
         const cacheKey = `offerings:${catalogId}`;
         const logger = this.logger;
@@ -234,7 +284,10 @@ export class IBMCloudService {
         // Check cache first
         const cachedOfferings = this.cacheService.get<OfferingItem[]>(cacheKey);
         if (cachedOfferings) {
-            logger.debug(`Using cached offerings for catalog ID: ${catalogId}`, { count: cachedOfferings.length });
+            logger.debug(`Using cached offerings for catalog ID: ${catalogId}`, {
+                count: cachedOfferings.length,
+                withKinds: cachedOfferings.filter(o => o.kinds?.length).length
+            });
             return cachedOfferings;
         }
 
@@ -253,8 +306,6 @@ export class IBMCloudService {
                     catalogIdentifier: catalogId,
                     limit: PAGE_LIMIT,
                     offset: offset,
-                    // You can add other query parameters here if needed
-                    // e.g., sort, name, digest, includeHidden
                 });
 
                 const resources = response.result.resources ?? [];
@@ -263,7 +314,12 @@ export class IBMCloudService {
                     .map(offering => ({
                         id: offering.id!,
                         name: offering.name!,
-                        shortDescription: offering.short_description
+                        label: offering.label,
+                        shortDescription: offering.short_description,
+                        kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
+                        created: offering.created,
+                        updated: offering.updated,
+                        metadata: offering.metadata
                     }));
 
                 fetchedOfferings = fetchedOfferings.concat(offeringsPage);
@@ -272,17 +328,33 @@ export class IBMCloudService {
                 offset += PAGE_LIMIT;
                 totalCount = response.result.total_count ?? fetchedOfferings.length;
 
-                logger.debug(`Fetched ${offeringsPage.length} offerings. Total fetched so far: ${fetchedOfferings.length}/${totalCount}`);
+                logger.debug(`Fetched ${offeringsPage.length} offerings. Total fetched so far: ${fetchedOfferings.length}/${totalCount}`, {
+                    withKinds: offeringsPage.filter(o => o.kinds?.length).length,
+                    totalVersions: offeringsPage.reduce((sum, o) =>
+                        sum + (o.kinds?.reduce((ksum, k) => ksum + (k.versions?.length || 0), 0) || 0), 0)
+                });
 
                 // Introduce a small delay to respect API rate limits
-                await this.delay(200); // 200ms delay
+                await this.delay(200);
 
             } while (fetchedOfferings.length < totalCount);
 
-            logger.debug(`Successfully fetched all offerings for catalog ID: ${catalogId}`, { total: fetchedOfferings.length });
+            logger.debug(`Successfully fetched all offerings for catalog ID: ${catalogId}`, {
+                total: fetchedOfferings.length,
+                withKinds: fetchedOfferings.filter(o => o.kinds?.length).length,
+                totalVersions: fetchedOfferings.reduce((sum, o) =>
+                    sum + (o.kinds?.reduce((ksum, k) => ksum + (k.versions?.length || 0), 0) || 0), 0)
+            });
 
-            // Cache the results
-            this.cacheService.set(cacheKey, fetchedOfferings);
+            // Cache the results with metadata
+            this.cacheService.set(cacheKey, fetchedOfferings, {
+                catalogId,
+                timestamp: new Date().toISOString(),
+                totalOfferings: fetchedOfferings.length,
+                totalKinds: fetchedOfferings.reduce((sum, o) => sum + (o.kinds?.length || 0), 0),
+                totalVersions: fetchedOfferings.reduce((sum, o) =>
+                    sum + (o.kinds?.reduce((ksum, k) => ksum + (k.versions?.length || 0), 0) || 0), 0)
+            });
 
             return fetchedOfferings;
         } catch (error) {
@@ -291,6 +363,234 @@ export class IBMCloudService {
         }
     }
 
+    /**
+     * Maps raw kind data to typed Kind objects
+     * @param kinds Raw kind data from API
+     * @param offeringId The offering ID
+     * @param catalogId The catalog ID
+     * @returns Array of typed Kind objects
+     */
+    private mapKinds(kinds: any[], offeringId: string, catalogId: string): Kind[] {
+        return kinds.map(kind => ({
+            id: kind.id,
+            format_kind: kind.format_kind,
+            format_kind_label: kind.format_kind_label,
+            install_kind: kind.install_kind,
+            install_kind_label: kind.install_kind_label,
+            target_kind: kind.target_kind,
+            target_kind_label: kind.target_kind_label,
+            versions: this.mapVersions(kind.versions ?? [], offeringId, catalogId, kind.id),
+            metadata: kind.metadata
+        }));
+    }
+
+    /**
+     * Maps raw version data to typed OfferingVersion objects
+     * @param versions Raw version data from API
+     * @param offeringId The offering ID
+     * @param catalogId The catalog ID
+     * @param kindId The kind ID
+     * @returns Array of typed OfferingVersion objects
+     */
+    private mapVersions(versions: any[], offeringId: string, catalogId: string, kindId: string): OfferingVersion[] {
+        return versions.map(version => ({
+            id: version.id,
+            version: version.version,
+            flavor: version.flavor ? {
+                name: version.flavor.name,
+                label: version.flavor.label,
+                label_i18n: version.flavor.label_i18n,
+                index: version.flavor.index
+            } : undefined,
+            created: version.created,
+            updated: version.updated,
+            catalog_id: catalogId,
+            offering_id: offeringId,
+            kind_id: kindId,
+            tags: version.tags
+        }));
+    }
+
+    /**
+  * Gets all available flavors for a given offering
+  * @param catalogId The catalog ID
+  * @param offeringId The offering ID
+  * @returns Promise<string[]> Array of unique flavor names
+  */
+    public async getAvailableFlavors(catalogId: string, offeringId: string): Promise<string[]> {
+        const cacheKey = `flavors:${catalogId}:${offeringId}`;
+        this.logger.debug(`Fetching available flavors for offering ${offeringId} in catalog ${catalogId}`);
+
+        // Check cache first
+        const cachedFlavors = this.cacheService.get<string[]>(cacheKey);
+        if (cachedFlavors) {
+            this.logger.debug('Using cached flavors', { count: cachedFlavors.length });
+            return cachedFlavors;
+        }
+
+        try {
+            // Get offering details which includes kinds with versions and flavors
+            const response = await this.catalogManagement.getOffering({
+                catalogIdentifier: catalogId,
+                offeringId: offeringId
+            });
+
+            const offering = response.result;
+            if (!offering?.kinds?.length) {
+                return [];
+            }
+
+            // Extract unique flavor names across all versions of all kinds
+            const flavorSet = new Set<string>();
+            offering.kinds.forEach(kind => {
+                if (kind.versions) {
+                    kind.versions.forEach(version => {
+                        if (version.flavor?.name) {
+                            flavorSet.add(version.flavor.name);
+                        }
+                    });
+                }
+            });
+
+            const flavors = Array.from(flavorSet);
+
+            // Cache the results
+            this.cacheService.set(cacheKey, flavors, {
+                catalogId,
+                offeringId,
+                timestamp: new Date().toISOString()
+            });
+
+            this.logger.debug('Successfully fetched flavors', { count: flavors.length });
+            return flavors;
+
+        } catch (error) {
+            this.logger.error('Failed to fetch flavors', {
+                catalogId,
+                offeringId,
+                error: this.formatError(error)
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Gets detailed information about a specific flavor
+     * @param catalogId The catalog ID
+     * @param offeringId The offering ID
+     * @param flavorName The flavor name
+     * @returns Promise<OfferingFlavor | undefined> The flavor details if found
+     */
+    public async getFlavorDetails(catalogId: string, offeringId: string, flavorName: string): Promise<OfferingFlavor | undefined> {
+        const cacheKey = `flavorDetails:${catalogId}:${offeringId}:${flavorName}`;
+
+        // Check cache first
+        const cachedDetails = this.cacheService.get<OfferingFlavor>(cacheKey);
+        if (cachedDetails) {
+            return cachedDetails;
+        }
+
+        try {
+            const response = await this.catalogManagement.getOffering({
+                catalogIdentifier: catalogId,
+                offeringId: offeringId
+            });
+
+            const offering = response.result;
+            if (!offering?.kinds?.length) {
+                return undefined;
+            }
+
+            // Find the first matching flavor with details
+            let flavorDetails: OfferingFlavor | undefined;
+
+            // Iterate through kinds and versions to find matching flavor
+            for (const kind of offering.kinds) {
+                if (!kind.versions?.length) continue;
+
+                for (const version of kind.versions) {
+                    const flavor = version.flavor;
+                    if (flavor?.name && flavor.name === flavorName) {
+                        // Ensure all required properties are present
+                        if (flavor.name && flavor.label) {
+                            flavorDetails = {
+                                name: flavor.name,
+                                label: flavor.label,
+                                label_i18n: flavor.label_i18n,
+                                index: flavor.index ?? 0
+                            };
+                            break;
+                        }
+                    }
+                }
+                if (flavorDetails) break;
+            }
+
+            if (flavorDetails) {
+                // Cache the details
+                this.cacheService.set(cacheKey, flavorDetails);
+
+                this.logger.debug('Found and cached flavor details', {
+                    catalogId,
+                    offeringId,
+                    flavorName,
+                    label: flavorDetails.label
+                });
+            } else {
+                this.logger.debug('No matching flavor found', {
+                    catalogId,
+                    offeringId,
+                    flavorName
+                });
+            }
+
+            return flavorDetails;
+
+        } catch (error) {
+            this.logger.error('Failed to get flavor details', {
+                catalogId,
+                offeringId,
+                flavorName,
+                error: this.formatError(error)
+            });
+            return undefined;
+        }
+    }
+
+    /**
+     * Validates if a flavor exists for a given offering
+     * @param catalogId The catalog ID
+     * @param offeringId The offering ID
+     * @param flavorName The flavor name to validate
+     * @returns Promise<boolean> True if the flavor exists
+     */
+    public async validateFlavor(catalogId: string, offeringId: string, flavorName: string): Promise<boolean> {
+        const cacheKey = `flavorValidation:${catalogId}:${offeringId}:${flavorName}`;
+
+        // Check cache first
+        const cachedResult = this.cacheService.get<boolean>(cacheKey);
+        if (cachedResult !== undefined) {
+            return cachedResult;
+        }
+
+        try {
+            const availableFlavors = await this.getAvailableFlavors(catalogId, offeringId);
+            const isValid = availableFlavors.includes(flavorName);
+
+            // Cache the result
+            this.cacheService.set(cacheKey, isValid);
+
+            return isValid;
+        } catch (error) {
+            this.logger.error('Failed to validate flavor', {
+                catalogId,
+                offeringId,
+                flavorName,
+                error: this.formatError(error)
+            });
+            return false;
+        }
+    }
     /**
      * Validates an offering ID within a catalog.
      * @param catalogId The catalog ID.
@@ -504,7 +804,6 @@ export class IBMCloudService {
         const cacheKey = `catalogDetails:${catalogId}`;
         return this.cacheService.get<CatalogResponse>(cacheKey);
     }
-
     /**
      * Masks an API key for secure logging
      * @param apiKey The API key to mask
