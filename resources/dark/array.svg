@@ -1,8 +1,0 @@
-// resources/dark/array.svg
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M14 3V13H2V3H14ZM15 2H1V14H15V2Z" fill="#C5C5C5"/>
-    <path d="M4 5V11H3V5H4Z" fill="#C5C5C5"/>
-    <path d="M6 5V6H10V5H6Z" fill="#C5C5C5"/>
-    <path d="M6 7.5V8.5H12V7.5H6Z" fill="#C5C5C5"/>
-    <path d="M6 10V11H8V10H6Z" fill="#C5C5C5"/>
-</svg>

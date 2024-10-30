@@ -1,8 +1,0 @@
-// resources/light/catalog.svg
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M14.5 2H1.5L1 2.5V12.5L1.5 13H14.5L15 12.5V2.5L14.5 2ZM14 12H2V3H14V12Z" fill="#424242"/>
-    <path d="M3.5 5H12.5L13 4.5V4H3V4.5L3.5 5Z" fill="#424242"/>
-    <path d="M3.5 7H12.5L13 6.5V6H3V6.5L3.5 7Z" fill="#424242"/>
-    <path d="M3.5 9H12.5L13 8.5V8H3V8.5L3.5 9Z" fill="#424242"/>
-    <path d="M3.5 11H12.5L13 10.5V10H3V10.5L3.5 11Z" fill="#424242"/>
-</svg>

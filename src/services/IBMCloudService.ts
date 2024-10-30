@@ -8,7 +8,6 @@ import { CacheService } from './CacheService';
 import { throttle } from 'lodash';
 
 interface CatalogResponse {
-
     id: string;
     rev?: string;
     label: string;
@@ -29,6 +28,7 @@ export interface CatalogItem {
     label: string;
     shortDescription?: string;
     disabled?: boolean;
+    isPublic: boolean; // Indicates if the catalog is public
 }
 
 export interface OfferingItem {
@@ -115,7 +115,7 @@ export class IBMCloudService {
                 }
 
                 // Small delay between requests
-                await new Promise(resolve => setTimeout(resolve, 200));
+                await this.delay(200); // 200ms delay
             }
         } finally {
             this.isProcessingQueue = false;
@@ -136,10 +136,10 @@ export class IBMCloudService {
     }
 
     /**
-    * Validates a catalog ID against IBM Cloud
-    * @param catalogId The catalog ID to validate
-    * @returns Promise<boolean> True if the catalog ID is valid
-    */
+     * Validates a catalog ID against IBM Cloud
+     * @param catalogId The catalog ID to validate
+     * @returns Promise<boolean> True if the catalog ID is valid
+     */
     public async validateCatalogId(catalogId: string): Promise<boolean> {
         const cacheKey = `catalogId:${catalogId}`;
         this.logger.debug(`Validating catalog ID: ${catalogId}`);
@@ -223,9 +223,9 @@ export class IBMCloudService {
     }
 
     /**
-     * Fetches offerings for a given catalog ID.
+     * Fetches all offerings for a given catalog ID, handling pagination.
      * @param catalogId The catalog ID.
-     * @returns Promise<OfferingItem[]> Array of offerings.
+     * @returns Promise<OfferingItem[]> Array of all offerings.
      */
     public async getOfferingsForCatalog(catalogId: string): Promise<OfferingItem[]> {
         const cacheKey = `offerings:${catalogId}`;
@@ -238,26 +238,53 @@ export class IBMCloudService {
             return cachedOfferings;
         }
 
+        const PAGE_LIMIT = 1000; // Maximum allowed per API documentation
+        let offset = 0;
+        let totalCount = 0;
+        let fetchedOfferings: OfferingItem[] = [];
+
+        logger.debug(`Starting to fetch offerings for catalog ID: ${catalogId}`);
+
         try {
-            // Fetch offerings using the IBM Cloud SDK
-            const response = await this.catalogManagement.listOfferings({
-                catalogIdentifier: catalogId
-            });
+            do {
+                logger.debug(`Fetching offerings with limit=${PAGE_LIMIT} and offset=${offset}`);
 
-            const offerings: OfferingItem[] = (response.result.resources ?? [])
-                .filter(offering => offering.id && offering.name)
-                .map(offering => ({
-                    id: offering.id!,
-                    name: offering.name!,
-                    shortDescription: offering.short_description
-                }));
+                const response = await this.catalogManagement.listOfferings({
+                    catalogIdentifier: catalogId,
+                    limit: PAGE_LIMIT,
+                    offset: offset,
+                    // You can add other query parameters here if needed
+                    // e.g., sort, name, digest, includeHidden
+                });
 
-            logger.debug('Successfully fetched offerings', { catalogId, count: offerings.length });
+                const resources = response.result.resources ?? [];
+                const offeringsPage: OfferingItem[] = resources
+                    .filter(offering => offering.id && offering.name)
+                    .map(offering => ({
+                        id: offering.id!,
+                        name: offering.name!,
+                        shortDescription: offering.short_description
+                    }));
+
+                fetchedOfferings = fetchedOfferings.concat(offeringsPage);
+
+                // Update pagination variables
+                offset += PAGE_LIMIT;
+                totalCount = response.result.total_count ?? fetchedOfferings.length;
+
+                logger.debug(`Fetched ${offeringsPage.length} offerings. Total fetched so far: ${fetchedOfferings.length}/${totalCount}`);
+
+                // Introduce a small delay to respect API rate limits
+                await this.delay(200); // 200ms delay
+
+            } while (fetchedOfferings.length < totalCount);
+
+            logger.debug(`Successfully fetched all offerings for catalog ID: ${catalogId}`, { total: fetchedOfferings.length });
 
             // Cache the results
-            this.cacheService.set(cacheKey, offerings);
+            this.cacheService.set(cacheKey, fetchedOfferings);
 
-            return offerings;
+            return fetchedOfferings;
         } catch (error) {
             logger.error(`Failed to fetch offerings for catalog ID: ${catalogId}`, error);
             throw error;
@@ -334,19 +361,19 @@ export class IBMCloudService {
     }
 
     /**
-     * Fetches all available catalogs
-     * @returns Promise<CatalogItem[]> Array of available catalogs
+     * Fetches all available private catalogs
+     * @returns Promise<CatalogItem[]> Array of available private catalogs
      */
-    public async getAvailableCatalogs(): Promise<CatalogItem[]> {
-        const cacheKey = 'available_catalogs';
+    public async getAvailablePrivateCatalogs(): Promise<CatalogItem[]> {
+        const cacheKey = 'available_private_catalogs';
         const logger = this.logger;
 
-        logger.debug('Fetching available catalogs');
+        logger.debug('Fetching available private catalogs');
 
         // Check cache first
         const cachedCatalogs = this.cacheService.get<CatalogItem[]>(cacheKey);
         if (cachedCatalogs) {
-            logger.debug('Using cached catalogs', { count: cachedCatalogs.length });
+            logger.debug('Using cached private catalogs', { count: cachedCatalogs.length });
             return cachedCatalogs;
         }
 
@@ -359,17 +386,101 @@ export class IBMCloudService {
                     id: catalog.id!,
                     label: catalog.label!,
                     shortDescription: catalog.short_description,
-                    disabled: catalog.disabled
+                    disabled: catalog.disabled,
+                    isPublic: false // Mark as private
                 }));
 
-            logger.debug('Successfully fetched catalogs', { count: catalogs.length });
+            logger.debug('Successfully fetched private catalogs', { count: catalogs.length });
 
             // Cache the results
             this.cacheService.set(cacheKey, catalogs);
 
             return catalogs;
         } catch (error) {
-            logger.error('Failed to fetch available catalogs', error);
+            logger.error('Failed to fetch available private catalogs', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetches all available public catalogs
+     * @returns Promise<CatalogItem[]> Array of available public catalogs
+     */
+    public async getAvailablePublicCatalogs(): Promise<CatalogItem[]> {
+        const cacheKey = 'available_public_catalogs';
+        const logger = this.logger;
+
+        logger.debug('Fetching available public catalogs');
+        logger.debug('Not yet implmented...');
+        // Check cache first
+        const cachedCatalogs = this.cacheService.get<CatalogItem[]>(cacheKey);
+        if (cachedCatalogs) {
+            logger.debug('Using cached public catalogs', { count: cachedCatalogs.length });
+            return cachedCatalogs;
+        }
+
+        try {
+            // // Replace with the actual IBM Cloud SDK method to list public catalogs
+            // const response = await this.catalogManagement.listPublicCatalogs(); // Hypothetical method
+
+            // const catalogs: CatalogItem[] = (response.result.resources ?? [])
+            //     .filter(catalog => !catalog.disabled && catalog.id && catalog.label)
+            //     .map(catalog => ({
+            //         id: catalog.id!,
+            //         label: catalog.label!,
+            //         shortDescription: catalog.short_description,
+            //         disabled: catalog.disabled,
+            //         isPublic: true // Mark as public
+            //     }));
+
+            // logger.debug('Successfully fetched public catalogs', { count: catalogs.length });
+
+            // // Cache the results
+            // this.cacheService.set(cacheKey, catalogs);
+
+            return [];
+        } catch (error) {
+            logger.error('Failed to fetch available public catalogs', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetches all available catalogs (both private and public)
+     * @returns Promise<CatalogItem[]> Array of all available catalogs
+     */
+    public async getAvailableCatalogs(): Promise<CatalogItem[]> {
+        const cacheKey = 'available_catalogs';
+        const logger = this.logger;
+
+        logger.debug('Fetching all available catalogs (private and public)');
+
+        // Check cache first
+        const cachedCatalogs = this.cacheService.get<CatalogItem[]>(cacheKey);
+        if (cachedCatalogs) {
+            logger.debug('Using cached all catalogs', { count: cachedCatalogs.length });
+            return cachedCatalogs;
+        }
+
+        try {
+            const [privateCatalogs, publicCatalogs] = await Promise.all([
+                this.getAvailablePrivateCatalogs(),
+                this.getAvailablePublicCatalogs().catch(error => {
+                    logger.error('Failed to fetch public catalogs', error);
+                    return []; // Proceed with private catalogs if public fetch fails
+                })
+            ]);
+
+            const allCatalogs = [...privateCatalogs, ...publicCatalogs];
+
+            logger.debug('Successfully fetched all catalogs', { count: allCatalogs.length });
+
+            // Cache the combined results
+            this.cacheService.set(cacheKey, allCatalogs);
+
+            return allCatalogs;
+        } catch (error) {
+            logger.error('Failed to fetch all available catalogs', error);
             throw error;
         }
     }
@@ -441,5 +552,14 @@ export class IBMCloudService {
             return ibmError.message;
         }
         return 'An unknown error occurred';
+    }
+
+    /**
+     * Utility method to introduce a delay.
+     * @param ms Milliseconds to delay.
+     * @returns Promise<void>
+     */
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
