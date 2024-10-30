@@ -313,6 +313,11 @@ export class CatalogService {
             return this.promptForFlavor(node, currentValue as string);
         }
 
+        // Handle boolean values with QuickPick
+        if (typeof currentValue === 'boolean' || node.schemaMetadata?.type === 'boolean') {
+            return this.promptForBoolean(node.label, currentValue as boolean);
+        }
+
         // Handle other types as before
         const value = await vscode.window.showInputBox({
             prompt: `Enter value for ${node.label}`,
@@ -334,6 +339,39 @@ export class CatalogService {
         if (value.toLowerCase() === 'false') { return false; }
         if (!isNaN(Number(value))) { return Number(value); }
         return value;
+    }
+
+    /**
+   * Prompts the user to select a boolean value using QuickPick
+   * @param fieldLabel The label of the field being edited
+   * @param currentValue The current boolean value
+   * @returns Promise<boolean | undefined> The selected boolean value or undefined if cancelled
+   */
+    private async promptForBoolean(fieldLabel: string, currentValue?: boolean): Promise<boolean | undefined> {
+        const items: vscode.QuickPickItem[] = [
+            {
+                label: 'true',
+                description: 'Set value to true',
+                picked: currentValue === true
+            },
+            {
+                label: 'false',
+                description: 'Set value to false',
+                picked: currentValue === false
+            }
+        ];
+
+        const selection = await vscode.window.showQuickPick(items, {
+            title: `Set value for ${fieldLabel}`,
+            placeHolder: 'Select true or false',
+            canPickMany: false
+        });
+
+        if (!selection) {
+            return undefined;
+        }
+
+        return selection.label === 'true';
     }
 
     /**
