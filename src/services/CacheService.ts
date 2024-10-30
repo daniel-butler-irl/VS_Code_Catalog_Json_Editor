@@ -173,7 +173,7 @@ export class CacheService {
      * Persists a cache entry to VS Code storage
      */
     private async persistCacheEntry(key: string, record: CacheRecord): Promise<void> {
-        if (!this.context) return;
+        if (!this.context) { return; }
 
         const config = this.getConfigForKey(key);
         const storageKey = `${config.storagePrefix}${key}`;
@@ -190,7 +190,7 @@ export class CacheService {
      * Loads persisted cache entries from VS Code storage
      */
     private async loadPersistedCache(): Promise<void> {
-        if (!this.context) return;
+        if (!this.context) { return; }
 
         this.logger.debug('Loading persisted cache entries');
 

@@ -508,7 +508,7 @@ export class IBMCloudService {
 
             // Iterate through kinds and versions to find matching flavor
             for (const kind of offering.kinds) {
-                if (!kind.versions?.length) continue;
+                if (!kind.versions?.length) { continue; }
 
                 for (const version of kind.versions) {
                     const flavor = version.flavor;
@@ -525,7 +525,7 @@ export class IBMCloudService {
                         }
                     }
                 }
-                if (flavorDetails) break;
+                if (flavorDetails) { break; }
             }
 
             if (flavorDetails) {
