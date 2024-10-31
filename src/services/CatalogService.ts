@@ -387,8 +387,8 @@ export class CatalogService {
     }
 
     /**
-     * Prompts the user to select or enter a catalog ID
-     */
+  * Prompts the user to select or enter a catalog ID
+  */
     private async promptForCatalogId(currentValue?: string): Promise<string | undefined> {
         const logger = this.logger;
         const apiKey = await AuthService.getApiKey(this.context);
@@ -401,6 +401,10 @@ export class CatalogService {
         try {
             const ibmCloudService = new IBMCloudService(apiKey);
             const catalogs = await ibmCloudService.getAvailableCatalogs();
+
+            // Split catalogs into public and private
+            const publicCatalogs = catalogs.filter(catalog => catalog.isPublic);
+            const privateCatalogs = catalogs.filter(catalog => !catalog.isPublic);
 
             // Create QuickPick items
             const items: vscode.QuickPickItem[] = [
@@ -415,8 +419,22 @@ export class CatalogService {
                     label: "Available Catalogs",
                     kind: vscode.QuickPickItemKind.Separator
                 },
-                // Add available catalogs
-                ...catalogs.map(catalog => ({
+                // Add public catalogs section
+                {
+                    label: "Public Catalogs",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                ...publicCatalogs.map(catalog => ({
+                    label: catalog.label,
+                    description: catalog.id,
+                    detail: catalog.shortDescription
+                })),
+                // Add private catalogs section
+                {
+                    label: "Private Catalogs",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                ...privateCatalogs.map(catalog => ({
                     label: catalog.label,
                     description: catalog.id,
                     detail: catalog.shortDescription
@@ -449,6 +467,7 @@ export class CatalogService {
             return this.promptForManualCatalogId(currentValue);
         }
     }
+
 
     /**
      * Prompts for manual catalog ID entry
