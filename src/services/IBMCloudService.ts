@@ -421,8 +421,8 @@ export class IBMCloudService {
             offering_id: offeringId,
             kind_id: kindId,
             tags: version.tags,
-            configuration: version.configuration,  
-            outputs: version.outputs  
+            configuration: version.configuration,
+            outputs: version.outputs
         }));
     }
 
@@ -735,25 +735,33 @@ export class IBMCloudService {
         }
 
         try {
-            // // Replace with the actual IBM Cloud SDK method to list public catalogs
-            // const response = await this.catalogManagement.listPublicCatalogs(); // Hypothetical method
+            // Currently no API available to fetch public catalogs
+            // We do know the current public catalogs are:
+            // - IBM Cloud Catalog
+            // - Community Registry
+            // We can hardcode these for now
 
-            // const catalogs: CatalogItem[] = (response.result.resources ?? [])
-            //     .filter(catalog => !catalog.disabled && catalog.id && catalog.label)
-            //     .map(catalog => ({
-            //         id: catalog.id!,
-            //         label: catalog.label!,
-            //         shortDescription: catalog.short_description,
-            //         disabled: catalog.disabled,
-            //         isPublic: true // Mark as public
-            //     }));
+            const publicCatalogs: CatalogItem[] = [
+                {
+                    id: '1082e7d2-5e2f-0a11-a3bc-f88a8e1931fc',
+                    label: 'IBM Cloud Catalog',
+                    shortDescription: 'IBM Cloud Catalog',
+                    isPublic: true
+                },
+                {
+                    id: '7a4d68b4-cf8b-40cd-a3d1-f49aff526eb3',
+                    label: 'Community Registry',
+                    shortDescription: 'Community Registry',
+                    isPublic: true
+                }
+            ];
 
-            // logger.debug('Successfully fetched public catalogs', { count: catalogs.length });
+            logger.debug('Successfully fetched public catalogs', { count: publicCatalogs.length });
 
-            // // Cache the results
-            // this.cacheService.set(cacheKey, catalogs);
+            // Cache the results
+            this.cacheService.set(cacheKey, publicCatalogs);
 
-            return [];
+            return publicCatalogs;
         } catch (error) {
             logger.error('Failed to fetch available public catalogs', error);
             throw error;
@@ -779,14 +787,14 @@ export class IBMCloudService {
 
         try {
             const [privateCatalogs, publicCatalogs] = await Promise.all([
-                this.getAvailablePrivateCatalogs(),
                 this.getAvailablePublicCatalogs().catch(error => {
                     logger.error('Failed to fetch public catalogs', error);
                     return []; // Proceed with private catalogs if public fetch fails
-                })
+                }),
+                this.getAvailablePrivateCatalogs()
             ]);
 
-            const allCatalogs = [...privateCatalogs, ...publicCatalogs];
+            const allCatalogs = [...publicCatalogs, ...privateCatalogs];
 
             logger.debug('Successfully fetched all catalogs', { count: allCatalogs.length });
 
