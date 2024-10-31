@@ -20,4 +20,6 @@ export interface MappingOption {
     type: any;
     detail?: string;
     required?: boolean;
+    defaultValue?: any;
+    mappingType: 'input' | 'output';
 }

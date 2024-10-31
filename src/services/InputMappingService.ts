@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { IBMCloudService, Configuration, Output } from './IBMCloudService';
 import { CacheService } from './CacheService';
 import { LoggingService } from './LoggingService';
-import type { InputMapping, InputMappingContext, MappingOption } from '../types/inputMapping';
+import type { InputMappingContext, MappingOption } from '../types/inputMapping';
 import { compareSemVer } from '../utils/semver';
 
 export class InputMappingService {
@@ -60,7 +60,6 @@ export class InputMappingService {
             }
 
             // Add outputs
-            // Note: Outputs are always considered optional as they are results rather than requirements
             if (Array.isArray(version.outputs)) {
                 for (const output of version.outputs) {
                     options.push(this.createOutputOption(output));
@@ -90,10 +89,12 @@ export class InputMappingService {
         return {
             label: config.key,
             value: config.key,
-            description: config.description || 'Input parameter',
-            type: 'input',
+            description: config.description || '',
+            type: config.type || 'string',
             required: config.required || false,
-            detail: this.formatConfigDetail(config)
+            defaultValue: config.default_value !== undefined ? config.default_value : 'Not Set',
+            detail: '', // Will be formatted later
+            mappingType: 'input' // Indicates this is an input
         };
     }
 
@@ -106,73 +107,22 @@ export class InputMappingService {
         return {
             label: output.key,
             value: output.key,
-            description: output.description || 'Output value',
-            type: 'output',
+            description: output.description || '',
+            type: 'string', // Outputs do not have type, assume 'string'
             required: false, // Outputs are always optional
-            detail: 'Output parameter'
+            defaultValue: 'Not Set', // Outputs do not have default values
+            detail: '', // Will be formatted later
+            mappingType: 'output' // Indicates this is an output
         };
     }
 
     /**
-     * Gets available config keys from the current version
+     * Formats the detail string for a mapping option
+     * @param option The mapping option to format
+     * @returns Formatted detail string
      */
-    public async getConfigKeys(context: InputMappingContext): Promise<string[]> {
-        if (!this.ibmCloudService) {
-            return [];
-        }
-
-        const cacheKey = `config_keys:${context.catalogId}:${context.offeringId}:${context.version || ''}`;
-        const cached = this.cacheService.get<string[]>(cacheKey);
-        if (cached) {
-            return cached;
-        }
-
-        try {
-            const offerings = await this.ibmCloudService.getOfferingsForCatalog(context.catalogId);
-            const offering = offerings.find(o => o.id === context.offeringId);
-
-            if (!offering?.kinds?.[0]?.versions?.length) {
-                return [];
-            }
-
-            const version = this.findLowestMatchingVersion(offering.kinds[0].versions, context.version);
-            if (!version?.configuration) {
-                return [];
-            }
-
-            const keys = version.configuration.map((config: Configuration) => config.key);
-
-            if (keys.length > 0) {
-                this.cacheService.set(cacheKey, keys, {
-                    timestamp: new Date().toISOString(),
-                    offeringVersion: version.version
-                });
-            }
-
-            return keys;
-
-        } catch (error) {
-            this.logger.error('Failed to get config keys', error);
-            return [];
-        }
-    }
-
-    private formatConfigDetail(config: Configuration): string {
-        const parts = [];
-
-        if (config.type) {
-            parts.push(`Type: ${config.type}`);
-        }
-
-        if (config.default_value !== undefined) {
-            parts.push(`Default: ${config.default_value}`);
-        }
-
-        if (config.required) {
-            parts.push('Required');
-        }
-
-        return parts.join(' • ');
+    private formatMappingDetail(option: MappingOption): string {
+        return `Default: ${option.defaultValue} • ${option.description || ''}`;
     }
 
 
@@ -208,5 +158,4 @@ export class InputMappingService {
 
         return compareSemVer(plainVersion, plainConstraint) >= 0;
     }
-
 }
