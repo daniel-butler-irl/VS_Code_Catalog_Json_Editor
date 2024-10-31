@@ -17,6 +17,7 @@ export interface MappingOption {
     label: string;
     description: string;
     value: string;
-    type: 'input' | 'output';
+    type: any;
     detail?: string;
+    required?: boolean;
 }

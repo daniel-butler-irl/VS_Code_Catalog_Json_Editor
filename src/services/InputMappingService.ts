@@ -1,7 +1,7 @@
 // src/services/InputMappingService.ts
 
 import * as vscode from 'vscode';
-import { IBMCloudService, Configuration } from './IBMCloudService';
+import { IBMCloudService, Configuration, Output } from './IBMCloudService';
 import { CacheService } from './CacheService';
 import { LoggingService } from './LoggingService';
 import type { InputMapping, InputMappingContext, MappingOption } from '../types/inputMapping';
@@ -42,7 +42,6 @@ export class InputMappingService {
             this.logger.debug('Version Constraint', context.version);
 
             const version = this.findLowestMatchingVersion(offering.kinds[0].versions, context.version);
-            // After finding the version
             if (!version) {
                 this.logger.error('No matching version found for constraint', context.version);
                 return [];
@@ -53,30 +52,21 @@ export class InputMappingService {
 
             const options: MappingOption[] = [];
 
-            // Add configuration inputs
+            // Add configuration inputs with required flag
             if (Array.isArray(version.configuration)) {
                 for (const config of version.configuration) {
-                    options.push({
-                        label: config.key,
-                        value: config.key,
-                        description: config.description || 'Input parameter',
-                        type: 'input',
-                        detail: this.formatConfigDetail(config)
-                    });
+                    options.push(this.createConfigurationOption(config));
                 }
             }
 
             // Add outputs
+            // Note: Outputs are always considered optional as they are results rather than requirements
             if (Array.isArray(version.outputs)) {
                 for (const output of version.outputs) {
-                    options.push({
-                        label: output.key,
-                        value: output.key,
-                        description: output.description || 'Output value',
-                        type: 'output'
-                    });
+                    options.push(this.createOutputOption(output));
                 }
             }
+
             this.cacheService.set(cacheKey, options, {
                 timestamp: new Date().toISOString(),
                 offeringVersion: version.version
@@ -89,6 +79,38 @@ export class InputMappingService {
             this.logger.error('Failed to fetch mapping options', error);
             return [];
         }
+    }
+
+    /**
+     * Creates a MappingOption from a configuration item
+     * @param config The configuration item from the IBM Cloud API
+     * @returns MappingOption
+     */
+    private createConfigurationOption(config: Configuration): MappingOption {
+        return {
+            label: config.key,
+            value: config.key,
+            description: config.description || 'Input parameter',
+            type: 'input',
+            required: config.required || false,
+            detail: this.formatConfigDetail(config)
+        };
+    }
+
+    /**
+     * Creates a MappingOption from an output item
+     * @param output The output item from the IBM Cloud API
+     * @returns MappingOption
+     */
+    private createOutputOption(output: Output): MappingOption {
+        return {
+            label: output.key,
+            value: output.key,
+            description: output.description || 'Output value',
+            type: 'output',
+            required: false, // Outputs are always optional
+            detail: 'Output parameter'
+        };
     }
 
     /**
@@ -118,19 +140,14 @@ export class InputMappingService {
                 return [];
             }
 
-            let keys: string[] = [];
+            const keys = version.configuration.map((config: Configuration) => config.key);
 
-            if (version?.configuration) {
-                keys = version.configuration.map((config: Configuration) => config.key);
+            if (keys.length > 0) {
+                this.cacheService.set(cacheKey, keys, {
+                    timestamp: new Date().toISOString(),
+                    offeringVersion: version.version
+                });
             }
-
-            if (!keys.length) {
-                return [];
-            }
-            this.cacheService.set(cacheKey, keys, {
-                timestamp: new Date().toISOString(),
-                offeringVersion: version.version
-            });
 
             return keys;
 
@@ -139,6 +156,25 @@ export class InputMappingService {
             return [];
         }
     }
+
+    private formatConfigDetail(config: Configuration): string {
+        const parts = [];
+
+        if (config.type) {
+            parts.push(`Type: ${config.type}`);
+        }
+
+        if (config.default_value !== undefined) {
+            parts.push(`Default: ${config.default_value}`);
+        }
+
+        if (config.required) {
+            parts.push('Required');
+        }
+
+        return parts.join(' • ');
+    }
+
 
     /**
      * Gets the lowest version that satisfies the version constraint
@@ -173,21 +209,4 @@ export class InputMappingService {
         return compareSemVer(plainVersion, plainConstraint) >= 0;
     }
 
-    private formatConfigDetail(config: any): string {
-        const parts = [];
-
-        if (config.type) {
-            parts.push(`Type: ${config.type}`);
-        }
-
-        if (config.default_value !== undefined) {
-            parts.push(`Default: ${config.default_value}`);
-        }
-
-        if (config.required) {
-            parts.push('Required');
-        }
-
-        return parts.join(' • ');
-    }
 }

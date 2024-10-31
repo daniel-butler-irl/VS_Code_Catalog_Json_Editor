@@ -11,6 +11,7 @@ import { AuthService } from './AuthService';
 import { LoggingService } from './LoggingService';
 import { InputMappingService, } from './InputMappingService';
 import type { OfferingFlavor } from './IBMCloudService';
+import { MappingOption } from '../types/inputMapping';
 
 
 interface DependencyUpdate {
@@ -819,7 +820,73 @@ export class CatalogService {
     }
 
 
+
+    /**
+     * Groups mapping options by their required status
+     * @param options Array of mapping options to group
+     * @returns Object containing required and optional options
+     */
+    private groupMappingOptions(options: MappingOption[]): {
+        required: MappingOption[];
+        optional: MappingOption[];
+    } {
+        return {
+            required: options.filter(opt => opt.required),
+            optional: options.filter(opt => !opt.required)
+        };
+    }
+
+    /**
+     * Creates QuickPick items for input mapping selection
+     * @param options Mapping options to convert to QuickPick items
+     * @param currentValue Current selected value if any
+     * @returns Array of QuickPick items
+     */
+    private createMappingQuickPickItems(
+        options: MappingOption[],
+        currentValue?: string
+    ): vscode.QuickPickItem[] {
+        return options.map(opt => ({
+            label: currentValue === opt.value ? `$(check) ${opt.value}` : opt.value,
+            description: opt.description,
+            detail: this.formatMappingDetail(opt),
+            iconPath: opt.required ? new vscode.ThemeIcon('required') : undefined
+        }));
+    }
+
+    /**
+     * Formats the detail string for a mapping option
+     * @param option The mapping option to format
+     * @returns Formatted detail string
+     */
+    private formatMappingDetail(option: MappingOption): string {
+        const parts: string[] = [];
+
+        if (option.type) {
+            parts.push(`Type: ${option.type}`);
+        }
+
+        if (option.required) {
+            parts.push('Required');
+        }
+
+        if (option.detail) {
+            parts.push(option.detail);
+        }
+
+        return parts.join(' • ');
+    }
+
+    /**
+     * Prompts the user to select an input mapping value
+     * @param node The tree node being edited
+     * @param currentValue Current selected value if any
+     * @returns Promise<string | undefined> Selected value or undefined if cancelled
+     */
     private async promptForInputMapping(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+        if (!this.initialized) {
+            await this.initialize();
+        }
 
         const dependencyNode = node.getDependencyParent();
         if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
@@ -828,8 +895,6 @@ export class CatalogService {
         }
 
         const depValue = dependencyNode.value as Record<string, any>;
-        this.logger.debug('Dependency Node Value', depValue);
-
         const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) {
             vscode.window.showWarningMessage('IBM Cloud API Key required for mapping suggestions');
@@ -842,7 +907,6 @@ export class CatalogService {
             flavorName: Array.isArray(depValue.flavors) ? depValue.flavors[0] : undefined,
             version: depValue.version
         };
-        this.logger.debug('Input Mapping Context', context);
 
         if (!context.catalogId || !context.offeringId || !context.version) {
             this.logger.error('Context missing required fields', context);
@@ -853,34 +917,44 @@ export class CatalogService {
             new IBMCloudService(apiKey)
         );
 
-        const options = await inputMappingService.fetchMappingOptions(context);
-        if (options.length === 0) {
-            this.logger.error('No mapping options available');
-            return undefined;
-        }
         const fieldType = this.getInputMappingFieldType(node);
 
         if (fieldType === 'version_input') {
             const keys = await this.getLocalConfigurationKeys(node);
-            this.logger.debug('Local Configuration Keys', keys);
-
             if (!keys.length) {
                 vscode.window.showWarningMessage('No configuration keys found in the local catalog data.');
                 return undefined;
             }
 
-            return this.promptWithQuickPick(
-                keys.map(key => ({ label: key })),
+            // Group configuration keys by required status
+            const configGroups = this.groupConfigurationKeys(keys, node);
+            const items: vscode.QuickPickItem[] = [
                 {
-                    placeHolder: currentValue || 'Select version input',
-                    title: 'Version Input'
-                }
-            );
+                    label: "Configuration Keys",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                {
+                    label: "Required Keys",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                ...this.createConfigKeyItems(configGroups.required, currentValue),
+                {
+                    label: "Optional Keys",
+                    kind: vscode.QuickPickItemKind.Separator
+                },
+                ...this.createConfigKeyItems(configGroups.optional, currentValue)
+            ];
+
+            const selection = await vscode.window.showQuickPick(items, {
+                placeHolder: currentValue || 'Select version input',
+                title: 'Version Input Keys'
+            });
+
+            return selection?.label.replace('$(check) ', '');
         }
 
         if (fieldType === 'dependency_input' || fieldType === 'dependency_output') {
             const options = await inputMappingService.fetchMappingOptions(context);
-
             if (!options.length) {
                 vscode.window.showWarningMessage('No mapping options available from the offering.');
                 return undefined;
@@ -895,18 +969,88 @@ export class CatalogService {
                 return undefined;
             }
 
-            return this.promptWithQuickPick(
-                filteredOptions.map(opt => ({
-                    label: opt.value,
-                    description: opt.description,
-                    detail: opt.detail
-                })),
+            // Group options by required status
+            const groups = this.groupMappingOptions(filteredOptions);
+            const items: vscode.QuickPickItem[] = [
                 {
-                    placeHolder: currentValue || `Select ${fieldType.replace('_', ' ')}`,
-                    title: fieldType.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                    label: fieldType === 'dependency_input' ? "Input Parameters" : "Output Parameters",
+                    kind: vscode.QuickPickItemKind.Separator
                 }
-            );
+            ];
+
+            if (groups.required.length > 0) {
+                items.push(
+                    {
+                        label: "Required Parameters",
+                        kind: vscode.QuickPickItemKind.Separator
+                    },
+                    ...this.createMappingQuickPickItems(groups.required, currentValue)
+                );
+            }
+
+            if (groups.optional.length > 0) {
+                items.push(
+                    {
+                        label: "Optional Parameters",
+                        kind: vscode.QuickPickItemKind.Separator
+                    },
+                    ...this.createMappingQuickPickItems(groups.optional, currentValue)
+                );
+            }
+
+            const selection = await vscode.window.showQuickPick(items, {
+                placeHolder: currentValue || `Select ${fieldType.replace('_', ' ')}`,
+                title: fieldType.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+            });
+
+            return selection?.label.replace('$(check) ', '');
         }
+
+        return undefined;
+    }
+
+    /**
+     * Groups configuration keys by their required status
+     * @param keys Array of configuration keys
+     * @param node The tree node being edited
+     * @returns Object containing required and optional keys
+     */
+    private groupConfigurationKeys(keys: string[], node: CatalogTreeItem): {
+        required: string[];
+        optional: string[];
+    } {
+        const flavorNode = node.findAncestorFlavorNode();
+        if (!flavorNode?.value.configuration) {
+            return { required: [], optional: keys };
+        }
+
+        const required: string[] = [];
+        const optional: string[] = [];
+
+        for (const key of keys) {
+            const config = flavorNode.value.configuration.find(c => c.key === key);
+            if (config?.required) {
+                required.push(key);
+            } else {
+                optional.push(key);
+            }
+        }
+
+        return { required, optional };
+    }
+
+    /**
+     * Creates QuickPick items for configuration keys
+     * @param keys Array of configuration keys
+     * @param currentValue Current selected value if any
+     * @returns Array of QuickPick items
+     */
+    private createConfigKeyItems(keys: string[], currentValue?: string): vscode.QuickPickItem[] {
+        return keys.map(key => ({
+            label: currentValue === key ? `$(check) ${key}` : key,
+            description: currentValue === key ? '(Current Selection)' : undefined,
+            iconPath: new vscode.ThemeIcon(currentValue === key ? 'check' : 'symbol-field')
+        }));
     }
 
     private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' {
