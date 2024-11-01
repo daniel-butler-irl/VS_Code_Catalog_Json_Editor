@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.5](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.5) (2024-11-01)
+
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.4...0.0.5)
+
+**Closed issues:**
+
+- Error message for invalid credentials [\#4](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/4)
+
+**Merged pull requests:**
+
+- fix: improve file focus [\#11](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/11) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- API Key Validation [\#10](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/10) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+
 ## [0.0.4](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.4) (2024-11-01)
 
 [Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.2...0.0.4)
