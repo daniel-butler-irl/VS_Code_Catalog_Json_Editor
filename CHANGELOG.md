@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.6](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.6) (2024-11-01)
+
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.5...0.0.6)
+
+**Merged pull requests:**
+
+- Handle No Catalog JSON present [\#12](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/12) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+
 ## [0.0.5](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.5) (2024-11-01)
 
 [Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.4...0.0.5)
