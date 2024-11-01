@@ -70,17 +70,18 @@ jobs:
           "
         shell: bash
 
-      # Step 8: Install Ruby and github-changelog-generator
+      # Step 8: Install Ruby
       - name: Install Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.0'  # Specify the Ruby version you need
           cache: gem
 
+      # Step 9: Install github-changelog-generator
       - name: Install github-changelog-generator
         run: gem install github_changelog_generator
 
-      # Step 9: Generate Changelog
+      # Step 10: Generate Changelog
       - name: Generate Changelog
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +94,7 @@ jobs:
             --exclude-labels 'duplicate,invalid,wontfix' \
             --future-release $CURRENT_VERSION
 
-      # Step 10: Commit and Push CHANGELOG.md
+      # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
@@ -101,20 +102,20 @@ jobs:
           file_pattern: CHANGELOG.md
           branch: main
 
-      # Step 11: Tag the New Version
+      # Step 12: Tag the New Version
       - name: Create Git Tag
         run: |
           git tag $CURRENT_VERSION
           git push origin $CURRENT_VERSION
         shell: bash
 
-      # Step 12: Package the Extension
+      # Step 13: Package the Extension
       - name: Package Extension
         run: npx vsce package
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      # Step 13: Create GitHub Release
+      # Step 14: Create GitHub Release
       - name: Create GitHub Release
         id: create_release
         uses: actions/create-release@v1
@@ -127,7 +128,7 @@ jobs:
           draft: false
           prerelease: false
 
-      # Step 14: Upload .vsix to Release
+      # Step 15: Upload .vsix to Release
       - name: Upload .vsix to Release
         uses: actions/upload-release-asset@v1
         env:
@@ -138,7 +139,7 @@ jobs:
           asset_name: ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
           asset_content_type: application/octet-stream
 
-      # Step 15: Publish to VS Code Marketplace
+      # Step 16: Publish to VS Code Marketplace
       - name: Publish to VS Code Marketplace
         run: npx vsce publish --pat ${{ secrets.VSCE_PAT }}
         env:
