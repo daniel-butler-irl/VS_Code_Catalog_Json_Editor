@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'  
+          node-version: '20'  # Use your project's Node.js version
 
       # Step 3: Install Dependencies
       - name: Install Dependencies
@@ -86,10 +86,10 @@ jobs:
             --project VS_Code_Catalog_Json_Editor \
             --output CHANGELOG.md \
             --future-release "$CURRENT_VERSION" \
-            --token "$GITHUB_TOKEN"
+            --token "$GH_PAT"
         env:
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md
@@ -99,7 +99,7 @@ jobs:
           file_pattern: CHANGELOG.md
           branch: main
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 12: Tag the New Version
       - name: Create Git Tag
@@ -108,7 +108,7 @@ jobs:
           git push origin $CURRENT_VERSION
         env:
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 13: Package the Extension
       - name: Package Extension
@@ -127,7 +127,7 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 15: Upload .vsix to Release
       - name: Upload .vsix to Release
@@ -138,7 +138,7 @@ jobs:
           asset_name: ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
           asset_content_type: application/octet-stream
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 16: Publish to VS Code Marketplace
       - name: Publish to VS Code Marketplace
