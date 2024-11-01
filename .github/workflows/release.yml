@@ -83,7 +83,7 @@ jobs:
           gem install github_changelog_generator
           gem install faraday-retry
 
-      # Step 10: Generate Changelog
+            # Step 10: Generate Changelog
       - name: Generate Changelog
         run: |
           github_changelog_generator \
@@ -93,13 +93,13 @@ jobs:
             --output CHANGELOG.md \
             --exclude-labels "duplicate,invalid,wontfix" \
             --no-issues \
+            --summary-labels "release-summary,summary" \
+            --breaking-labels "backwards-incompatible,breaking" \
             --enhancement-labels "feature,enhancement,improvement" \
-            --bugs-label "bug" \
+            --bug-labels "bug" \
             --deprecated-labels "chore,refactor" \
             --issues-label "docs" \
             --security-label "performance" \
-            --release-summary-label "test" \
-            --breaking-label "hotfix" \
             --token "$GITHUB_TOKEN"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
