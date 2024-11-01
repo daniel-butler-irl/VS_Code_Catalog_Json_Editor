@@ -70,7 +70,13 @@
       {
         "command": "ibmCatalog.logout",
         "title": "Logout from IBM Cloud"
-      }
+      },
+         {
+                "command": "ibmCatalog.createCatalogFile",
+                "title": "Create ibm_catalog.json",
+                "category": "IBM Catalog",
+                "icon": "$(new-file)"
+            }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -81,7 +87,7 @@
         }
       ]
     },
-    "views": {
+     "views": {
       "ibm-catalog-explorer": [
         {
           "id": "ibmCatalogTree",
@@ -91,12 +97,27 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "ibmCatalogTree",
+        "contents": "Create IBM Catalog JSON\n\nNo IBM Catalog JSON file found in your workspace.\n\n[Create IBM Catalog JSON](command:ibmCatalog.createCatalogFile)",
+        "when": "!ibmCatalog.catalogFileExists"
+      }
+    ],
     "menus": {
       "view/item/context": [
         {
           "command": "ibmCatalog.addElement",
           "when": "view == ibmCatalogTree && viewItem == container",
           "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "ibmCatalog.createCatalogFile",
+          "when": "!ibmCatalog.catalogFileExists",
+          "group": "navigation",
+          "viewId": "ibmCatalogTree"
         }
       ]
     },

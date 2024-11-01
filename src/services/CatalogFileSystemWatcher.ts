@@ -108,14 +108,16 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
      * @param uri The URI of the deleted file
      */
     private handleFileDelete(uri: vscode.Uri): void {
-        if (this.isDisposed) {
-            return;
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
         }
-
-        vscode.window.showWarningMessage(
-            'IBM Catalog file has been deleted. Please restore the file to continue editing.',
-            'Okay'
-        );
+        this.debounceTimer = setTimeout(async () => {
+            this.debounceTimer = null;
+            await this.catalogService.handleFileDeletion(uri);
+            this.treeProvider.refresh();
+            // Update the context variable
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
+        }, this.debounceDelay);
     }
 
     /**
@@ -132,7 +134,7 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
      */
     public dispose(): void {
         this.isDisposed = true;
-        
+
         if (this.debounceTimer) {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;

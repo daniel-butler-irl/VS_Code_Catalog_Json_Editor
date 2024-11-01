@@ -30,11 +30,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     public setTreeView(treeView: vscode.TreeView<CatalogTreeItem>): void {
         this.treeView = treeView;
 
-        // Set the tree view title to show the catalog path
-        if (this.treeView) {
-            this.updateTreeViewTitle();
-        }
-
+        // Track expanded/collapsed state changes
         this.treeView.onDidExpandElement((e) => {
             this.expandedNodes.add(e.element.jsonPath);
             this.saveExpandedState();
@@ -47,23 +43,13 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
 
         this.context.subscriptions.push(this.treeView);
     }
-    private updateTreeViewTitle(): void {
-        if (this.treeView) {
-            const displayPath = this.catalogService.getCatalogDisplayPath();
-            // Update both the description and title for better visibility
-            this.treeView.description = displayPath;
-            this.treeView.title = 'IBM Catalog'; // Keep base title simple
-        }
-    }
 
     /**
      * Refreshes the tree view
      */
     public refresh(item?: CatalogTreeItem): void {
-        this.updateTreeViewTitle();
         this._onDidChangeTreeData.fire(item);
     }
-
 
     /**
      * Gets the tree item for a given element

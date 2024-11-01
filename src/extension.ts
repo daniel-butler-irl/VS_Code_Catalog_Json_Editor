@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { CatalogTreeProvider } from './providers/CatalogTreeProvider';
 import { CatalogFileSystemWatcher } from './services/CatalogFileSystemWatcher';
 import { CatalogService } from './services/CatalogService';
@@ -153,11 +155,107 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         });
 
         context.subscriptions.push(treeView);
+        // Function to get the root path
+        function getRootPath(): string | undefined {
+            return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        }
+
+        // Function to check if ibm_catalog.json exists
+        async function updateCatalogFileContext() {
+            const rootPath = getRootPath();
+            if (!rootPath) {
+                vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
+                return;
+            }
+            const catalogFilePath = path.join(rootPath, 'ibm_catalog.json');
+            const fileExists = await fileExistsAsync(catalogFilePath);
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', fileExists);
+        }
+
+        // Utility function to check file existence
+        function fileExistsAsync(filePath: string): Promise<boolean> {
+            return new Promise((resolve) => {
+                fs.access(filePath, fs.constants.F_OK, (err) => {
+                    resolve(!err);
+                });
+            });
+        }
+
+        // Call the function initially and whenever the workspace changes
+        await updateCatalogFileContext();
+
+        // Implement the createCatalogFile command
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ibmCatalog.createCatalogFile', async () => {
+                const rootPath = getRootPath();
+                if (!rootPath) {
+                    vscode.window.showErrorMessage('No workspace folder is open.');
+                    return;
+                }
+
+                const catalogFilePath = path.join(rootPath, 'ibm_catalog.json');
+                const fileExists = await fileExistsAsync(catalogFilePath);
+                if (fileExists) {
+                    vscode.window.showInformationMessage('ibm_catalog.json already exists.');
+                    return;
+                }
+
+                const emptyCatalog = {
+                    products: [
+                        {
+                            label: '',
+                            name: '',
+                            product_kind: '',
+                            tags: [],
+                            offering_icon_url: '',
+                            flavors: []
+                        }
+                    ]
+                };
+
+                fs.writeFile(catalogFilePath, JSON.stringify(emptyCatalog, null, 4), (err) => {
+                    if (err) {
+                        vscode.window.showErrorMessage(`Failed to create ibm_catalog.json: ${err.message}`);
+                    } else {
+                        vscode.window.showInformationMessage('Created ibm_catalog.json');
+                        updateCatalogFileContext();
+
+                        // Optionally open the file
+                        const openPath = vscode.Uri.file(catalogFilePath);
+                        vscode.workspace.openTextDocument(openPath).then((doc) => {
+                            vscode.window.showTextDocument(doc);
+                        });
+
+                        // Refresh the tree view
+                        treeProvider.refresh();
+                    }
+                });
+            })
+        );
+
+
+        vscode.workspace.onDidDeleteFiles(() => {
+            updateCatalogFileContext();
+            treeProvider.refresh();
+        }, null, context.subscriptions);
+
+        // Also update the handlers for file creation and renaming
+        vscode.workspace.onDidCreateFiles(() => {
+            updateCatalogFileContext();
+            treeProvider.refresh();
+        }, null, context.subscriptions);
+
+        vscode.workspace.onDidRenameFiles(() => {
+            updateCatalogFileContext();
+            treeProvider.refresh();
+        }, null, context.subscriptions);
+
         logger.info('IBM Catalog Extension activated successfully');
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
     }
+
 }
 
 export function deactivate(): void {
