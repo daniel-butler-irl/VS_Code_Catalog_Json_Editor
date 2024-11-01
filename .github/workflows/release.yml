@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'  # Use your project's Node.js version
+          node-version: '20'  
 
       # Step 3: Install Dependencies
       - name: Install Dependencies
@@ -50,19 +50,20 @@ jobs:
       - name: Validate Version Increment
         id: validate_version
         run: |
-          echo "Comparing current version ($CURRENT_VERSION) with previous version ($PREVIOUS_VERSION)..."
           npm install semver
           node -e "
             const semver = require('semver');
-            const current = process.env.CURRENT_VERSION;
-            const previous = process.env.PREVIOUS_VERSION;
-            if (!semver.gt(current, previous)) {
-              console.error('Error: Current version is not greater than previous version.');
+            const currentVersion = process.env.CURRENT_VERSION;
+            const previousVersion = process.env.PREVIOUS_VERSION;
+            if (!semver.gt(currentVersion, previousVersion)) {
+              console.error('Error: Current version (' + currentVersion + ') is not greater than previous version (' + previousVersion + ').');
               process.exit(1);
-            } else {
-              console.log('Version increment validated.');
             }
+            console.log('Version increment validated.');
           "
+        env:
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
+          PREVIOUS_VERSION: ${{ env.PREVIOUS_VERSION }}
 
       # Step 8: Install Ruby with Bundler Caching
       - name: Install Ruby
@@ -74,7 +75,8 @@ jobs:
       # Step 9: Install github-changelog-generator and faraday-retry
       - name: Install Gems
         run: |
-          gem install github_changelog_generator faraday-retry
+          gem install github_changelog_generator
+          gem install faraday-retry
 
       # Step 10: Generate Changelog
       - name: Generate Changelog
@@ -84,18 +86,10 @@ jobs:
             --project VS_Code_Catalog_Json_Editor \
             --output CHANGELOG.md \
             --future-release "$CURRENT_VERSION" \
-            --token "$GH_PAT" \
-            --exclude-labels "duplicate,invalid,wontfix" \
-            --bug-labels "bug" \
-            --enhancement-labels "feature,enhancement,improvement" \
-            --breaking-labels "backwards-incompatible,breaking" \
-            --deprecated-labels "deprecated" \
-            --removed-labels "removed" \
-            --security-labels "security" \
-            --pr-label "**Merged pull requests:**" \
-            --issues-label "**Closed issues:**"
+            --token "$GITHUB_TOKEN"
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md
@@ -105,7 +99,7 @@ jobs:
           file_pattern: CHANGELOG.md
           branch: main
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 12: Tag the New Version
       - name: Create Git Tag
@@ -113,7 +107,8 @@ jobs:
           git tag $CURRENT_VERSION
           git push origin $CURRENT_VERSION
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 13: Package the Extension
       - name: Package Extension
@@ -124,26 +119,26 @@ jobs:
       # Step 14: Create GitHub Release
       - name: Create GitHub Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.CURRENT_VERSION }}
-          release_name: Release v${{ env.CURRENT_VERSION }}
+          name: Release v${{ env.CURRENT_VERSION }}
           body_path: ./CHANGELOG.md
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 15: Upload .vsix to Release
       - name: Upload .vsix to Release
         uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
           asset_name: ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
           asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Step 16: Publish to VS Code Marketplace
       - name: Publish to VS Code Marketplace
