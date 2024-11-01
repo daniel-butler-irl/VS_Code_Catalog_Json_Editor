@@ -1,8 +1,7 @@
-// src/services/AuthService.ts
-
 import * as vscode from 'vscode';
 import { CacheService } from './CacheService';
 import { LoggingService } from './LoggingService';
+import axios from 'axios';
 
 /**
  * Service for handling IBM Cloud authentication.
@@ -20,7 +19,7 @@ export class AuthService {
     }
 
     /**
-     * Prompts for and stores an API key
+     * Prompts for and stores a valid API key
      */
     public static async promptForApiKey(context: vscode.ExtensionContext): Promise<void> {
         const apiKey = await vscode.window.showInputBox({
@@ -30,15 +29,20 @@ export class AuthService {
         });
 
         if (apiKey) {
-            await context.secrets.store(AuthService.API_KEY_SECRET, apiKey);
-            
-            // Refresh cache expiry times for catalogs and offerings
-            const cacheService = CacheService.getInstance();
-            cacheService.refreshPrefix('catalog');
-            cacheService.refreshPrefix('offering');
-            
-            AuthService.logger.info('API Key saved and cache refreshed');
-            vscode.window.showInformationMessage('IBM Cloud API Key saved');
+            const isValid = await AuthService.validateApiKey(apiKey);
+            if (isValid) {
+                await context.secrets.store(AuthService.API_KEY_SECRET, apiKey);
+
+                // Refresh cache expiry times for catalogs and offerings
+                const cacheService = CacheService.getInstance();
+                cacheService.refreshPrefix('catalog');
+                cacheService.refreshPrefix('offering');
+
+                AuthService.logger.info('API Key saved and cache refreshed');
+                vscode.window.showInformationMessage('IBM Cloud API Key saved');
+            } else {
+                vscode.window.showErrorMessage('Invalid IBM Cloud API Key. Please try again.');
+            }
         } else {
             vscode.window.showWarningMessage('IBM Cloud API Key is required for validation features');
         }
@@ -58,5 +62,34 @@ export class AuthService {
     public static async isLoggedIn(context: vscode.ExtensionContext): Promise<boolean> {
         const apiKey = await context.secrets.get(AuthService.API_KEY_SECRET);
         return !!apiKey;
+    }
+
+    /**
+/**
+ * Validates the provided API key by attempting to generate an IAM token
+ * @param apiKey The API key to validate
+ * @returns Promise<boolean> True if the API key is valid, false otherwise
+ */
+    private static async validateApiKey(apiKey: string): Promise<boolean> {
+        try {
+            const response = await axios.post('https://iam.cloud.ibm.com/identity/token', null, {
+                params: {
+                    grant_type: 'urn:ibm:params:oauth:grant-type:apikey',
+                    apikey: apiKey,
+                },
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+            });
+
+            return response.status === 200 && response.data.access_token !== undefined;
+        } catch (error) {
+            if (error instanceof Error) {
+                AuthService.logger.error('API Key validation failed', { error: error.message });
+            } else {
+                AuthService.logger.error('An unknown error occurred during API Key validation');
+            }
+            return false;
+        }
     }
 }
