@@ -139,7 +139,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         treeView.onDidChangeSelection(async (e) => {
             if (e.selection.length > 0) {
                 const selectedItem = e.selection[0];
-                await highlightService.highlightJsonPath(selectedItem.jsonPath);
+                // Open or switch to the catalog file
+                const catalogFilePath = catalogService.getCatalogFilePath();
+                if (catalogFilePath) {
+                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
+                    await vscode.window.showTextDocument(document, { preview: false });
+                    // Highlight the JSON path
+                    await highlightService.highlightJsonPath(selectedItem.jsonPath);
+                }
             } else {
                 highlightService.clearHighlight();
             }
