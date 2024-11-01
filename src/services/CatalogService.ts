@@ -28,18 +28,12 @@ export class CatalogService {
         private catalogFilePath?: string,
         private catalogData: any = {}
     ) {
-        // // Restore last workspace folder if available
-        // const lastWorkspacePath = context.globalState.get<string>(LAST_WORKSPACE_KEY);
-        // if (lastWorkspacePath && vscode.workspace.workspaceFolders) {
-        //     this.workspaceFolder = vscode.workspace.workspaceFolders.find(
-        //         folder => folder.uri.fsPath === lastWorkspacePath
-        //     );
-        // }
         // Listen for active editor changes
         vscode.window.onDidChangeActiveTextEditor(() => {
             void this.checkAndUpdateRoot();
         });
     }
+
 
 
     /**
@@ -88,14 +82,6 @@ export class CatalogService {
         }
     }
 
-    // /**
-    //  * Updates the current workspace folder and persists it
-    //  */
-    // private async setWorkspaceFolder(folder: vscode.WorkspaceFolder): Promise<void> {
-    //     this.workspaceFolder = folder;
-    //     await this.context.globalState.update(LAST_WORKSPACE_KEY, folder.uri.fsPath);
-    // }
-
     /**
      * Initializes the service by finding and loading the catalog file
      */
@@ -104,39 +90,41 @@ export class CatalogService {
             return true;
         }
 
-        try {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                this.initialized = true;
-                return false;
-            }
+        const workspaceFolders = vscode.workspace.workspaceFolders;
 
-            const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-            if (!workspaceFolder) {
-                this.initialized = true;
-                return false;
-            }
-
-            const expectedPath = path.join(workspaceFolder.uri.fsPath, 'ibm_catalog.json');
-            try {
-                await fs.access(expectedPath);
-                this.currentRootUri = workspaceFolder.uri;
-                this.catalogFilePath = expectedPath;
-                await this.loadCatalogData();
-                this.initialized = true;
-                return true;
-            } catch {
-                this.logger.debug(`No ibm_catalog.json found in ${workspaceFolder.name}`);
-                this.initialized = true;
-                return false;
-            }
-        } catch (error) {
-            this.logger.error('Initialization error:', error);
-            this.initialized = true;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
             return false;
         }
-    }
 
+        for (const folder of workspaceFolders) {
+            const catalogFileUri = vscode.Uri.joinPath(folder.uri, 'ibm_catalog.json');
+            try {
+                // Check if the 'ibm_catalog.json' file exists
+                await vscode.workspace.fs.stat(catalogFileUri);
+
+                // File exists, set the catalog file path and root URI
+                this.catalogFilePath = catalogFileUri.fsPath;
+                this.currentRootUri = folder.uri;
+
+                // Load the catalog data
+                await this.loadCatalogData();
+
+                // Set initialized to true
+                this.initialized = true;
+
+                // Notify listeners about content change
+                this._onDidChangeContent.fire();
+
+                return true;
+            } catch {
+                // File does not exist in this folder, continue to next folder
+                continue;
+            }
+        }
+
+        // No 'ibm_catalog.json' found in workspace folders
+        return false;
+    }
 
     /**
      * Reloads the catalog data from disk
@@ -1158,40 +1146,6 @@ export class CatalogService {
         return selection?.label;
     }
 
-    /**
-     * Retrieves configuration keys from the local ibm_catalog.json for the current dependency's flavor.
-     * @param node The CatalogTreeItem representing the dependency.
-     * @returns Promise<string[]> An array of configuration keys.
-     */
-    private async getLocalConfigurationKeys(node: CatalogTreeItem): Promise<string[]> {
-        // Use the type guard to find the flavor node
-        const flavorNode = node.findAncestorFlavorNode();
-
-        if (!flavorNode) {
-            this.logger.error('Could not find the flavor node containing this dependency.');
-            return [];
-        }
-
-        // TypeScript now knows flavorNode.value has 'configuration' as an array
-        const configuration = flavorNode.value.configuration as Array<{ key: string }>;
-
-        if (!Array.isArray(configuration)) {
-            this.logger.error('No configuration array found in the flavor node.');
-            return [];
-        }
-
-        // Extract configuration keys
-        const keys = configuration
-            .map((configItem) => configItem.key)
-            .filter((key): key is string => typeof key === 'string');
-
-        if (keys.length === 0) {
-            this.logger.error('No valid configuration keys found in the flavor configuration.');
-        }
-
-        return keys;
-    }
-
 
     /**
     * Retrieves the catalog_id associated with a given node.
@@ -1317,22 +1271,6 @@ export class CatalogService {
     private isDependencyNode(node: CatalogTreeItem): boolean {
         return /\.dependencies\[\d+\]$/.test(node.jsonPath);
     }
-
-    // Update the editInputMapping method in CatalogService
-
-    // public async editInputMapping(node: CatalogTreeItem): Promise<void> {
-    //     const apiKey = await AuthService.getApiKey(this.context);
-    //     const inputMappingService = new InputMappingService(
-    //         apiKey ? new IBMCloudService(apiKey) : undefined
-    //     );
-
-    //     const dependencyNode = node.parent;
-    //     if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
-    //         return;
-    //     }
-
-
-    // }
 
     /**
      * Determines the collapsible state for a value
