@@ -11,6 +11,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
 
+    permissions:
+      # Give the default GITHUB_TOKEN write permission to commit and push the
+      # added or changed files to the repository.
+      contents: write
+
     steps:
       # Step 1: Checkout the Repository
       - name: Checkout Repository
@@ -98,8 +103,6 @@ jobs:
           commit_message: "chore: update CHANGELOG for version ${{ env.CURRENT_VERSION }}"
           file_pattern: CHANGELOG.md
           branch: main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       # Step 12: Tag the New Version
       - name: Create Git Tag
