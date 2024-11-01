@@ -1147,6 +1147,14 @@ export class CatalogService {
     }
 
 
+    public async handleFileDeletion(uri: vscode.Uri): Promise<void> {
+        if (this.catalogFilePath && this.catalogFilePath === uri.fsPath) {
+            this.catalogFilePath = undefined;
+            this.catalogData = {};
+            this.initialized = false;
+            this._onDidChangeContent.fire();
+        }
+    }
     /**
     * Retrieves the catalog_id associated with a given node.
     */
