@@ -70,16 +70,18 @@ jobs:
           "
         shell: bash
 
-      # Step 8: Install Ruby
+      # Step 8: Install Ruby with Bundler Caching
       - name: Install Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.0'  # Specify the Ruby version you need
-          cache: gem
+          ruby-version: '3.0'        # Specify the Ruby version you need
+          bundler-cache: true        # Enables automatic bundler caching
 
-      # Step 9: Install github-changelog-generator
-      - name: Install github-changelog-generator
-        run: gem install github_changelog_generator
+      # Step 9: Install github-changelog-generator and faraday-retry
+      - name: Install Gems
+        run: |
+          gem install github_changelog_generator
+          gem install faraday-retry
 
       # Step 10: Generate Changelog
       - name: Generate Changelog
