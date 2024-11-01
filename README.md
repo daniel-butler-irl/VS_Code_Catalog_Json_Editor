@@ -81,7 +81,7 @@ IBM Catalog JSON Editor is a Visual Studio Code extension designed to streamline
 
 ## License
 
-This project is licensed under the [Apache 2.0](./LICENSE).
+This project is licensed under the [Apache 2.0](./LICENSE.md).
 
 ## Support
 
