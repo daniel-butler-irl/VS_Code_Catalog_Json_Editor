@@ -87,12 +87,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           github_changelog_generator \
-            --user DanielButler \
-            --project VS_Code_Catalog_Json_Editor \
-            --token $GITHUB_TOKEN \
-            --no-issues \
-            --exclude-labels 'duplicate,invalid,wontfix' \
-            --future-release $CURRENT_VERSION
+            --config .github_changelog_generator.yml
 
       # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md

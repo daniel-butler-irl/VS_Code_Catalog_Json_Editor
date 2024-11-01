@@ -1,16 +1,24 @@
 github_changelog_generator:
-  # Exclude issues or PRs with these labels
+  user: DanielButler
+  project: VS_Code_Catalog_Json_Editor
+  token: $GITHUB_TOKEN
+  output: CHANGELOG.md
+  future_release: $CURRENT_VERSION
   exclude_labels: duplicate,invalid,wontfix
-  # Specify categories for organizing the changelog
+  no_issue: true
   categories:
     - title: 🚀 Features
-      labels: feature,enhancement
+      labels: feature, enhancement, improvement
     - title: 🐛 Bug Fixes
       labels: bug
     - title: 🛠 Maintenance
-      labels: chore,refactor
-  # Ignore certain milestones or projects
-  ignore:
-    milestones: 'none'
-    projects: 'none'
-  # Other customization options as needed
+      labels: chore, refactor
+    - title: 📝 Documentation
+      labels: docs
+    - title: ⚡ Performance
+      labels: performance
+    - title: ✅ Tests
+      labels: test
+    - title: 🆘 Hotfixes
+      labels: hotfix
+
