@@ -85,13 +85,25 @@ jobs:
 
       # Step 10: Generate Changelog
       - name: Generate Changelog
+        run: |
+          github_changelog_generator \
+            -u daniel-butler-irl \
+            -p VS_Code_Catalog_Json_Editor \
+            --future-release "$CURRENT_VERSION" \
+            --output CHANGELOG.md \
+            --exclude-labels "duplicate,invalid,wontfix" \
+            --no-issues \
+            --enhancement-labels "feature,enhancement,improvement" \
+            --bugs-label "bug" \
+            --deprecated-labels "chore,refactor" \
+            --issues-label "docs" \
+            --security-label "performance" \
+            --release-summary-label "test" \
+            --breaking-label "hotfix" \
+            --token "$GITHUB_TOKEN"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
-        run: |
-          github_changelog_generator \
-            --config-file .github_changelog_generator.yml \
-            --future-release "$CURRENT_VERSION"
 
       # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md
