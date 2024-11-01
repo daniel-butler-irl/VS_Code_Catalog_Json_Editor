@@ -85,9 +85,11 @@ jobs:
       - name: Generate Changelog
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
         run: |
           github_changelog_generator \
-            --config .github_changelog_generator.yml
+            --config-file .github_changelog_generator.yml \
+            --future-release "$CURRENT_VERSION"
 
       # Step 11: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md

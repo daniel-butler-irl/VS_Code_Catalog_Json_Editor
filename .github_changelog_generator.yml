@@ -3,7 +3,6 @@ github_changelog_generator:
   project: VS_Code_Catalog_Json_Editor
   token: $GITHUB_TOKEN
   output: CHANGELOG.md
-  future_release: $CURRENT_VERSION
   exclude_labels: duplicate,invalid,wontfix
   no_issue: true
   categories:
@@ -21,4 +20,3 @@ github_changelog_generator:
       labels: test
     - title: 🆘 Hotfixes
       labels: hotfix
-
