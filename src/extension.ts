@@ -10,6 +10,17 @@ import { LoggingService, LogLevel } from './services/LoggingService';
 import { CacheService } from './services/CacheService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
+
+    if (isDebugMode) {
+        const config = vscode.workspace.getConfiguration('ibmCatalog');
+        config.update('enableDebugLogging', true, vscode.ConfigurationTarget.Global)
+            .then(
+                () => console.log('Debug logging enabled'),
+                (error) => console.error('Error enabling debug logging:', error)
+            );
+    }
+
     // Initialize and configure logging
     const logger = LoggingService.getInstance();
 
