@@ -5,6 +5,7 @@ import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-manag
 import { LoggingService } from './LoggingService';
 import { CacheService } from './CacheService';
 import { throttle } from 'lodash';
+import { deduplicateRequest } from '../decorators/requestDeduplication';
 
 interface CatalogResponse {
     id: string;
@@ -29,8 +30,6 @@ export interface CatalogItem {
     disabled?: boolean;
     isPublic: boolean; // Indicates if the catalog is public
 }
-
-// Update the interfaces in IBMCloudService.ts
 
 /**
  * Represents a complete offering with all its details
@@ -209,6 +208,16 @@ export class IBMCloudService {
      * @param catalogId The catalog ID to fetch details for
      * @returns Promise<CatalogResponse> The offering details
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string) => `fetchOfferingDetails:${catalogId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate offering details request detected',
+                { key }
+            );
+        }
+    })
     private async fetchOfferingDetails(catalogId: string): Promise<CatalogResponse> {
         const response = await this.catalogManagement.getCatalog({
             catalogIdentifier: catalogId,
@@ -218,10 +227,20 @@ export class IBMCloudService {
     }
 
     /**
-     * Validates a catalog ID against IBM Cloud
-     * @param catalogId The catalog ID to validate
-     * @returns Promise<boolean> True if the catalog ID is valid
-     */
+   * Validates a catalog ID against IBM Cloud with request deduplication
+   * @param catalogId The catalog ID to validate
+   * @returns Promise<boolean> True if the catalog ID is valid
+   */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string) => `validateCatalogId:${catalogId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate catalog validation request detected',
+                { key }
+            );
+        }
+    })
     public async validateCatalogId(catalogId: string): Promise<boolean> {
         const cacheKey = `catalogId:${catalogId}`;
         this.logger.debug(`Validating catalog ID: ${catalogId}`);
@@ -264,6 +283,16 @@ export class IBMCloudService {
      * @param cacheKey The cache key to use for storing the result
      * @returns Promise<boolean> True if the catalog ID is valid
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string, cacheKey: string) => `validateCatalog:${catalogId}:${cacheKey}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate validation request detected',
+                { key }
+            );
+        }
+    })
     private async performValidation(catalogId: string, cacheKey: string): Promise<boolean> {
         this.logger.debug('Making validation request to IBM Cloud');
         try {
@@ -309,6 +338,16 @@ export class IBMCloudService {
    * @param catalogId The catalog ID
    * @returns Promise<OfferingItem[]> Array of all offerings with their details
    */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string) => `offerings:${catalogId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate offerings request detected',
+                { key }
+            );
+        }
+    })
     public async getOfferingsForCatalog(catalogId: string): Promise<OfferingItem[]> {
         const cacheKey = `offerings:${catalogId}`;
         const logger = this.logger;
@@ -452,6 +491,17 @@ export class IBMCloudService {
   * @param offeringId The offering ID
   * @returns Promise<string[]> Array of unique flavor names
   */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string, offeringId: string) =>
+            `flavors:${catalogId}:${offeringId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate flavors request detected',
+                { key }
+            );
+        }
+    })
     public async getAvailableFlavors(catalogId: string, offeringId: string): Promise<string[]> {
         const cacheKey = `flavors:${catalogId}:${offeringId}`;
         this.logger.debug(`Fetching available flavors for offering ${offeringId} in catalog ${catalogId}`);
@@ -517,6 +567,17 @@ export class IBMCloudService {
      * @param flavorName The flavor name
      * @returns Promise<OfferingFlavor | undefined> The flavor details if found
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string, offeringId: string, flavorName: string) =>
+            `flavorDetails:${catalogId}:${offeringId}:${flavorName}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate flavor details request detected',
+                { key }
+            );
+        }
+    })
     public async getFlavorDetails(catalogId: string, offeringId: string, flavorName: string): Promise<OfferingFlavor | undefined> {
         const cacheKey = `flavorDetails:${catalogId}:${offeringId}:${flavorName}`;
 
@@ -601,6 +662,17 @@ export class IBMCloudService {
      * @param flavorName The flavor name to validate
      * @returns Promise<boolean> True if the flavor exists
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string, offeringId: string, flavorName: string) =>
+            `validateFlavor:${catalogId}:${offeringId}:${flavorName}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate flavor validation request detected',
+                { key }
+            );
+        }
+    })
     public async validateFlavor(catalogId: string, offeringId: string, flavorName: string): Promise<boolean> {
         const cacheKey = `flavorValidation:${catalogId}:${offeringId}:${flavorName}`;
 
@@ -629,11 +701,22 @@ export class IBMCloudService {
         }
     }
     /**
-     * Validates an offering ID within a catalog.
-     * @param catalogId The catalog ID.
-     * @param offeringId The offering ID.
-     * @returns Promise<boolean> True if the offering ID is valid within the catalog.
+     * Validates an offering ID within a catalog
+     * @param catalogId The catalog ID
+     * @param offeringId The offering ID
+     * @returns Promise<boolean> True if the offering ID is valid
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string, offeringId: string) =>
+            `validateOffering:${catalogId}:${offeringId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate offering validation request detected',
+                { key }
+            );
+        }
+    })
     public async validateOfferingId(catalogId: string, offeringId: string): Promise<boolean> {
         const cacheKey = `offeringValidation:${catalogId}:${offeringId}`;
         const cachedValue = this.cacheService.get<boolean>(cacheKey);
@@ -655,6 +738,17 @@ export class IBMCloudService {
      * @param catalogId The catalog ID to get details for
      * @returns Promise<CatalogResponse> The catalog details
      */
+    @deduplicateRequest({
+        keyGenerator: (catalogId: string) =>
+            `getOfferingDetails:${catalogId}`,
+        timeoutMs: 60000,
+        onDuplicate: (key) => {
+            LoggingService.getInstance().debug(
+                'Duplicate offering details request detected',
+                { key }
+            );
+        }
+    })
     public async getOfferingDetails(catalogId: string): Promise<CatalogResponse> {
         const cacheKey = `catalogDetails:${catalogId}`;
         this.logger.debug(`Fetching offering details for catalog ID: ${catalogId}`);
@@ -702,6 +796,15 @@ export class IBMCloudService {
      * Fetches all available private catalogs
      * @returns Promise<CatalogItem[]> Array of available private catalogs
      */
+    @deduplicateRequest({
+        keyGenerator: () => 'getAvailablePrivateCatalogs',
+        timeoutMs: 30000,
+        onDuplicate: () => {
+            LoggingService.getInstance().debug(
+                'Duplicate private catalogs request detected'
+            );
+        }
+    })
     public async getAvailablePrivateCatalogs(): Promise<CatalogItem[]> {
         const cacheKey = 'available_private_catalogs';
         const logger = this.logger;
@@ -796,6 +899,15 @@ export class IBMCloudService {
      * Fetches all available catalogs (both private and public)
      * @returns Promise<CatalogItem[]> Array of all available catalogs
      */
+    @deduplicateRequest({
+        keyGenerator: () => 'getAvailableCatalogs',
+        timeoutMs: 30000,
+        onDuplicate: () => {
+            LoggingService.getInstance().debug(
+                'Duplicate all catalogs request detected'
+            );
+        }
+    })
     public async getAvailableCatalogs(): Promise<CatalogItem[]> {
         const cacheKey = 'available_catalogs';
         const logger = this.logger;
