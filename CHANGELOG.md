@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.9](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.9) (2024-11-02)
+
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.8...0.0.9)
+
+**Closed issues:**
+
+- Progress bar while searching [\#5](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/5)
+
+**Merged pull requests:**
+
+- feat: enhance addElement method to support input\_mapping arrays [\#18](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/18) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Deduplication and Update prompts [\#17](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/17) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+
 ## [0.0.8](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.8) (2024-11-02)
 
 [Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.7...0.0.8)
