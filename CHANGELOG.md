@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.8](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.8) (2024-11-02)
+
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.7...0.0.8)
+
+**Merged pull requests:**
+
+- feat: add progress indication for IBM Cloud service operations [\#14](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/14) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+
 ## [0.0.7](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.7) (2024-11-01)
 
 [Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.6...0.0.7)
