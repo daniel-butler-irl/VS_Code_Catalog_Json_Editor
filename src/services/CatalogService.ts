@@ -395,12 +395,12 @@ export class CatalogService {
     private async promptForBoolean(fieldLabel: string, currentValue?: boolean): Promise<boolean | undefined> {
         const items: vscode.QuickPickItem[] = [
             {
-                label: 'true',
+                label: `${currentValue === true ? '$(check) ' : ''}true`,
                 description: 'Set value to true',
                 picked: currentValue === true
             },
             {
-                label: 'false',
+                label: `${currentValue === false ? '$(check) ' : ''}false`,
                 description: 'Set value to false',
                 picked: currentValue === false
             }
@@ -416,7 +416,7 @@ export class CatalogService {
             return undefined;
         }
 
-        return selection.label === 'true';
+        return selection.label.includes('true');
     }
 
     /**
@@ -458,7 +458,7 @@ export class CatalogService {
                     kind: vscode.QuickPickItemKind.Separator
                 },
                 ...publicCatalogs.map(catalog => ({
-                    label: catalog.label,
+                    label: `${catalog.id === currentValue ? '$(check) ' : ''}${catalog.label}`,
                     description: catalog.id,
                     detail: catalog.shortDescription
                 })),
@@ -468,7 +468,7 @@ export class CatalogService {
                     kind: vscode.QuickPickItemKind.Separator
                 },
                 ...privateCatalogs.map(catalog => ({
-                    label: catalog.label,
+                    label: `${catalog.id === currentValue ? '$(check) ' : ''}${catalog.label}`,
                     description: catalog.id,
                     detail: catalog.shortDescription
                 }))
@@ -557,7 +557,7 @@ export class CatalogService {
                     kind: vscode.QuickPickItemKind.Separator
                 },
                 ...offerings.map(offering => ({
-                    label: offering.name,
+                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.name}`,
                     description: offering.id,
                     detail: offering.shortDescription
                 }))
@@ -1010,7 +1010,7 @@ export class CatalogService {
         currentValue?: string
     ): vscode.QuickPickItem[] {
         return options.map(opt => ({
-            label: `${opt.label} (${opt.type || 'string'})`,
+            label: `${opt.value === currentValue ? '$(check) ' : ''}${opt.label} (${opt.type || 'string'})`,
             description: '',
             detail: this.formatMappingDetail(opt),
             picked: currentValue === opt.value
@@ -1058,7 +1058,7 @@ export class CatalogService {
      */
     private createConfigKeyItems(configurations: Configuration[], currentValue?: string): vscode.QuickPickItem[] {
         return configurations.map(config => ({
-            label: `${config.key} (${config.type || 'string'})`,
+            label: `${config.key === currentValue ? '$(check) ' : ''}${config.key} (${config.type || 'string'})`,
             description: '',
             detail: `Default: ${config.default_value !== undefined ? config.default_value : 'Not Set'} • ${config.description || ''}`,
             picked: currentValue === config.key
