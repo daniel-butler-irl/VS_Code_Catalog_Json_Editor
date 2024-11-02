@@ -1,5 +1,5 @@
 // src/services/IBMCloudService.ts
-
+import * as vscode from 'vscode';
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
 import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-management/v1');
 import { LoggingService } from './LoggingService';
@@ -118,6 +118,23 @@ export class IBMCloudService {
     private backgroundCacheQueue: Set<string> = new Set();
     private isProcessingQueue: boolean = false;
 
+
+    private async withProgress<T>(
+        title: string,
+        task: () => Promise<T>
+    ): Promise<T> {
+        return vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title,
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ increment: 0 });
+            const result = await task();
+            progress.report({ increment: 100 });
+            return result;
+        });
+    }
+
     // Throttle the background processing to avoid API rate limits
     private processBackgroundCacheThrottled = throttle(
         () => this.processBackgroundCache(),
@@ -168,7 +185,9 @@ export class IBMCloudService {
                 try {
                     const cacheKey = `offering:${catalogId}`;
                     if (!this.cacheService.get(cacheKey)) {
-                        const details = await this.fetchOfferingDetails(catalogId);
+                        const details = await this.withProgress(`Fetching offering details for ${catalogId}`, () =>
+                            this.fetchOfferingDetails(catalogId)
+                        );
                         this.cacheService.set(cacheKey, details);
                         this.logger.debug(`Background cached offering details for: ${catalogId}`);
                     }
@@ -315,11 +334,12 @@ export class IBMCloudService {
             do {
                 logger.debug(`Fetching offerings with limit=${PAGE_LIMIT} and offset=${offset}`);
 
-                const response = await this.catalogManagement.listOfferings({
-                    catalogIdentifier: catalogId,
-                    limit: PAGE_LIMIT,
-                    offset: offset,
-                });
+                const response = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
+                    this.catalogManagement.listOfferings({
+                        catalogIdentifier: catalogId,
+                        limit: PAGE_LIMIT,
+                        offset: offset,
+                    }));
 
                 const resources = response.result.resources ?? [];
                 const offeringsPage: OfferingItem[] = resources
@@ -445,10 +465,11 @@ export class IBMCloudService {
 
         try {
             // Get offering details which includes kinds with versions and flavors
-            const response = await this.catalogManagement.getOffering({
-                catalogIdentifier: catalogId,
-                offeringId: offeringId
-            });
+            const response = await this.withProgress(`Fetching flavors for offering ${offeringId}`, () =>
+                this.catalogManagement.getOffering({
+                    catalogIdentifier: catalogId,
+                    offeringId: offeringId
+                }));
 
             const offering = response.result;
             if (!offering?.kinds?.length) {
@@ -506,10 +527,11 @@ export class IBMCloudService {
         }
 
         try {
-            const response = await this.catalogManagement.getOffering({
-                catalogIdentifier: catalogId,
-                offeringId: offeringId
-            });
+            const response = await this.withProgress(`Fetching flavor details for ${flavorName}`, () =>
+                this.catalogManagement.getOffering({
+                    catalogIdentifier: catalogId,
+                    offeringId: offeringId
+                }));
 
             const offering = response.result;
             if (!offering?.kinds?.length) {
@@ -648,9 +670,10 @@ export class IBMCloudService {
 
         this.logger.debug('Making offering details request to IBM Cloud');
         try {
-            const response = await this.catalogManagement.getCatalog({
-                catalogIdentifier: catalogId,
-            });
+            const response = await this.withProgress(`Fetching catalog details for ${catalogId}`, () =>
+                this.catalogManagement.getCatalog({
+                    catalogIdentifier: catalogId,
+                }));
 
             const details = response.result as CatalogResponse;
             this.logger.debug('Received offering details', {
@@ -693,7 +716,8 @@ export class IBMCloudService {
         }
 
         try {
-            const response = await this.catalogManagement.listCatalogs();
+            const response = await this.withProgress('Fetching private catalogs', () =>
+                this.catalogManagement.listCatalogs());
 
             const catalogs: CatalogItem[] = (response.result.resources ?? [])
                 .filter(catalog => !catalog.disabled && catalog.id && catalog.label)
