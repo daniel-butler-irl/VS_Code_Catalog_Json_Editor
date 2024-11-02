@@ -168,29 +168,82 @@ export class CatalogService {
     }
 
     /**
-     * Adds a new element to the catalog at the specified path.
-     * @param parentNode The parent node where the new element will be added.
-     * @param schemaService The schema service instance.
-     */
+  * Adds a new element to the catalog at the specified path.
+  * @param parentNode The parent node where the new element will be added.
+  * @param schemaService The schema service instance.
+  */
     public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
         if (!this.initialized) {
             await this.initialize();
         }
 
         try {
-            const newElement = await AddElementDialog.show(parentNode, schemaService);
+            // Check if we're adding to an input_mapping array
+            if (parentNode.jsonPath.endsWith('.input_mapping')) {
+                const mappingType = await this.promptForMappingType();
+                if (!mappingType) {
+                    return; // User cancelled
+                }
 
+                const newMapping = {
+                    [mappingType]: "",
+                    "version_input": ""
+                };
+
+                // Get current array and append new mapping
+                const currentArray = (parentNode.value as any[]) || [];
+                const updatedArray = [...currentArray, newMapping];
+
+                // Update the JSON data
+                await this.updateJsonValue(parentNode.jsonPath, updatedArray);
+                await this.loadCatalogData(); // Reload to ensure consistency
+                return;
+            }
+
+            // Existing logic for other types of elements
+            const newElement = await AddElementDialog.show(parentNode, schemaService);
             if (newElement === undefined) {
                 return; // User cancelled
             }
 
-            // Update the JSON data
             await this.updateJsonValue(`${parentNode.jsonPath}`, newElement);
             await this.loadCatalogData(); // Reload to ensure consistency
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to add element: ${error instanceof Error ? error.message : 'Unknown error'}`);
             throw error;
         }
+    }
+
+    /**
+     * Prompts the user to select the type of mapping to add
+     * @returns Promise<string | undefined> The selected mapping type or undefined if cancelled
+     */
+    private async promptForMappingType(): Promise<string | undefined> {
+        const items: vscode.QuickPickItem[] = [
+            {
+                label: "Dependency Input",
+                description: "Map an input from this dependency",
+                detail: "Creates a mapping with dependency_input field"
+            },
+            {
+                label: "Dependency Output",
+                description: "Map an output from this dependency",
+                detail: "Creates a mapping with dependency_output field"
+            }
+        ];
+
+        const selection = await vscode.window.showQuickPick(items, {
+            title: 'Select Input Mapping Type',
+            placeHolder: 'Choose the type of mapping to add',
+            canPickMany: false
+        });
+
+        if (!selection) {
+            return undefined;
+        }
+
+        // Convert selection to field name
+        return selection.label === "Dependency Input" ? "dependency_input" : "dependency_output";
     }
 
     /**
@@ -1262,7 +1315,7 @@ export class CatalogService {
                     value,
                     `${node.jsonPath}.${key}`,
                     this.getCollapsibleState(value),
-                    this.getContextValue(value),
+                    this.getContextValue(value, `${node.jsonPath}.${key}`),
                     undefined,
                     node
                 );
@@ -1293,12 +1346,17 @@ export class CatalogService {
     }
 
     /**
-     * Determines the context value for a node
-     * @param value The value to check
-     * @returns The appropriate context value
-     */
-    private getContextValue(value: unknown): string {
+ * Determines the context value for menu contributions
+ * @param value The value to check
+ * @param jsonPath The JSON path of the node
+ * @returns The appropriate context value
+ */
+    private getContextValue(value: unknown, jsonPath: string): string {
         if (Array.isArray(value)) {
+            // Special handling for input_mapping arrays
+            if (jsonPath.endsWith('.input_mapping')) {
+                return 'input_mapping_array';
+            }
             return 'array';
         }
         if (typeof value === 'object' && value !== null) {
