@@ -198,6 +198,30 @@ export class CatalogService {
                 await this.updateJsonValue(parentNode.jsonPath, updatedArray);
                 await this.loadCatalogData(); // Reload to ensure consistency
                 return;
+            } else {
+                // TODO: Temporary disable for all other types of elements
+                // Popup stating only input_mapping is supported for now
+                vscode.window.showWarningMessage('Only dependency input_mapping is supported for now.');
+                return;
+            }
+
+            if (!schemaService.isSchemaAvailable()) {
+                const result = await vscode.window.showErrorMessage(
+                    'Schema is not available. Would you like to retry loading the schema?',
+                    'Retry',
+                    'Cancel'
+                );
+
+                if (result === 'Retry') {
+                    try {
+                        await schemaService.refreshSchema();
+                    } catch (error) {
+                        vscode.window.showErrorMessage('Failed to load schema. Please try again later.');
+                        return;
+                    }
+                } else {
+                    return;
+                }
             }
 
             // Existing logic for other types of elements
