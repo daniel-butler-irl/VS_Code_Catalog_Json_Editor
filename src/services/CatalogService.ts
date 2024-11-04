@@ -13,6 +13,7 @@ import { InputMappingService } from './InputMappingService';
 import type { Configuration } from './IBMCloudService';
 import type { MappingOption } from '../types/inputMapping';
 import type { OfferingFlavor } from './IBMCloudService';
+import { ValueQuickPickItem } from '../types/quickPick';
 
 const LAST_WORKSPACE_KEY = 'ibmCatalog.lastWorkspaceFolder';
 
@@ -239,20 +240,22 @@ export class CatalogService {
     }
 
     /**
-     * Prompts the user to select the type of mapping to add
-     * @returns Promise<string | undefined> The selected mapping type or undefined if cancelled
-     */
+ * Prompts the user to select the type of mapping to add
+ * @returns Promise<string | undefined> The selected mapping type or undefined if cancelled
+ */
     private async promptForMappingType(): Promise<string | undefined> {
-        const items: vscode.QuickPickItem[] = [
+        const items: ValueQuickPickItem[] = [
             {
                 label: "Dependency Input",
                 description: "Map an input from this dependency",
-                detail: "Creates a mapping with dependency_input field"
+                detail: "Creates a mapping with dependency_input field",
+                value: "dependency_input"
             },
             {
                 label: "Dependency Output",
                 description: "Map an output from this dependency",
-                detail: "Creates a mapping with dependency_output field"
+                detail: "Creates a mapping with dependency_output field",
+                value: "dependency_output"
             }
         ];
 
@@ -262,12 +265,7 @@ export class CatalogService {
             canPickMany: false
         });
 
-        if (!selection) {
-            return undefined;
-        }
-
-        // Convert selection to field name
-        return selection.label === "Dependency Input" ? "dependency_input" : "dependency_output";
+        return selection?.value;
     }
 
     /**
@@ -804,7 +802,6 @@ export class CatalogService {
                     items.push({
                         label: `${flavorName === currentValue ? '$(check) ' : ''}${flavorName}`,
                         description: flavorName,
-                        detail: flavorName === currentValue ? '(Current Selection)' : undefined
                     });
                 }
             }
@@ -878,11 +875,6 @@ export class CatalogService {
     ): string {
         const parts: string[] = [];
 
-        // Add current selection indicator
-        if (flavorName === currentValue) {
-            parts.push('(Current Selection)');
-        }
-
         // Add localized label if available
         if (details?.label_i18n?.['en']) {
             parts.push(details.label_i18n['en']);
@@ -898,6 +890,13 @@ export class CatalogService {
             details.displayName !== details.label &&
             details.displayName !== details.name) {
             parts.push(`Display: ${details.displayName}`);
+        }
+
+        // Add description if available
+        if (details?.description) {
+            parts.push(`Description: ${details.description}`);
+        } else {
+            parts.push(`Description: No description available`);
         }
 
         // Use raw flavor name if no other details available
@@ -930,11 +929,11 @@ export class CatalogService {
 
 
     /**
-      * Prompts the user to select an input mapping value
-      * @param node The tree node being edited
-      * @param currentValue Current selected value if any
-      * @returns Promise<string | undefined> Selected value or undefined if cancelled
-      */
+     * Prompts the user to select an input mapping value
+     * @param node The tree node being edited
+     * @param currentValue Current selected value if any
+     * @returns Promise<string | undefined> Selected value or undefined if cancelled
+     */
     private async promptForInputMapping(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
         if (!this.initialized) {
             await this.initialize();
@@ -980,26 +979,24 @@ export class CatalogService {
 
             // Group configuration keys by required status
             const configGroups = this.groupConfigurationItems(configurations, node);
-            const items: vscode.QuickPickItem[] = [];
+            const items: ValueQuickPickItem[] = [];
 
             if (configGroups.required.length > 0) {
-                items.push(
-                    {
-                        label: "Required",
-                        kind: vscode.QuickPickItemKind.Separator
-                    },
-                    ...this.createConfigKeyItems(configGroups.required, currentValue)
-                );
+                items.push({
+                    label: "Required",
+                    kind: vscode.QuickPickItemKind.Separator
+                } as ValueQuickPickItem);
+
+                items.push(...this.createConfigKeyItems(configGroups.required, currentValue));
             }
 
             if (configGroups.optional.length > 0) {
-                items.push(
-                    {
-                        label: "Optional",
-                        kind: vscode.QuickPickItemKind.Separator
-                    },
-                    ...this.createConfigKeyItems(configGroups.optional, currentValue)
-                );
+                items.push({
+                    label: "Optional",
+                    kind: vscode.QuickPickItemKind.Separator
+                } as ValueQuickPickItem);
+
+                items.push(...this.createConfigKeyItems(configGroups.optional, currentValue));
             }
 
             const selection = await vscode.window.showQuickPick(items, {
@@ -1007,7 +1004,7 @@ export class CatalogService {
                 title: 'Version Input Keys'
             });
 
-            return selection?.label.replace(/\s*\(.*\)$/, '');
+            return selection?.value;
         }
 
         if (fieldType === 'dependency_input' || fieldType === 'dependency_output') {
@@ -1028,26 +1025,24 @@ export class CatalogService {
 
             // Group options by required status
             const groups = this.groupMappingOptions(filteredOptions);
-            const items: vscode.QuickPickItem[] = [];
+            const items: ValueQuickPickItem[] = [];
 
             if (groups.required.length > 0) {
-                items.push(
-                    {
-                        label: "Required",
-                        kind: vscode.QuickPickItemKind.Separator
-                    },
-                    ...this.createMappingQuickPickItems(groups.required, currentValue)
-                );
+                items.push({
+                    label: "Required",
+                    kind: vscode.QuickPickItemKind.Separator
+                } as ValueQuickPickItem);
+
+                items.push(...this.createMappingQuickPickItems(groups.required, currentValue));
             }
 
             if (groups.optional.length > 0) {
-                items.push(
-                    {
-                        label: "Optional",
-                        kind: vscode.QuickPickItemKind.Separator
-                    },
-                    ...this.createMappingQuickPickItems(groups.optional, currentValue)
-                );
+                items.push({
+                    label: "Optional",
+                    kind: vscode.QuickPickItemKind.Separator
+                } as ValueQuickPickItem);
+
+                items.push(...this.createMappingQuickPickItems(groups.optional, currentValue));
             }
 
             const selection = await vscode.window.showQuickPick(items, {
@@ -1055,11 +1050,12 @@ export class CatalogService {
                 title: fieldType.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
             });
 
-            return selection?.label.replace(/\s*\(.*\)$/, '');
+            return selection?.value;
         }
 
         return undefined;
     }
+
 
     /**
      * Groups mapping options by their required status
@@ -1077,30 +1073,30 @@ export class CatalogService {
     }
 
     /**
-     * Creates QuickPick items for input mapping selection
-     * @param options Mapping options to convert to QuickPick items
-     * @param currentValue Current selected value if any
-     * @returns Array of QuickPick items
-     */
+  * Creates QuickPick items for input mapping selection
+  * @param options Mapping options to convert to QuickPick items
+  * @param currentValue Current selected value if any
+  * @returns Array of QuickPick items
+  */
     private createMappingQuickPickItems(
         options: MappingOption[],
         currentValue?: string
-    ): vscode.QuickPickItem[] {
+    ): ValueQuickPickItem[] {
         return options.map(opt => ({
             label: `${opt.value === currentValue ? '$(check) ' : ''}${opt.label} (${opt.type || 'string'})`,
             description: '',
             detail: this.formatMappingDetail(opt),
-            picked: currentValue === opt.value
+            picked: currentValue === opt.value,
+            value: opt.value
         }));
     }
-
     /**
      * Formats the detail string for a mapping option
      * @param option The mapping option to format
      * @returns Formatted detail string
      */
     private formatMappingDetail(option: MappingOption): string {
-        return `Default: ${option.defaultValue} • ${option.description || ''}`;
+        return `Default: "${option.defaultValue}" • ${option.description || 'No description specified'}`;
     }
 
     /**
@@ -1128,21 +1124,22 @@ export class CatalogService {
     }
 
     /**
-     * Creates QuickPick items for configuration keys
-     * @param configurations Array of configuration items
-     * @param currentValue Current selected value if any
-     * @returns Array of QuickPick items
-     */
-    private createConfigKeyItems(configurations: Configuration[], currentValue?: string): vscode.QuickPickItem[] {
+ * Creates QuickPick items for configuration keys
+ * @param configurations Array of configuration items
+ * @param currentValue Current selected value if any
+ * @returns Array of QuickPick items
+ */
+    private createConfigKeyItems(configurations: Configuration[], currentValue?: string): ValueQuickPickItem[] {
         return configurations.map(config => ({
             label: `${config.key === currentValue ? '$(check) ' : ''}${config.key} (${config.type || 'string'})`,
             description: '',
-            detail: `Default: ${config.default_value !== undefined ? config.default_value : 'Not Set'} • ${config.description || ''}`,
-            picked: currentValue === config.key
+            detail: `Default: ${config.default_value !== undefined ? `"${config.default_value}"` : 'Not Set'} • ${config.description || 'No description specified'}`,
+            picked: currentValue === config.key,
+            value: config.key
         }));
     }
 
-    /**
+    /**›
      * Retrieves configuration items from the local ibm_catalog.json for the current dependency's flavor.
      * @param node The CatalogTreeItem representing the dependency.
      * @returns Promise<Configuration[]> An array of configuration items.
