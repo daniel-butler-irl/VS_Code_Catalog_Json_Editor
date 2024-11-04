@@ -1,20 +1,16 @@
 # Changelog
 
-## [0.0.10](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.10) (2024-11-04)
+## [0.0.11](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.11) (2024-11-04)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.9...0.0.10)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.10...0.0.11)
 
 **Fixed bugs:**
 
-- prevent duplicate api calls [\#15](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/15)
-
-**Closed issues:**
-
-- show current selected item in prompt [\#16](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/16)
+- Selecting Already Chosen Value Results is $ Symbol [\#26](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/26)
 
 **Merged pull requests:**
 
-- Fix issues with fetching Schema and adding elements [\#23](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/23) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance CatalogService with ValueQuickPickItem support [\#25](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/25) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
