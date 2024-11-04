@@ -1,81 +1,20 @@
 # Changelog
 
-## [0.0.9](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.9) (2024-11-02)
+## [0.0.10](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.10) (2024-11-04)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.8...0.0.9)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.9...0.0.10)
 
-**Closed issues:**
+**Fixed bugs:**
 
-- Progress bar while searching [\#5](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/5)
-
-**Merged pull requests:**
-
-- feat: enhance addElement method to support input\_mapping arrays [\#18](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/18) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Deduplication and Update prompts [\#17](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/17) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.8](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.8) (2024-11-02)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.7...0.0.8)
-
-**Merged pull requests:**
-
-- feat: add progress indication for IBM Cloud service operations [\#14](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/14) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.7](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.7) (2024-11-01)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.6...0.0.7)
-
-**Merged pull requests:**
-
-- docs: update README to clarify usage warnings and installation instructions [\#13](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/13) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.6](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.6) (2024-11-01)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.5...0.0.6)
-
-**Merged pull requests:**
-
-- Handle No Catalog JSON present [\#12](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/12) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.5](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.5) (2024-11-01)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.4...0.0.5)
+- prevent duplicate api calls [\#15](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/15)
 
 **Closed issues:**
 
-- Error message for invalid credentials [\#4](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/4)
+- show current selected item in prompt [\#16](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/16)
 
 **Merged pull requests:**
 
-- fix: improve file focus [\#11](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/11) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- API Key Validation [\#10](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/10) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.4](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.4) (2024-11-01)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.2...0.0.4)
-
-**Merged pull requests:**
-
-- chore: update changelog generator configuration [\#9](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/9) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- fix: support for multiple folders in workspace [\#8](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/8) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.2) (2024-10-31)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.1...0.0.2)
-
-**Merged pull requests:**
-
-- update version [\#7](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/7) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Enhanvments [\#6](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/6) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-
-## [0.0.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.1) (2024-10-30)
-
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/869402afec523e8b38f900e7b5e100ac9cdecd06...0.0.1)
-
-**Merged pull requests:**
-
-- update for packaging [\#3](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/3) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Alt init [\#2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/2) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Fix issues with fetching Schema and adding elements [\#23](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/23) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
