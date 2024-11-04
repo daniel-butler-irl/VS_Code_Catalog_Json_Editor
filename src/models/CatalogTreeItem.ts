@@ -806,7 +806,4 @@ export class CatalogTreeItem extends vscode.TreeItem {
         return this.getRoot();
     }
 
-    /**
-     * Additional methods or overrides can be implemented here if necessary.
-     */
 }

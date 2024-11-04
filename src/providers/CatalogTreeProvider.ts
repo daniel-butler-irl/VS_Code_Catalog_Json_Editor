@@ -78,8 +78,8 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-     * Creates tree items from a JSON value
-     */
+    * Creates tree items from a JSON value
+    */
     private createTreeItems(
         value: unknown,
         parentPath: string,
@@ -159,11 +159,13 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-     * Gets schema metadata for a JSON path
-     */
+   * Gets schema metadata for a JSON path
+   */
     private getSchemaMetadata(path: string): SchemaMetadata | undefined {
-        return this.schemaService?.getSchemaForPath(path);
+        const schema = this.schemaService?.getSchemaForPath(path);
+        return schema;
     }
+
 
     /**
      * Sorts tree items for consistent display
