@@ -3,53 +3,10 @@
 import * as vscode from 'vscode';
 import { IBMCloudService } from '../services/IBMCloudService';
 import { AuthService } from '../services/AuthService';
-import { LoggingService } from '../services/LoggingService';
+import { LoggingService } from '../services/core/LoggingService';
+import { SchemaMetadata } from '../types/schema';
+import { FlavorNodeValue, ValidationMetadata, ValidationStatus } from '../types/tree';
 
-/**
- * Represents the various states a validation process can be in.
- * - Unknown: Initial state, no validation needed or not started
- * - Pending: Validation needed and queued for processing
- * - Validating: Currently being validated
- * - Valid: Validation passed successfully
- * - Invalid: Validation failed
- * - LoginRequired: Authentication needed before validation
- */
-export enum ValidationStatus {
-    Unknown = 'unknown',
-    Pending = 'pending',
-    Validating = 'validating',
-    Valid = 'valid',
-    Invalid = 'invalid',
-    LoginRequired = 'loginRequired',
-}
-
-/**
- * Metadata about a tree item's validation state
- */
-export interface ValidationMetadata {
-    status: ValidationStatus;
-    message?: string;
-    lastChecked?: Date;
-    details?: Record<string, unknown>;
-}
-
-export interface FlavorNodeValue {
-    configuration: Array<{
-        key: string;
-        type: string;
-        default_value?: string | number | boolean;
-        required: boolean;
-    }>;
-}
-/**
- * Metadata about a tree item's schema definition
- */
-export interface SchemaMetadata {
-    readonly type: string;
-    readonly required: boolean;
-    readonly enum?: unknown[];
-    readonly description?: string;
-}
 
 /**
  * Represents a node in the IBM Catalog JSON tree view with background validation support.

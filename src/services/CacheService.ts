@@ -1,7 +1,7 @@
 // src/services/CacheService.ts
 
 import * as vscode from 'vscode';
-import { LoggingService } from './LoggingService';
+import { LoggingService } from './core/LoggingService';
 
 /**
  * Configuration for different cache types

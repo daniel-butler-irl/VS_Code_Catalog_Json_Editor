@@ -1,11 +1,11 @@
 // src/services/InputMappingService.ts
 
-import * as vscode from 'vscode';
-import { IBMCloudService, Configuration, Output } from './IBMCloudService';
+import { IBMCloudService } from './IBMCloudService';
 import { CacheService } from './CacheService';
-import { LoggingService } from './LoggingService';
-import type { InputMappingContext, MappingOption } from '../types/inputMapping';
+import { LoggingService } from './core/LoggingService';
+import type { InputMappingContext, MappingOption } from '../types/catalog';
 import { compareSemVer } from '../utils/semver';
+import type { Configuration, Output } from '../types/ibmCloud';
 
 export class InputMappingService {
     private logger = LoggingService.getInstance();

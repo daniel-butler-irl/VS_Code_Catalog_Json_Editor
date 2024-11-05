@@ -1,7 +1,7 @@
 // src/services/SchemaService.ts
 import * as vscode from 'vscode';
 import * as https from 'https';
-import { LoggingService } from './LoggingService';
+import { LoggingService } from './core/LoggingService';
 import { SchemaMetadata } from '../types/schema';
 
 /**

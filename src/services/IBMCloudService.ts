@@ -2,109 +2,19 @@
 import * as vscode from 'vscode';
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
 import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-management/v1');
-import { LoggingService } from './LoggingService';
+import { LoggingService } from './core/LoggingService';
 import { CacheService } from './CacheService';
 import { throttle } from 'lodash';
 import { deduplicateRequest } from '../decorators/requestDeduplication';
-
-interface CatalogResponse {
-    id: string;
-    rev?: string;
-    label: string;
-    short_description?: string;
-    catalog_icon_url?: string;
-    tags?: string[];
-    url?: string;
-    crn?: string;
-    offerings_url?: string;
-    features?: any[];
-    disabled?: boolean;
-    created?: string;
-    updated?: string;
-}
-
-export interface CatalogItem {
-    id: string;
-    label: string;
-    shortDescription?: string;
-    disabled?: boolean;
-    isPublic: boolean; // Indicates if the catalog is public
-}
-
-/**
- * Represents a complete offering with all its details
- */
-export interface OfferingItem {
-    id: string;
-    name: string;
-    label?: string;
-    shortDescription?: string;
-    kinds?: Kind[];
-    created?: string;
-    updated?: string;
-    metadata?: Record<string, unknown>;
-}
-
-/**
- * Represents a kind within an offering
- */
-export interface Kind {
-    id: string;
-    format_kind?: string;
-    format_kind_label?: string;
-    install_kind?: string;
-    install_kind_label?: string;
-    target_kind?: string;
-    target_kind_label?: string;
-    versions?: OfferingVersion[];
-    metadata?: Record<string, unknown>;
-}
-
-export interface Output {
-    key: string;
-    description?: string;
-}
-
-export interface OfferingVersion {
-    id: string;
-    version: string;
-    flavor?: OfferingFlavor;
-    created?: string;
-    updated?: string;
-    catalog_id?: string;
-    offering_id?: string;
-    kind_id?: string;
-    tags?: string[];
-    configuration?: Configuration[];
-    outputs?: Output[];
-}
-
-/**
- * Represents a flavor configuration within an offering version
- */
-export interface OfferingFlavor {
-    name: string;
-    label: string;
-    label_i18n?: Record<string, string>;
-    index?: number;
-    description?: string;
-    displayName?: string;
-}
-
-export interface Configuration {
-    key: string;
-    type: string;
-    description?: string;
-    default_value?: string | number | boolean;
-    required?: boolean;
-}
-
-interface IBMCloudError extends Error {
-    status?: number;
-    statusText?: string;
-    headers?: Record<string, string>;
-    body?: any;
-}
+import {
+    IBMCloudError,
+    CatalogResponse,
+    CatalogItem,
+    OfferingItem,
+    Kind,
+    OfferingVersion,
+    OfferingFlavor
+} from '../types/ibmCloud';
 
 /**
  * Service for interacting with IBM Cloud APIs and managing catalog data

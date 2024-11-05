@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CacheService } from './CacheService';
-import { LoggingService } from './LoggingService';
+import { LoggingService } from './core/LoggingService';
 import axios from 'axios';
 
 /**

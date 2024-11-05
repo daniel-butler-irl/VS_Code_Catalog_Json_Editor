@@ -8,7 +8,7 @@ import { EditorHighlightService } from './services/EditorHighlightService';
 import { SchemaService } from './services/SchemaService';
 import { CatalogTreeItem } from './models/CatalogTreeItem';
 import { AuthService } from './services/AuthService';
-import { LoggingService, LogLevel } from './services/LoggingService';
+import { LoggingService, LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {

@@ -1,23 +1,6 @@
 // src/decorators/requestDeduplication.ts
 
-import { LoggingService } from '../services/LoggingService';
-
-/**
- * Type for the key generation function
- */
-type KeyGenerator = (...args: any[]) => string;
-
-/**
- * Configuration options for request deduplication
- */
-interface DeduplicationOptions {
-    /** Custom key generator function */
-    keyGenerator?: (...args: any[]) => string;
-    /** Timeout in milliseconds */
-    timeoutMs?: number;
-    /** Callback for duplicate requests */
-    onDuplicate?: (key: string) => void;
-}
+import type { DeduplicationOptions } from '../types/decorators';
 
 /**
  * In-progress requests storage

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { CatalogTreeItem, ValidationStatus, SchemaMetadata } from '../models/CatalogTreeItem';
 import { CatalogService } from '../services/CatalogService';
 import { SchemaService } from '../services/SchemaService';
-import { LoggingService } from '../services/LoggingService';
+import { LoggingService } from '../services/core/LoggingService';
 
 /**
  * Provides a tree data provider for the IBM Catalog JSON structure with optimized loading
