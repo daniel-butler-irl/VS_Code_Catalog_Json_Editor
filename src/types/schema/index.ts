@@ -1,4 +1,4 @@
-// src/types/schema.ts
+// /types/schema/index.ts
 export interface SchemaMetadata {
     type: string;
     required: boolean;

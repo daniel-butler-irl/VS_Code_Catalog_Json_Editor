@@ -1,5 +1,4 @@
-// src/types/inputMapping.ts
-
+// types/catalog/index.ts
 export interface InputMapping {
     dependency_output?: string;
     dependency_input?: string;
