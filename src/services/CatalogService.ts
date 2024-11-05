@@ -8,12 +8,12 @@ import { AddElementDialog } from '../ui/AddElementDialog';
 import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from './SchemaService';
 import { AuthService } from './AuthService';
-import { LoggingService } from './LoggingService';
+import { LoggingService } from './core/LoggingService';
+import { FileSystemService } from './core/FileSystemService';
 import { InputMappingService } from './InputMappingService';
-import type { Configuration } from './IBMCloudService';
-import type { MappingOption } from '../types/inputMapping';
-import type { OfferingFlavor } from './IBMCloudService';
-import { ValueQuickPickItem } from '../types/quickPick';
+import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
+import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
+import { ValueQuickPickItem } from '../types/common';
 
 const LAST_WORKSPACE_KEY = 'ibmCatalog.lastWorkspaceFolder';
 
@@ -23,12 +23,20 @@ export class CatalogService {
     public readonly onDidChangeContent = this._onDidChangeContent.event;
     private logger = LoggingService.getInstance();
     private currentRootUri?: vscode.Uri;
+    private readonly fileSystemService: FileSystemService;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
         private catalogFilePath?: string,
         private catalogData: any = {}
     ) {
+        this.fileSystemService = FileSystemService.getInstance(context);
+
+        // Forward file system events to content change
+        this.fileSystemService.onDidChangeContent(() => {
+            this._onDidChangeContent.fire();
+        });
+
         // Listen for active editor changes
         vscode.window.onDidChangeActiveTextEditor(() => {
             void this.checkAndUpdateRoot();
@@ -38,14 +46,34 @@ export class CatalogService {
 
 
     /**
-     * Gets the display path for the current catalog file
-     */
+      * Gets the display path for the current catalog file
+      */
     public getCatalogDisplayPath(): string {
-        if (!this.currentRootUri) {
-            return 'No catalog file selected';
+        return this.fileSystemService.getCatalogDisplayPath();
+    }
+
+    /**
+     * Gets current catalog file information
+     */
+    public getCurrentCatalogFile(): ICatalogFileInfo | undefined {
+        return this.fileSystemService.getCurrentCatalogFile();
+    }
+
+    /**
+     * Gets the current catalog data
+     */
+    public async getCatalogData(): Promise<unknown | undefined> {
+        if (!this.fileSystemService.isInitialized()) {
+            await this.initialize();
         }
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(this.currentRootUri);
-        return workspaceFolder ? `${workspaceFolder.name}/ibm_catalog.json` : 'ibm_catalog.json';
+        return this.fileSystemService.getCatalogData();
+    }
+
+    /**
+     * Initializes the service
+     */
+    public async initialize(): Promise<boolean> {
+        return this.fileSystemService.initialize();
     }
 
     /**
@@ -83,49 +111,6 @@ export class CatalogService {
         }
     }
 
-    /**
-     * Initializes the service by finding and loading the catalog file
-     */
-    public async initialize(): Promise<boolean> {
-        if (this.initialized) {
-            return true;
-        }
-
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-
-        if (!workspaceFolders || workspaceFolders.length === 0) {
-            return false;
-        }
-
-        for (const folder of workspaceFolders) {
-            const catalogFileUri = vscode.Uri.joinPath(folder.uri, 'ibm_catalog.json');
-            try {
-                // Check if the 'ibm_catalog.json' file exists
-                await vscode.workspace.fs.stat(catalogFileUri);
-
-                // File exists, set the catalog file path and root URI
-                this.catalogFilePath = catalogFileUri.fsPath;
-                this.currentRootUri = folder.uri;
-
-                // Load the catalog data
-                await this.loadCatalogData();
-
-                // Set initialized to true
-                this.initialized = true;
-
-                // Notify listeners about content change
-                this._onDidChangeContent.fire();
-
-                return true;
-            } catch {
-                // File does not exist in this folder, continue to next folder
-                continue;
-            }
-        }
-
-        // No 'ibm_catalog.json' found in workspace folders
-        return false;
-    }
 
     /**
      * Reloads the catalog data from disk
@@ -146,18 +131,6 @@ export class CatalogService {
             this.logger.error('Failed to reload catalog data', error);
             throw error;
         }
-    }
-
-
-    /**
-     * Gets the current catalog data
-     * @returns The loaded catalog data or empty object if not loaded
-     */
-    public async getCatalogData(): Promise<unknown | undefined> {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-        return this.catalogData;
     }
 
     /**
