@@ -1,6 +1,6 @@
 // src/services/core/PromptService.ts
 import * as vscode from 'vscode';
-import { LoggingService } from '../LoggingService';
+import { LoggingService } from './LoggingService';
 import type {
     InputBoxOptions,
     QuickPickOptions,

@@ -1,4 +1,6 @@
 // types/catalog/index.ts
+import * as vscode from 'vscode';
+
 export interface InputMapping {
     dependency_output?: string;
     dependency_input?: string;
@@ -21,4 +23,10 @@ export interface MappingOption {
     required?: boolean;
     defaultValue?: any;
     mappingType: 'input' | 'output';
+}
+
+export interface ICatalogFileInfo {
+    uri: vscode.Uri;
+    workspaceFolder: vscode.WorkspaceFolder;
+    displayPath: string;
 }
