@@ -132,15 +132,12 @@ export class CatalogTreeItem extends vscode.TreeItem {
         this.description = this.createDescription();
         this.iconPath = this.getIconPath();
 
-        if (this.isEditable()) {
-            this.command = {
-                command: 'ibmCatalog.editElement',
-                title: 'Edit Value',
-                arguments: [this],
-            };
-        } else {
-            this.command = undefined;
-        }
+        // Assign a custom command to handle clicks
+        this.command = {
+            command: 'ibmCatalog.treeItemClicked',
+            title: 'Tree Item Clicked',
+            arguments: [this],
+        };
     }
 
     /**

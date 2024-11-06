@@ -71,6 +71,10 @@ export class PromptService {
     public static async showGroupedQuickPick<T>(
         options: GroupedQuickPickOptions<T>
     ): Promise<T | undefined> {
+        this.logger.debug('Showing grouped quick pick', {
+            title: options.title,
+            groupCount: options.groups.length
+        });
         const allItems: Array<QuickPickItemEx<T> | vscode.QuickPickItem> = [];
 
         // Sort groups by priority if specified
@@ -109,6 +113,10 @@ export class PromptService {
             falseLabel?: string;
         }
     ): Promise<boolean | undefined> {
+        this.logger.debug('Showing boolean pick', {
+            title: options.title,
+            currentValue: options.currentValue
+        });
         const items: QuickPickItemEx<boolean>[] = [
             {
                 label: options.trueLabel ?? 'true',
@@ -143,6 +151,10 @@ export class PromptService {
             customOptionHandler: () => Promise<T | undefined>;
         }
     ): Promise<T | undefined> {
+        this.logger.debug('Showing quick pick with custom option', {
+            title: options.title,
+            itemCount: options.items.length
+        });
         const customOption: QuickPickItemEx<string> = {
             label: options.customOptionLabel ?? '$(edit) Enter Custom Value',
             description: 'Manually enter a value',
