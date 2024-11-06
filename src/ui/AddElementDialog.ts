@@ -15,20 +15,25 @@ export class AddElementDialog {
    * @param schemaService The schema service instance.
    */
   public static async show(
-    parentItem: CatalogTreeItem,
+    parentNode: CatalogTreeItem,
     schemaService: SchemaService
   ): Promise<any | undefined> {
-    const schema = schemaService.getSchemaForPath(parentItem.jsonPath);
-
+    const schema = schemaService.getSchemaForPath(parentNode.jsonPath);
     if (!schema) {
       vscode.window.showErrorMessage('Schema not found for the selected item.');
       return undefined;
     }
 
-    // Generate form fields based on the schema
-    const formData = await this.generateForm(schema);
+    // For arrays, we need to get the schema for array items
+    const effectiveSchema = schema.items || schema;
 
-    return formData;
+    // Generate form fields based on the schema
+    try {
+      return await this.generateForm(effectiveSchema);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to generate form: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return undefined;
+    }
   }
 
   /**

@@ -160,8 +160,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 treeProvider.refresh(); // Refresh the tree view to reflect changes
             }),
             vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
-                await catalogService.addElement(parentNode, schemaService);
-                treeProvider.refresh();
+                try {
+                    if (!catalogService.isInitialized()) {
+                        const initialized = await catalogService.initialize();
+                        if (!initialized) {
+                            throw new Error('No IBM Catalog file found. Please create one first.');
+                        }
+                    }
+                    await catalogService.addElement(parentNode, schemaService);
+                    treeProvider.refresh();
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : 'Unknown error';
+                    vscode.window.showErrorMessage(`Failed to add element: ${message}`);
+                }
             }),
             vscode.commands.registerCommand('ibmCatalog.login', async () => {
                 await AuthService.promptForApiKey(context);
@@ -206,10 +217,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             treeView
         );
 
-        // Remove the onDidChangeSelection handler since we're handling clicks via command
-        // treeView.onDidChangeSelection(async (e) => {
-        //     // ... existing code ...
-        // });
 
         // Function to get the root path
         function getRootPath(): string | undefined {

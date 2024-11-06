@@ -1,8 +1,4 @@
-// src/services/CatalogService.ts
-
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { promises as fs } from 'fs';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
 import { AddElementDialog } from '../ui/AddElementDialog';
 import { IBMCloudService } from './IBMCloudService';
@@ -15,171 +11,83 @@ import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
 import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
 import { ValueQuickPickItem } from '../types/common';
 
-const LAST_WORKSPACE_KEY = 'ibmCatalog.lastWorkspaceFolder';
-
 export class CatalogService {
-    private initialized: boolean = false;
     private _onDidChangeContent = new vscode.EventEmitter<void>();
     public readonly onDidChangeContent = this._onDidChangeContent.event;
     private logger = LoggingService.getInstance();
-    private currentRootUri?: vscode.Uri;
     private readonly fileSystemService: FileSystemService;
 
-    constructor(
-        private readonly context: vscode.ExtensionContext,
-        private catalogFilePath?: string,
-        private catalogData: any = {}
-    ) {
+    constructor(private readonly context: vscode.ExtensionContext) {
+        this.logger.debug('Constructing CatalogService');
         this.fileSystemService = FileSystemService.getInstance(context);
 
-        // Forward file system events to content change
         this.fileSystemService.onDidChangeContent(() => {
             this._onDidChangeContent.fire();
         });
-
-        // Listen for active editor changes
-        vscode.window.onDidChangeActiveTextEditor(() => {
-            void this.checkAndUpdateRoot();
-        });
     }
 
+    public getCatalogFilePath(): string | undefined {
+        const currentFile = this.fileSystemService.getCurrentCatalogFile();
+        return currentFile?.uri.fsPath;
+    }
 
+    public async getCatalogData(): Promise<unknown> {
+        await this.ensureInitialized();
+        return this.fileSystemService.getCatalogData();
+    }
 
-    /**
-      * Gets the display path for the current catalog file
-      */
     public getCatalogDisplayPath(): string {
         return this.fileSystemService.getCatalogDisplayPath();
     }
 
-    /**
-     * Gets current catalog file information
-     */
     public getCurrentCatalogFile(): ICatalogFileInfo | undefined {
         return this.fileSystemService.getCurrentCatalogFile();
     }
 
-    /**
-     * Gets the current catalog data
-     */
-    public async getCatalogData(): Promise<unknown | undefined> {
-        if (!this.fileSystemService.isInitialized()) {
-            await this.initialize();
-        }
-        return this.fileSystemService.getCatalogData();
+    public isInitialized(): boolean {
+        return this.fileSystemService.isInitialized();
     }
 
-    /**
-     * Initializes the service
-     */
     public async initialize(): Promise<boolean> {
-        return this.fileSystemService.initialize();
-    }
-
-    /**
-     * Checks if we need to update for a new root and handles the switch
-     */
-    private async checkAndUpdateRoot(): Promise<void> {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            return;
-        }
-
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-        if (!workspaceFolder) {
-            return;
-        }
-
-        // Don't switch if we're already on this root
-        if (this.currentRootUri?.fsPath === workspaceFolder.uri.fsPath) {
-            return;
-        }
-
-        // Check for catalog file in the new root
-        const expectedPath = path.join(workspaceFolder.uri.fsPath, 'ibm_catalog.json');
+        this.logger.debug('Initializing CatalogService');
         try {
-            await fs.access(expectedPath);
-            // Only switch if not already loaded
-            if (this.catalogFilePath !== expectedPath) {
-                this.currentRootUri = workspaceFolder.uri;
-                this.catalogFilePath = expectedPath;
-                await this.loadCatalogData();
-                this._onDidChangeContent.fire();
-            }
-        } catch {
-            this.logger.debug(`No ibm_catalog.json found in ${workspaceFolder.name}`);
-        }
-    }
-
-
-    /**
-     * Reloads the catalog data from disk
-     * @returns Promise<void>
-     * @throws Error if the file cannot be read or parsed
-     */
-    public async reloadCatalogData(): Promise<void> {
-        this.logger.debug('Reloading catalog data');
-        if (!this.initialized) {
-            await this.initialize();
-            return;
-        }
-
-        try {
-            await this.loadCatalogData();
-            this._onDidChangeContent.fire();
-        } catch (error) {
-            this.logger.error('Failed to reload catalog data', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Gets the current catalog file path
-     * @returns The path to the catalog file or undefined if not set
-     */
-    public getCatalogFilePath(): string | undefined {
-        const currentCatalogFile = this.fileSystemService.getCurrentCatalogFile();
-        return currentCatalogFile?.uri.fsPath;
-    }
-
-    /**
-  * Adds a new element to the catalog at the specified path.
-  * @param parentNode The parent node where the new element will be added.
-  * @param schemaService The schema service instance.
-  */
-    public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            // Check if we're adding to an input_mapping array
-            if (parentNode.jsonPath.endsWith('.input_mapping')) {
-                const mappingType = await this.promptForMappingType();
-                if (!mappingType) {
-                    return; // User cancelled
-                }
-
-                const newMapping = {
-                    [mappingType]: "",
-                    "version_input": ""
-                };
-
-                // Get current array and append new mapping
-                const currentArray = (parentNode.value as any[]) || [];
-                const updatedArray = [...currentArray, newMapping];
-
-                // Update the JSON data
-                await this.updateJsonValue(parentNode.jsonPath, updatedArray);
-                await this.loadCatalogData(); // Reload to ensure consistency
-                return;
+            const initialized = await this.fileSystemService.initialize();
+            if (initialized) {
+                this.logger.debug('CatalogService initialized successfully');
             } else {
-                // TODO: Temporary disable for all other types of elements
-                // Popup stating only input_mapping is supported for now
-                vscode.window.showWarningMessage('Only dependency input_mapping is supported for now.');
+                this.logger.debug('CatalogService initialization failed - no catalog file found');
+            }
+            return initialized;
+        } catch (error) {
+            this.logger.error('Failed to initialize CatalogService', error);
+            return false;
+        }
+    }
+
+    private async ensureInitialized(): Promise<void> {
+        if (!this.fileSystemService.isInitialized()) {
+            const success = await this.initialize();
+            if (!success) {
+                throw new Error('Catalog file not initialized');
+            }
+        }
+    }
+
+    public async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void> {
+        await this.ensureInitialized();
+        await this.fileSystemService.updateJsonValue(jsonPath, newValue);
+    }
+    public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
+        await this.ensureInitialized();
+
+        try {
+            // Handle input_mapping additions
+            if (parentNode.jsonPath.endsWith('.input_mapping')) {
+                await this.handleInputMappingAddition(parentNode);
                 return;
             }
 
+            // Get schema validation before proceeding
             if (!schemaService.isSchemaAvailable()) {
                 const result = await vscode.window.showErrorMessage(
                     'Schema is not available. Would you like to retry loading the schema?',
@@ -188,35 +96,96 @@ export class CatalogService {
                 );
 
                 if (result === 'Retry') {
-                    try {
-                        await schemaService.refreshSchema();
-                    } catch (error) {
-                        vscode.window.showErrorMessage('Failed to load schema. Please try again later.');
-                        return;
-                    }
+                    await schemaService.refreshSchema();
                 } else {
                     return;
                 }
             }
 
-            // Existing logic for other types of elements
+            const schema = schemaService.getSchemaForPath(parentNode.jsonPath);
+            if (!schema) {
+                this.logger.error('No schema available for path', { path: parentNode.jsonPath });
+                vscode.window.showErrorMessage('Cannot add element: No schema available for this location');
+                return;
+            }
+
+            // Show dialog and get new element data
             const newElement = await AddElementDialog.show(parentNode, schemaService);
             if (newElement === undefined) {
                 return; // User cancelled
             }
 
-            await this.updateJsonValue(`${parentNode.jsonPath}`, newElement);
-            await this.loadCatalogData(); // Reload to ensure consistency
+            // Handle array and object additions
+            if (Array.isArray(parentNode.value)) {
+                const currentArray = parentNode.value;
+                await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newElement]);
+            } else if (typeof parentNode.value === 'object' && parentNode.value !== null) {
+                const currentObject = parentNode.value as Record<string, unknown>;
+                await this.updateJsonValue(parentNode.jsonPath, {
+                    ...currentObject,
+                    ...newElement
+                });
+            } else {
+                throw new Error('Cannot add element to this location');
+            }
+
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to add element: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            this.logger.error('Failed to add element', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Failed to add element: ${message}`);
             throw error;
         }
     }
 
+    public async editElement(node: CatalogTreeItem): Promise<void> {
+        await this.ensureInitialized();
+
+        try {
+            const newValue = await this.promptForValue(node, node.value);
+            if (newValue === undefined) {
+                return; // User cancelled
+            }
+
+            await this.updateJsonValue(node.jsonPath, newValue);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Failed to edit element: ${message}`);
+            throw error;
+        }
+    }
+
+
     /**
- * Prompts the user to select the type of mapping to add
- * @returns Promise<string | undefined> The selected mapping type or undefined if cancelled
- */
+     * Reloads the catalog data from disk
+     */
+    public async reloadCatalogData(): Promise<void> {
+        this.logger.debug('Reloading catalog data');
+
+        try {
+            await this.ensureInitialized();
+            await this.fileSystemService.reloadCatalogData();
+            this._onDidChangeContent.fire();
+        } catch (error) {
+            this.logger.error('Failed to reload catalog data', error);
+            throw new Error(`Failed to update catalog view: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    private async handleInputMappingAddition(parentNode: CatalogTreeItem): Promise<void> {
+        const mappingType = await this.promptForMappingType();
+        if (!mappingType) {
+            return; // User cancelled
+        }
+
+        const newMapping = {
+            [mappingType]: "",
+            "version_input": ""
+        };
+
+        const currentArray = (parentNode.value as any[]) || [];
+        await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newMapping]);
+    }
+
     private async promptForMappingType(): Promise<string | undefined> {
         this.logger.debug('Prompting for mapping type');
         const items: ValueQuickPickItem[] = [
@@ -242,158 +211,14 @@ export class CatalogService {
 
         return selection?.value;
     }
-
-    /**
-     * Edits an existing element in the catalog
-     * @param node The node to edit
-     */
-    public async editElement(node: CatalogTreeItem): Promise<void> {
-        try {
-            const newValue = await this.promptForValue(node, node.value);
-            if (newValue === undefined) {
-                return; // User cancelled
-            }
-
-            await this.updateJsonValue(node.jsonPath, newValue);
-            await this.loadCatalogData(); // Reload to ensure consistency
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to edit element: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            throw error;
-        }
-    }
-
-    /**
-     * Loads the catalog data from the file
-     * @throws Error if the file cannot be read or parsed
-     */
-    /**
-     * Loads the catalog data from the file
-     */
-    private async loadCatalogData(): Promise<void> {
-        if (!this.catalogFilePath) {
-            this.catalogData = {};
-            return;
-        }
-
-        try {
-            const content = await fs.readFile(this.catalogFilePath, 'utf8');
-            this.catalogData = JSON.parse(content);
-        } catch (error) {
-            this.catalogData = {};
-            if (error instanceof Error) {
-                throw new Error(`Failed to load catalog data: ${error.message}`);
-            }
-            throw error;
-        }
-    }
-    /**
-     * Parses a JSONPath string into its segments.
-     * @param jsonPath The JSONPath string.
-     * @returns An array of strings and numbers representing the path segments.
-     */
-    private parseJsonPath(jsonPath: string): (string | number)[] {
-        const segments: (string | number)[] = [];
-        const regex = /\[(\d+)\]|\.([^.\[\]]+)/g;
-        let match;
-        while ((match = regex.exec(jsonPath)) !== null) {
-            if (match[1] !== undefined) {
-                // Array index
-                segments.push(parseInt(match[1], 10));
-            } else if (match[2] !== undefined) {
-                // Object key
-                segments.push(match[2]);
-            }
-        }
-        return segments;
-    }
-
-    /**
-    * Updates a value in the JSON data based on the JSONPath
-    * @param jsonPath The JSONPath string
-    * @param newValue The new value to set
-    */
-    public async updateJsonValue(jsonPath: string, newValue: unknown): Promise<void> {
-        if (!this.catalogFilePath || !this.catalogData) {
-            throw new Error('Catalog file not initialized');
-        }
-
-        try {
-            const data = this.catalogData;
-            const pathParts = this.parseJsonPath(jsonPath);
-            this.logger.debug(`Parsed jsonPath: ${jsonPath} into pathParts: ${JSON.stringify(pathParts)}`);
-            let current: any = data;
-
-            // Navigate to the parent of the target
-            for (let i = 0; i < pathParts.length - 1; i++) {
-                const part = pathParts[i];
-                this.logger.debug(`At path part ${i}, part: ${part}, current type: ${typeof current}, current: ${JSON.stringify(current)}`);
-                if (typeof part === 'string') {
-                    if (current !== null && !Array.isArray(current) && typeof current === 'object' && part in current) {
-                        current = current[part];
-                    } else {
-                        this.logger.error(`Invalid path at part '${part}' for current: ${JSON.stringify(current)}`);
-                        throw new Error(`Invalid path: ${jsonPath}`);
-                    }
-                } else if (typeof part === 'number') {
-                    if (Array.isArray(current) && part >= 0 && part < current.length) {
-                        current = current[part];
-                    } else {
-                        this.logger.error(`Invalid array index '${part}' for current: ${JSON.stringify(current)}`);
-                        throw new Error(`Invalid path: ${jsonPath}`);
-                    }
-                } else {
-                    this.logger.error(`Invalid part type '${typeof part}' for part '${part}'`);
-                    throw new Error(`Invalid path: ${jsonPath}`);
-                }
-            }
-
-            // Update the value
-            const lastPart = pathParts[pathParts.length - 1];
-            this.logger.debug(`Last part: ${lastPart}, current: ${JSON.stringify(current)}`);
-            if (typeof lastPart === 'string') {
-                if (current !== null && !Array.isArray(current) && typeof current === 'object') {
-                    current[lastPart] = newValue;
-                } else {
-                    this.logger.error(`Cannot set property '${lastPart}' on current: ${JSON.stringify(current)}`);
-                    throw new Error(`Invalid path: ${jsonPath}`);
-                }
-            } else if (typeof lastPart === 'number') {
-                if (Array.isArray(current) && lastPart >= 0 && lastPart < current.length) {
-                    current[lastPart] = newValue;
-                } else {
-                    this.logger.error(`Invalid array index '${lastPart}' on current: ${JSON.stringify(current)}`);
-                    throw new Error(`Invalid path: ${jsonPath}`);
-                }
-            } else {
-                this.logger.error(`Invalid last part type '${typeof lastPart}' for part '${lastPart}'`);
-                throw new Error(`Invalid path: ${jsonPath}`);
-            }
-
-            // Write back to file
-            await fs.writeFile(
-                this.catalogFilePath,
-                JSON.stringify(this.catalogData, null, 2),
-                'utf8'
-            );
-
-            // Trigger refresh without waiting
-            setImmediate(() => this._onDidChangeContent.fire());
-        } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Failed to update JSON value: ${error.message}`);
-            }
-            throw error;
-        }
-    }
-
-    /**
-     * Prompts the user for a value based on the node type
-     */
     private async promptForValue(node: CatalogTreeItem, currentValue?: unknown): Promise<unknown> {
         this.logger.debug('Prompting for value', {
             node: node.jsonPath,
             currentValue
         });
+
+        await this.ensureInitialized();
+
         if (node.label === 'catalog_id') {
             return this.promptForCatalogId(currentValue as string);
         }
@@ -402,22 +227,18 @@ export class CatalogService {
             return this.promptForOfferingId(node, currentValue as string);
         }
 
-        // Add flavor handling
         if (this.isFlavorSelection(node)) {
             return this.promptForFlavor(node, currentValue as string);
         }
 
-        // Handle boolean values with QuickPick
         if (typeof currentValue === 'boolean' || node.schemaMetadata?.type === 'boolean') {
             return this.promptForBoolean(node.label, currentValue as boolean);
         }
 
-        // Handle input mappings with QuickPick
         if (node.isInputMappingField()) {
             return this.promptForInputMapping(node, currentValue as string);
         }
 
-        // Handle other types as before
         const value = await vscode.window.showInputBox({
             prompt: `Enter value for ${node.label}`,
             value: currentValue?.toString() ?? '',
@@ -433,19 +254,13 @@ export class CatalogService {
             return undefined;
         }
 
-        // Parse value as before...
-        if (value.toLowerCase() === 'true') { return true; }
-        if (value.toLowerCase() === 'false') { return false; }
-        if (!isNaN(Number(value))) { return Number(value); }
+        // Parse value to appropriate type
+        if (value.toLowerCase() === 'true') return true;
+        if (value.toLowerCase() === 'false') return false;
+        if (!isNaN(Number(value))) return Number(value);
         return value;
     }
 
-    /**
-   * Prompts the user to select a boolean value using QuickPick
-   * @param fieldLabel The label of the field being edited
-   * @param currentValue The current boolean value
-   * @returns Promise<boolean | undefined> The selected boolean value or undefined if cancelled
-   */
     private async promptForBoolean(fieldLabel: string, currentValue?: boolean): Promise<boolean | undefined> {
         this.logger.debug('Showing boolean pick', {
             fieldLabel,
@@ -477,18 +292,14 @@ export class CatalogService {
         return selection.label.includes('true');
     }
 
-    /**
-  * Prompts the user to select or enter a catalog ID
-  */
     private async promptForCatalogId(currentValue?: string): Promise<string | undefined> {
         this.logger.debug('Prompting for catalog ID', {
             currentValue
         });
-        const logger = this.logger;
-        const apiKey = await AuthService.getApiKey(this.context);
 
+        const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) {
-            logger.debug('No API key available for catalog lookup');
+            this.logger.debug('No API key available for catalog lookup');
             return this.promptForManualCatalogId(currentValue);
         }
 
@@ -496,24 +307,19 @@ export class CatalogService {
             const ibmCloudService = new IBMCloudService(apiKey);
             const catalogs = await ibmCloudService.getAvailableCatalogs();
 
-            // Split catalogs into public and private
             const publicCatalogs = catalogs.filter(catalog => catalog.isPublic);
             const privateCatalogs = catalogs.filter(catalog => !catalog.isPublic);
 
-            // Create QuickPick items
             const items: vscode.QuickPickItem[] = [
-                // Add option to enter custom ID
                 {
                     label: "$(edit) Enter Custom Catalog ID",
                     description: "Manually enter a catalog ID",
                     alwaysShow: true
                 },
-                // Add separator
                 {
                     label: "Available Catalogs",
                     kind: vscode.QuickPickItemKind.Separator
                 },
-                // Add public catalogs section
                 {
                     label: "Public Catalogs",
                     kind: vscode.QuickPickItemKind.Separator
@@ -523,7 +329,6 @@ export class CatalogService {
                     description: catalog.id,
                     detail: catalog.shortDescription
                 })),
-                // Add private catalogs section
                 {
                     label: "Private Catalogs",
                     kind: vscode.QuickPickItemKind.Separator
@@ -535,37 +340,29 @@ export class CatalogService {
                 }))
             ];
 
-            // Show QuickPick
             const selection = await vscode.window.showQuickPick(items, {
                 title: 'Select Catalog',
                 placeHolder: currentValue || 'Select a catalog or enter a custom ID',
-                matchOnDescription: true, // Allow matching on catalog ID
-                matchOnDetail: true // Allow matching on description
+                matchOnDescription: true,
+                matchOnDetail: true
             });
 
             if (!selection) {
-                return undefined; // User cancelled
+                return undefined;
             }
 
-            // If user chose to enter custom ID, show input box
             if (selection.label === "$(edit) Enter Custom Catalog ID") {
                 return this.promptForManualCatalogId(currentValue);
             }
 
-            // Return the selected catalog ID
             return selection.description;
 
         } catch (error) {
-            logger.error('Failed to fetch catalogs', error);
-            // Fallback to manual entry
+            this.logger.error('Failed to fetch catalogs', error);
             return this.promptForManualCatalogId(currentValue);
         }
     }
 
-
-    /**
-     * Prompts for manual catalog ID entry
-     */
     private async promptForManualCatalogId(currentValue?: string): Promise<string | undefined> {
         return vscode.window.showInputBox({
             prompt: 'Enter the catalog ID',
@@ -574,31 +371,21 @@ export class CatalogService {
                 if (!value.trim()) {
                     return 'Catalog ID cannot be empty';
                 }
-                // Add any additional validation rules here
                 return null;
             }
         });
     }
-
-    /**
-      * Prompts for and validates an offering ID, automatically updating the name field
-      * @param node The dependency node being edited
-      * @param currentValue The current offering ID value
-      * @returns Promise<string | undefined> The selected offering ID or undefined if cancelled
-      */
     private async promptForOfferingId(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
         this.logger.debug('Prompting for offering ID', {
             currentValue
         });
-        const logger = this.logger;
-        const apiKey = await AuthService.getApiKey(this.context);
 
+        const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) {
-            logger.debug('No API key available for offering lookup');
+            this.logger.debug('No API key available for offering lookup');
             return this.promptForManualOfferingId(currentValue);
         }
 
-        // Get the catalog ID from the dependency structure
         const catalogId = await this.getCatalogIdForNode(node);
         if (!catalogId) {
             vscode.window.showErrorMessage('Cannot determine catalog_id for offering validation.');
@@ -609,7 +396,6 @@ export class CatalogService {
             const ibmCloudService = new IBMCloudService(apiKey);
             const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
 
-            // Create QuickPick items
             const items: vscode.QuickPickItem[] = [
                 {
                     label: "$(edit) Enter Custom Offering ID",
@@ -627,7 +413,6 @@ export class CatalogService {
                 }))
             ];
 
-            // Show QuickPick
             const selection = await vscode.window.showQuickPick(items, {
                 title: 'Select Offering',
                 placeHolder: currentValue || 'Select an offering or enter a custom ID',
@@ -636,10 +421,9 @@ export class CatalogService {
             });
 
             if (!selection) {
-                return undefined; // User cancelled
+                return undefined;
             }
 
-            // If user chose to enter custom ID, show input box
             if (selection.label === "$(edit) Enter Custom Offering ID") {
                 const customId = await this.promptForManualOfferingId(currentValue);
                 if (customId) {
@@ -648,7 +432,6 @@ export class CatalogService {
                 return customId;
             }
 
-            // Update the name field with the offering name
             if (selection.description) {
                 await this.updateDependencyName(node, selection.description, selection.label);
             }
@@ -656,7 +439,7 @@ export class CatalogService {
             return selection.description;
 
         } catch (error) {
-            logger.error('Failed to fetch offerings', error);
+            this.logger.error('Failed to fetch offerings', error);
             const manualId = await this.promptForManualOfferingId(currentValue);
             if (manualId) {
                 await this.updateDependencyName(node, manualId);
@@ -665,9 +448,6 @@ export class CatalogService {
         }
     }
 
-    /**
-     * Prompts for manual offering ID entry
-     */
     private async promptForManualOfferingId(currentValue?: string): Promise<string | undefined> {
         return vscode.window.showInputBox({
             prompt: 'Enter the offering ID',
@@ -676,31 +456,23 @@ export class CatalogService {
                 if (!value.trim()) {
                     return 'Offering ID cannot be empty';
                 }
-                // Add any additional validation rules here
                 return null;
             }
         });
     }
 
-    /**
-     * Prompts the user to select or enter a flavor for a dependency
-     * @param node The node representing the flavor field
-     * @param currentValue The current flavor value
-     * @returns Promise<string | undefined> The selected flavor name
-     */
     private async promptForFlavor(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
         const logger = this.logger;
         logger.debug('Prompting for flavor', {
             currentValue
         });
-        const apiKey = await AuthService.getApiKey(this.context);
 
+        const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) {
             logger.debug('No API key available for flavor lookup');
             return this.promptForManualFlavorInput(currentValue);
         }
 
-        // Get dependency context using CatalogTreeItem methods
         const dependencyNode = node.getDependencyParent();
         logger.debug('Finding dependency context', {
             currentPath: node.jsonPath,
@@ -729,16 +501,7 @@ export class CatalogService {
 
         try {
             const ibmCloudService = new IBMCloudService(apiKey);
-            logger.debug('Fetching flavors for offering', {
-                catalogId: context.catalogId,
-                offeringId: context.offeringId
-            });
-
             const flavors = await ibmCloudService.getAvailableFlavors(context.catalogId, context.offeringId);
-            logger.debug('Retrieved flavors', {
-                count: flavors.length,
-                flavors
-            });
 
             if (flavors.length === 0) {
                 logger.debug('No flavors available for offering', {
@@ -749,7 +512,6 @@ export class CatalogService {
                 return this.promptForManualFlavorInput(currentValue);
             }
 
-            // Create QuickPick items
             const items: vscode.QuickPickItem[] = [
                 {
                     label: "$(edit) Enter Custom Flavor",
@@ -771,14 +533,7 @@ export class CatalogService {
                         flavorName
                     );
 
-                    logger.debug('Retrieved flavor details', {
-                        flavorName,
-                        details,
-                        isCurrentValue: flavorName === currentValue
-                    });
-
                     items.push({
-                        // If this is the current value, add a checkmark
                         label: `${flavorName === currentValue ? '$(check) ' : ''}${details?.label || flavorName}`,
                         description: flavorName,
                         detail: this.createFlavorDetail(flavorName, details, currentValue)
@@ -790,7 +545,6 @@ export class CatalogService {
                         catalogId: context.catalogId,
                         offeringId: context.offeringId
                     });
-                    // Still add the flavor, just with minimal information
                     items.push({
                         label: `${flavorName === currentValue ? '$(check) ' : ''}${flavorName}`,
                         description: flavorName,
@@ -798,41 +552,29 @@ export class CatalogService {
                 }
             }
 
-            // Show QuickPick
             const selection = await vscode.window.showQuickPick(items, {
                 title: 'Select Flavor',
                 placeHolder: currentValue || 'Select a flavor or enter a custom name',
-                matchOnDescription: true, // Allow matching on flavor ID
-                matchOnDetail: true // Allow matching on description
+                matchOnDescription: true,
+                matchOnDetail: true
             });
 
             if (!selection) {
-                return undefined; // User cancelled
+                return undefined;
             }
 
-            // If user chose to enter custom flavor, show input box
             if (selection.label === "$(edit) Enter Custom Flavor") {
                 return this.promptForManualFlavorInput(currentValue);
             }
 
-            // Return the selected flavor name
             return selection.description;
         } catch (error) {
             logger.error('Failed to fetch flavors', error);
-            // Fallback to manual entry
             return this.promptForManualFlavorInput(currentValue);
         }
     }
 
-    /**
-     * Prompts for manual flavor name entry
-     * @param currentValue The current flavor value
-     * @returns Promise<string | undefined> The entered flavor name
-     */
     private async promptForManualFlavorInput(currentValue?: string): Promise<string | undefined> {
-        const logger = this.logger;
-        logger.debug('Prompting for manual flavor input', { currentValue });
-
         const result = await vscode.window.showInputBox({
             prompt: 'Enter the flavor name',
             value: currentValue,
@@ -844,7 +586,7 @@ export class CatalogService {
             }
         });
 
-        logger.debug('Manual flavor input result', {
+        this.logger.debug('Manual flavor input result', {
             result,
             currentValue,
             changed: result !== currentValue
@@ -852,84 +594,8 @@ export class CatalogService {
 
         return result;
     }
-
-    /**
-     * Creates a detail string for a flavor in the QuickPick
-     * @param flavorName The name of the flavor
-     * @param details The flavor details if available
-     * @param currentValue The current selected value if any
-     * @returns A formatted detail string
-     */
-    private createFlavorDetail(
-        flavorName: string,
-        details: OfferingFlavor | undefined,
-        currentValue?: string
-    ): string {
-        const parts: string[] = [];
-
-        // Add localized label if available
-        if (details?.label_i18n?.['en']) {
-            parts.push(details.label_i18n['en']);
-        }
-
-        // Add name if different from label
-        if (details?.name && details.name !== details?.label) {
-            parts.push(`Name: ${details.name}`);
-        }
-
-        // Add display name if available and different
-        if (details?.displayName &&
-            details.displayName !== details.label &&
-            details.displayName !== details.name) {
-            parts.push(`Display: ${details.displayName}`);
-        }
-
-        // Add description if available
-        if (details?.description) {
-            parts.push(`Description: ${details.description}`);
-        } else {
-            parts.push(`Description: No description available`);
-        }
-
-        // Use raw flavor name if no other details available
-        if (parts.length === 0) {
-            return 'No additional details available';
-        }
-
-        return parts.join(' • ');
-    }
-
-    /**
-     * Checks if the node represents a flavor selection within a dependency
-     * @param node The tree item to check
-     * @returns boolean True if the node is a flavor selection
-     */
-    private isFlavorSelection(node: CatalogTreeItem): boolean {
-        const logger = this.logger;
-        // Matches items in a dependency's flavors array
-        const flavorPattern = /\.dependencies\[\d+\]\.flavors\[\d+\]$/;
-        const result = flavorPattern.test(node.jsonPath);
-
-        logger.debug('Checking if node is flavor selection', {
-            path: node.jsonPath,
-            isFlavorSelection: result,
-            pattern: flavorPattern.toString()
-        });
-
-        return result;
-    }
-
-
-    /**
-     * Prompts the user to select an input mapping value
-     * @param node The tree node being edited
-     * @param currentValue Current selected value if any
-     * @returns Promise<string | undefined> Selected value or undefined if cancelled
-     */
     private async promptForInputMapping(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
-        if (!this.initialized) {
-            await this.initialize();
-        }
+        await this.ensureInitialized();
 
         this.logger.debug('Prompting for input mapping', {
             node: node.jsonPath,
@@ -974,7 +640,6 @@ export class CatalogService {
                 return undefined;
             }
 
-            // Group configuration keys by required status
             const configGroups = this.groupConfigurationItems(configurations, node);
             const items: ValueQuickPickItem[] = [];
 
@@ -983,7 +648,6 @@ export class CatalogService {
                     label: "Required",
                     kind: vscode.QuickPickItemKind.Separator
                 } as ValueQuickPickItem);
-
                 items.push(...this.createConfigKeyItems(configGroups.required, currentValue));
             }
 
@@ -992,7 +656,6 @@ export class CatalogService {
                     label: "Optional",
                     kind: vscode.QuickPickItemKind.Separator
                 } as ValueQuickPickItem);
-
                 items.push(...this.createConfigKeyItems(configGroups.optional, currentValue));
             }
 
@@ -1020,7 +683,6 @@ export class CatalogService {
                 return undefined;
             }
 
-            // Group options by required status
             const groups = this.groupMappingOptions(filteredOptions);
             const items: ValueQuickPickItem[] = [];
 
@@ -1029,7 +691,6 @@ export class CatalogService {
                     label: "Required",
                     kind: vscode.QuickPickItemKind.Separator
                 } as ValueQuickPickItem);
-
                 items.push(...this.createMappingQuickPickItems(groups.required, currentValue));
             }
 
@@ -1038,7 +699,6 @@ export class CatalogService {
                     label: "Optional",
                     kind: vscode.QuickPickItemKind.Separator
                 } as ValueQuickPickItem);
-
                 items.push(...this.createMappingQuickPickItems(groups.optional, currentValue));
             }
 
@@ -1053,12 +713,32 @@ export class CatalogService {
         return undefined;
     }
 
+    private async getLocalConfigurationItems(node: CatalogTreeItem): Promise<Configuration[]> {
+        const flavorNode = node.findAncestorFlavorNode();
+        if (!flavorNode) {
+            this.logger.error('Could not find the flavor node containing this dependency.');
+            return [];
+        }
 
-    /**
-     * Groups mapping options by their required status
-     * @param options Array of mapping options to group
-     * @returns Object containing required and optional options
-     */
+        const configuration = flavorNode.value.configuration as Configuration[];
+        if (!Array.isArray(configuration)) {
+            this.logger.error('No configuration array found in the flavor node.');
+            return [];
+        }
+
+        return configuration;
+    }
+
+    private createConfigKeyItems(configurations: Configuration[], currentValue?: string): ValueQuickPickItem[] {
+        return configurations.map(config => ({
+            label: `${config.key === currentValue ? '$(check) ' : ''}${config.key} (${config.type || 'string'})`,
+            description: '',
+            detail: `Default: ${config.default_value !== undefined ? `"${config.default_value}"` : 'Not Set'} • ${config.description || 'No description specified'}`,
+            picked: currentValue === config.key,
+            value: config.key
+        }));
+    }
+
     private groupMappingOptions(options: MappingOption[]): {
         required: MappingOption[];
         optional: MappingOption[];
@@ -1069,12 +749,6 @@ export class CatalogService {
         };
     }
 
-    /**
-  * Creates QuickPick items for input mapping selection
-  * @param options Mapping options to convert to QuickPick items
-  * @param currentValue Current selected value if any
-  * @returns Array of QuickPick items
-  */
     private createMappingQuickPickItems(
         options: MappingOption[],
         currentValue?: string
@@ -1087,21 +761,11 @@ export class CatalogService {
             value: opt.value
         }));
     }
-    /**
-     * Formats the detail string for a mapping option
-     * @param option The mapping option to format
-     * @returns Formatted detail string
-     */
+
     private formatMappingDetail(option: MappingOption): string {
         return `Default: "${option.defaultValue}" • ${option.description || 'No description specified'}`;
     }
 
-    /**
-     * Groups configuration items by their required status
-     * @param configurations Array of configuration items
-     * @param node The tree node being edited
-     * @returns Object containing required and optional configurations
-     */
     private groupConfigurationItems(configurations: Configuration[], node: CatalogTreeItem): {
         required: Configuration[];
         optional: Configuration[];
@@ -1120,119 +784,9 @@ export class CatalogService {
         return { required, optional };
     }
 
-    /**
- * Creates QuickPick items for configuration keys
- * @param configurations Array of configuration items
- * @param currentValue Current selected value if any
- * @returns Array of QuickPick items
- */
-    private createConfigKeyItems(configurations: Configuration[], currentValue?: string): ValueQuickPickItem[] {
-        return configurations.map(config => ({
-            label: `${config.key === currentValue ? '$(check) ' : ''}${config.key} (${config.type || 'string'})`,
-            description: '',
-            detail: `Default: ${config.default_value !== undefined ? `"${config.default_value}"` : 'Not Set'} • ${config.description || 'No description specified'}`,
-            picked: currentValue === config.key,
-            value: config.key
-        }));
-    }
-
-    /**›
-     * Retrieves configuration items from the local ibm_catalog.json for the current dependency's flavor.
-     * @param node The CatalogTreeItem representing the dependency.
-     * @returns Promise<Configuration[]> An array of configuration items.
-     */
-    private async getLocalConfigurationItems(node: CatalogTreeItem): Promise<Configuration[]> {
-        const flavorNode = node.findAncestorFlavorNode();
-
-        if (!flavorNode) {
-            this.logger.error('Could not find the flavor node containing this dependency.');
-            return [];
-        }
-
-        const configuration = flavorNode.value.configuration as Configuration[];
-
-        if (!Array.isArray(configuration)) {
-            this.logger.error('No configuration array found in the flavor node.');
-            return [];
-        }
-
-        return configuration;
-    }
-
-
-    /**
-     * Groups configuration keys by their required status
-     * @param keys Array of configuration keys
-     * @param node The tree node being edited
-     * @returns Object containing required and optional keys
-     */
-    private groupConfigurationKeys(keys: string[], node: CatalogTreeItem): {
-        required: string[];
-        optional: string[];
-    } {
-        const flavorNode = node.findAncestorFlavorNode();
-        if (!flavorNode?.value.configuration) {
-            return { required: [], optional: keys };
-        }
-
-        const required: string[] = [];
-        const optional: string[] = [];
-
-        for (const key of keys) {
-            const config = flavorNode.value.configuration.find(c => c.key === key);
-            if (config?.required) {
-                required.push(key);
-            } else {
-                optional.push(key);
-            }
-        }
-
-        return { required, optional };
-    }
-
-
-    private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' {
-        const match = node.jsonPath.match(/\.input_mapping\[\d+\]\.([^.]+)$/);
-        return (match?.[1] || 'version_input') as any;
-    }
-
-    private async promptWithQuickPick(
-        items: string[] | vscode.QuickPickItem[],
-        options: vscode.QuickPickOptions
-    ): Promise<string | undefined> {
-        const quickPickItems = items.map(item =>
-            typeof item === 'string' ? { label: item } : item
-        );
-
-        this.logger.debug('QuickPick Items', quickPickItems);
-        if (quickPickItems.length === 0) {
-            this.logger.error('QuickPick called with empty items');
-            return undefined;
-        }
-        const selection = await vscode.window.showQuickPick(
-            quickPickItems,
-            { ...options, canPickMany: false }
-        );
-
-        return selection?.label;
-    }
-
-
-    public async handleFileDeletion(uri: vscode.Uri): Promise<void> {
-        if (this.catalogFilePath && this.catalogFilePath === uri.fsPath) {
-            this.catalogFilePath = undefined;
-            this.catalogData = {};
-            this.initialized = false;
-            this._onDidChangeContent.fire();
-        }
-    }
-    /**
-    * Retrieves the catalog_id associated with a given node.
-    */
-    public async getCatalogIdForNode(node: CatalogTreeItem): Promise<string | undefined> {
+    private async getCatalogIdForNode(node: CatalogTreeItem): Promise<string | undefined> {
         const parentNode = node.parent;
         if (parentNode && typeof parentNode.value === 'object' && parentNode.value !== null) {
-            // Type assertion to inform TypeScript about the structure
             const catalogId = (parentNode.value as Record<string, any>)['catalog_id'];
             if (typeof catalogId === 'string') {
                 return catalogId;
@@ -1241,145 +795,67 @@ export class CatalogService {
         return undefined;
     }
 
-    /**
-    * Updates the name field in a dependency based on the offering ID
-    * @param node The dependency ID node
-    * @param offeringId The offering ID
-    * @param knownName Optional known offering name to avoid additional API call
-    */
+    private createFlavorDetail(
+        flavorName: string,
+        details: OfferingFlavor | undefined,
+        currentValue?: string
+    ): string {
+        const parts: string[] = [];
+
+        if (details?.label_i18n?.['en']) {
+            parts.push(details.label_i18n['en']);
+        }
+
+        if (details?.name && details.name !== details?.label) {
+            parts.push(`Name: ${details.name}`);
+        }
+
+        if (details?.description) {
+            parts.push(`Description: ${details.description}`);
+        } else {
+            parts.push(`Description: No description available`);
+        }
+
+        return parts.length > 0 ? parts.join(' • ') : 'No additional details available';
+    }
+
+    private isFlavorSelection(node: CatalogTreeItem): boolean {
+        const flavorPattern = /\.dependencies\[\d+\]\.flavors\[\d+\]$/;
+        return flavorPattern.test(node.jsonPath);
+    }
+
+    private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' {
+        const match = node.jsonPath.match(/\.input_mapping\[\d+\]\.([^.]+)$/);
+        return (match?.[1] || 'version_input') as any;
+    }
+
+    public async handleFileDeletion(uri: vscode.Uri): Promise<void> {
+        await this.fileSystemService.handleFileDeletion(uri);
+    }
+
     private async updateDependencyName(node: CatalogTreeItem, offeringId: string, knownName?: string): Promise<void> {
-        try {
-            // Get the parent dependency node
-            const dependencyNode = this.findDependencyParentNode(node);
-            if (!dependencyNode) {
-                this.logger.error('Could not find parent dependency node', {
-                    path: node.jsonPath
-                });
-                return;
-            }
-
-            let name: string | undefined = knownName;
-
-            // If we don't have the name, try to fetch it
-            if (!name) {
-                const apiKey = await AuthService.getApiKey(this.context);
-                if (apiKey) {
-                    const catalogId = await this.getCatalogIdForNode(node);
-                    if (catalogId) {
-                        const ibmCloudService = new IBMCloudService(apiKey);
-                        const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
-                        const offering = offerings.find(o => o.id === offeringId);
-                        name = offering?.name;
-                    }
-                }
-            }
-
-            // Update the name field if we have one
-            if (name) {
-                const nameField = this.findNameField(dependencyNode);
-                if (nameField) {
-                    await this.updateJsonValue(nameField.jsonPath, name);
-                } else {
-                    // Handle case where name field doesn't exist
-                    const dependencyValue = dependencyNode.value as Record<string, any>;
-                    dependencyValue.name = name;
-                    await this.updateJsonValue(dependencyNode.jsonPath, dependencyValue);
-                }
-            }
-
-        } catch (error) {
-            this.logger.error('Failed to update dependency name', error);
-            // Don't throw - this is a non-critical enhancement
+        const dependencyNode = node.getDependencyParent();
+        if (!dependencyNode) {
+            return;
         }
-    }
 
-    /**
-     * Finds the parent dependency node for an offering ID node
-     * @param node The offering ID node
-     * @returns The parent dependency node or undefined
-     */
-    private findDependencyParentNode(node: CatalogTreeItem): CatalogTreeItem | undefined {
-        let current = node.parent;
-        while (current) {
-            if (this.isDependencyNode(current)) {
-                return current;
+        let name = knownName;
+        if (!name) {
+            const apiKey = await AuthService.getApiKey(this.context);
+            const catalogId = await this.getCatalogIdForNode(node);
+            if (apiKey && catalogId) {
+                const ibmCloudService = new IBMCloudService(apiKey);
+                const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+                name = offerings.find(o => o.id === offeringId)?.name;
             }
-            current = current.parent;
         }
-        return undefined;
-    }
 
-    /**
-     * Finds the name field within a dependency node
-     * @param dependencyNode The dependency node
-     * @returns The name field node or undefined
-     */
-    private findNameField(dependencyNode: CatalogTreeItem): CatalogTreeItem | undefined {
-        const children = this.getNodeChildren(dependencyNode);
-        return children.find(child => child.label === 'name');
-    }
-
-    /**
-     * Gets the children of a node
-     * @param node The parent node
-     * @returns Array of child nodes
-     */
-    private getNodeChildren(node: CatalogTreeItem): CatalogTreeItem[] {
-        if (typeof node.value === 'object' && node.value !== null) {
-            return Object.entries(node.value).map(([key, value]) => {
-                return new CatalogTreeItem(
-                    this.context,
-                    key,
-                    value,
-                    `${node.jsonPath}.${key}`,
-                    this.getCollapsibleState(value),
-                    this.getContextValue(value, `${node.jsonPath}.${key}`),
-                    undefined,
-                    node
-                );
+        if (name) {
+            const currentValue = dependencyNode.value as Record<string, any>;
+            await this.updateJsonValue(dependencyNode.jsonPath, {
+                ...currentValue,
+                name
             });
         }
-        return [];
-    }
-
-    /**
-     * Checks if a node represents a dependency
-     * @param node The node to check
-     * @returns boolean True if the node is a dependency
-     */
-    private isDependencyNode(node: CatalogTreeItem): boolean {
-        return /\.dependencies\[\d+\]$/.test(node.jsonPath);
-    }
-
-    /**
-     * Determines the collapsible state for a value
-     * @param value The value to check
-     * @returns The appropriate collapsible state
-     */
-    private getCollapsibleState(value: unknown): vscode.TreeItemCollapsibleState {
-        if (typeof value === 'object' && value !== null) {
-            return vscode.TreeItemCollapsibleState.Collapsed;
-        }
-        return vscode.TreeItemCollapsibleState.None;
-    }
-
-    /**
- * Determines the context value for menu contributions
- * @param value The value to check
- * @param jsonPath The JSON path of the node
- * @returns The appropriate context value
- */
-    private getContextValue(value: unknown, jsonPath: string): string {
-        if (Array.isArray(value)) {
-            // Special handling for input_mapping arrays
-            if (jsonPath.endsWith('.input_mapping')) {
-                return 'input_mapping_array';
-            }
-            return 'array';
-        }
-        if (typeof value === 'object' && value !== null) {
-            return 'container';
-        }
-        return 'editable';
     }
 }
