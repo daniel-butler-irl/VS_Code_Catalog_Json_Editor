@@ -138,7 +138,8 @@ export class CatalogService {
      * @returns The path to the catalog file or undefined if not set
      */
     public getCatalogFilePath(): string | undefined {
-        return this.catalogFilePath;
+        const currentCatalogFile = this.fileSystemService.getCurrentCatalogFile();
+        return currentCatalogFile?.uri.fsPath;
     }
 
     /**
@@ -217,6 +218,7 @@ export class CatalogService {
  * @returns Promise<string | undefined> The selected mapping type or undefined if cancelled
  */
     private async promptForMappingType(): Promise<string | undefined> {
+        this.logger.debug('Prompting for mapping type');
         const items: ValueQuickPickItem[] = [
             {
                 label: "Dependency Input",
@@ -388,6 +390,10 @@ export class CatalogService {
      * Prompts the user for a value based on the node type
      */
     private async promptForValue(node: CatalogTreeItem, currentValue?: unknown): Promise<unknown> {
+        this.logger.debug('Prompting for value', {
+            node: node.jsonPath,
+            currentValue
+        });
         if (node.label === 'catalog_id') {
             return this.promptForCatalogId(currentValue as string);
         }
@@ -441,6 +447,10 @@ export class CatalogService {
    * @returns Promise<boolean | undefined> The selected boolean value or undefined if cancelled
    */
     private async promptForBoolean(fieldLabel: string, currentValue?: boolean): Promise<boolean | undefined> {
+        this.logger.debug('Showing boolean pick', {
+            fieldLabel,
+            currentValue
+        });
         const items: vscode.QuickPickItem[] = [
             {
                 label: `${currentValue === true ? '$(check) ' : ''}true`,
@@ -471,6 +481,9 @@ export class CatalogService {
   * Prompts the user to select or enter a catalog ID
   */
     private async promptForCatalogId(currentValue?: string): Promise<string | undefined> {
+        this.logger.debug('Prompting for catalog ID', {
+            currentValue
+        });
         const logger = this.logger;
         const apiKey = await AuthService.getApiKey(this.context);
 
@@ -574,6 +587,9 @@ export class CatalogService {
       * @returns Promise<string | undefined> The selected offering ID or undefined if cancelled
       */
     private async promptForOfferingId(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+        this.logger.debug('Prompting for offering ID', {
+            currentValue
+        });
         const logger = this.logger;
         const apiKey = await AuthService.getApiKey(this.context);
 
@@ -674,6 +690,9 @@ export class CatalogService {
      */
     private async promptForFlavor(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
         const logger = this.logger;
+        logger.debug('Prompting for flavor', {
+            currentValue
+        });
         const apiKey = await AuthService.getApiKey(this.context);
 
         if (!apiKey) {
@@ -911,6 +930,11 @@ export class CatalogService {
         if (!this.initialized) {
             await this.initialize();
         }
+
+        this.logger.debug('Prompting for input mapping', {
+            node: node.jsonPath,
+            currentValue
+        });
 
         const dependencyNode = node.getDependencyParent();
         if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
