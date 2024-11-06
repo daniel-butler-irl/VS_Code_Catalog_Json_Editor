@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "publisher": "DanielButler",
   "repository": {
     "type": "git",
@@ -53,6 +53,10 @@
         "title": "Add Element",
         "icon": "$(add)"
       },
+        {
+        "command": "ibmCatalog.selectElement",
+        "title": "Select Element"
+      },
       {
         "command": "ibmCatalog.editElement",
         "title": "Edit Element",
@@ -71,12 +75,12 @@
         "command": "ibmCatalog.logout",
         "title": "Logout from IBM Cloud"
       },
-         {
-                "command": "ibmCatalog.createCatalogFile",
-                "title": "Create ibm_catalog.json",
-                "category": "IBM Catalog",
-                "icon": "$(new-file)"
-            }
+      {
+        "command": "ibmCatalog.createCatalogFile",
+        "title": "Create ibm_catalog.json",
+        "category": "IBM Catalog",
+        "icon": "$(new-file)"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -87,7 +91,7 @@
         }
       ]
     },
-     "views": {
+    "views": {
       "ibm-catalog-explorer": [
         {
           "id": "ibmCatalogTree",
@@ -105,13 +109,13 @@
       }
     ],
     "menus": {
-     "view/item/context": [
-    {
-      "command": "ibmCatalog.addElement",
-      "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
-      "group": "inline"
-    }
-  ],
+      "view/item/context": [
+        {
+          "command": "ibmCatalog.addElement",
+          "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
+          "group": "inline"
+        }
+      ],
       "view/title": [
         {
           "command": "ibmCatalog.createCatalogFile",
@@ -236,6 +240,7 @@
   },
   "dependencies": {
     "@ibm-cloud/platform-services": "^0.67.0",
-    "ibm-cloud-sdk-core": "^5.1.0"
+    "ibm-cloud-sdk-core": "^5.1.0",
+    "jsonc-parser": "^3.3.1"
   }
 }
