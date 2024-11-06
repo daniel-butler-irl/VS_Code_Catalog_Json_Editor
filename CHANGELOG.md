@@ -1,16 +1,23 @@
 # Changelog
 
-## [0.0.11](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.11) (2024-11-04)
+## [0.0.12](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.0.12) (2024-11-06)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.10...0.0.11)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.11...0.0.12)
 
 **Fixed bugs:**
 
-- Selecting Already Chosen Value Results is $ Symbol [\#26](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/26)
+- Cancel users selection when highlighting [\#32](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/32)
+- Cancel Highlight when catalog json window selected [\#30](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/30)
+- Highlight takes two clicks to properly focus [\#24](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/24)
+
+**Closed issues:**
+
+- Add double click to open prompt/edit [\#31](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/31)
+- Add Filtering support to the Prompt box [\#28](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/28)
 
 **Merged pull requests:**
 
-- Enhance CatalogService with ValueQuickPickItem support [\#25](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/25) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Highlight enhancements [\#33](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/33) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
