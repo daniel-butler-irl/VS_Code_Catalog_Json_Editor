@@ -19,10 +19,12 @@ export class FileSystemService {
     private initialized = false;
 
     private constructor(private readonly context: vscode.ExtensionContext) {
+        this.logger.debug('Initializing FileSystemService');
         // Listen for active editor changes
         vscode.window.onDidChangeActiveTextEditor(() => {
             void this.checkAndUpdateRoot();
         });
+        this.logger.debug('FileSystemService initialized');
     }
 
     public static getInstance(context: vscode.ExtensionContext): FileSystemService {
@@ -73,6 +75,7 @@ export class FileSystemService {
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders?.length) {
+            this.logger.debug('No workspace folders found');
             return false;
         }
 
@@ -81,13 +84,16 @@ export class FileSystemService {
             try {
                 await vscode.workspace.fs.stat(catalogFileUri);
                 await this.setCatalogFile(catalogFileUri, folder);
+                this.logger.debug(`Catalog file found at ${catalogFileUri.fsPath}`);
                 return true;
-            } catch {
-                this.logger.debug(`No ${this.catalogFileName} found in ${folder.name}`);
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                this.logger.debug(`No ${this.catalogFileName} found in ${folder.name}: ${errorMessage}`);
                 continue;
             }
         }
 
+        this.logger.debug('No catalog file found in any workspace folder');
         return false;
     }
 
@@ -192,6 +198,7 @@ export class FileSystemService {
         await this.loadCatalogData();
         this.initialized = true;
         this._onDidChangeContent.fire();
+        this.logger.debug(`Catalog file set to ${uri.fsPath}`);
     }
 
     private async loadCatalogData(): Promise<void> {
