@@ -1,3 +1,4 @@
+// extension.ts is the entry point for the extension. It is responsible for activating the extension and setting up the necessary services and commands.
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,7 +36,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     try {
         // Initialize services
-        logger.debug('Initializing SchemaService');
         const schemaService = new SchemaService();
         await schemaService.initialize();
 
@@ -78,6 +78,55 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             showCollapseAll: true
         });
 
+        // Use custom command for tree item clicks
+        let lastClickTime: number | null = null;
+        let lastClickedItemId: string | null = null;
+        let singleClickTimer: NodeJS.Timeout | null = null;
+
+        function handleTreeItemClick(item: CatalogTreeItem): void {
+            const now = Date.now();
+            const DOUBLE_CLICK_THRESHOLD = 500; // milliseconds
+            const clickedItemId = item.id || item.jsonPath;
+
+            if (
+                lastClickTime &&
+                lastClickedItemId === clickedItemId &&
+                now - lastClickTime < DOUBLE_CLICK_THRESHOLD
+            ) {
+                // Double-click detected
+                logger.debug('Double-click detected');
+
+                if (singleClickTimer) {
+                    clearTimeout(singleClickTimer);
+                    singleClickTimer = null;
+                }
+
+                if (item.isEditable()) {
+                    vscode.commands.executeCommand('ibmCatalog.editElement', item);
+                }
+
+                // Reset after double-click
+                lastClickTime = null;
+                lastClickedItemId = null;
+            } else {
+                // Single-click detected
+                logger.debug('Single-click detected');
+
+                if (singleClickTimer) {
+                    clearTimeout(singleClickTimer);
+                }
+
+                // Delay single-click action to distinguish from double-click
+                singleClickTimer = setTimeout(() => {
+                    vscode.commands.executeCommand('ibmCatalog.selectElement', item);
+                    singleClickTimer = null;
+                }, DOUBLE_CLICK_THRESHOLD);
+
+                lastClickTime = now;
+                lastClickedItemId = clickedItemId;
+            }
+        }
+
         // Pass the treeView to the treeProvider
         treeProvider.setTreeView(treeView);
 
@@ -87,13 +136,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
                 logger.show();
             }),
-            vscode.commands.registerCommand('ibmCatalog.editElement', async (node) => {
-                await catalogService.editElement(node);
-                // Re-highlight the element after editing
-                // Add a small delay to ensure symbol provider updates
-                setTimeout(async () => {
-                    await highlightService.highlightJsonPath(node.jsonPath);
-                }, 100); // Delay in milliseconds
+            vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
+                const catalogFilePath = catalogService.getCatalogFilePath();
+                if (catalogFilePath) {
+                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
+                    const editor = await vscode.window.showTextDocument(document, { preview: false });
+                    await catalogService.editElement(node);
+
+                    // Re-highlight the element after editing
+                    await highlightService.highlightJsonPath(node.jsonPath, editor);
+                }
             }),
             vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
                 const cacheService = CacheService.getInstance();
@@ -110,12 +162,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
                 await catalogService.addElement(parentNode, schemaService);
                 treeProvider.refresh();
-            }), vscode.commands.registerCommand('ibmCatalog.login', async () => {
+            }),
+            vscode.commands.registerCommand('ibmCatalog.login', async () => {
                 await AuthService.promptForApiKey(context);
                 await updateStatusBar();
                 treeProvider.refresh();
             }),
+            vscode.commands.registerCommand('ibmCatalog.selectElement', async (selectedItem: CatalogTreeItem) => {
+                logger.debug('selectElement command called');
+                logger.debug('Selected item:', selectedItem.label);
 
+                const catalogFilePath = catalogService.getCatalogFilePath();
+                if (catalogFilePath) {
+                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
+                    const editor = await vscode.window.showTextDocument(document, { preview: false });
+                    logger.debug('Calling highlightJsonPath with path:', selectedItem.jsonPath);
+                    await highlightService.highlightJsonPath(selectedItem.jsonPath, editor);
+                } else {
+                    logger.error('Catalog file path is undefined.');
+                    vscode.window.showErrorMessage('Catalog file not found.');
+                }
+            }),
             vscode.commands.registerCommand('ibmCatalog.logout', async () => {
                 await AuthService.clearApiKey(context);
                 vscode.window.showInformationMessage('Logged out of IBM Cloud.');
@@ -132,29 +199,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     vscode.window.showInformationMessage('No ibm_catalog.json file found in workspace');
                 }
             }),
+            // Register the custom tree item click command
+            vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
             fileWatcher,
             highlightService,
             treeView
         );
 
-        // Use treeView for selection handling
-        treeView.onDidChangeSelection(async (e) => {
-            if (e.selection.length > 0) {
-                const selectedItem = e.selection[0];
-                // Open or switch to the catalog file
-                const catalogFilePath = catalogService.getCatalogFilePath();
-                if (catalogFilePath) {
-                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
-                    await vscode.window.showTextDocument(document, { preview: false });
-                    // Highlight the JSON path
-                    await highlightService.highlightJsonPath(selectedItem.jsonPath);
-                }
-            } else {
-                highlightService.clearHighlight();
-            }
-        });
+        // Remove the onDidChangeSelection handler since we're handling clicks via command
+        // treeView.onDidChangeSelection(async (e) => {
+        //     // ... existing code ...
+        // });
 
-        context.subscriptions.push(treeView);
         // Function to get the root path
         function getRootPath(): string | undefined {
             return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -233,7 +289,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             })
         );
 
-
         vscode.workspace.onDidDeleteFiles(() => {
             updateCatalogFileContext();
             treeProvider.refresh();
@@ -255,7 +310,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
     }
-
 }
 
 export function deactivate(): void {

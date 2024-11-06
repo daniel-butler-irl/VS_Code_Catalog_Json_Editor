@@ -58,9 +58,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     public getTreeItem(element: CatalogTreeItem): vscode.TreeItem {
         const isExpanded = this.expandedNodes.has(element.jsonPath);
-        return element.withCollapsibleState(
+        const treeItem = element.withCollapsibleState(
             this.getCollapsibleState(element.value, isExpanded)
         );
+
+        return treeItem;
     }
 
     /**

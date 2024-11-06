@@ -1,53 +1,94 @@
 // src/services/EditorHighlightService.ts
 
 import * as vscode from 'vscode';
+import { parseTree, findNodeAtLocation } from 'jsonc-parser';
+import { LoggingService } from './core/LoggingService';
 
-/**
- * Manages highlighting of JSON lines in the editor
- */
 export class EditorHighlightService implements vscode.Disposable {
     private decorationType: vscode.TextEditorDecorationType;
     private currentHighlight: vscode.Range | undefined;
+    private currentEditor: vscode.TextEditor | null = null;
+    private isHighlighting: boolean = false;
+    private highlightVersion = 0;
+    private readonly logger = LoggingService.getInstance();
 
     constructor() {
+        this.logger.debug('Initializing EditorHighlightService');
+
+        // Create a single decoration type to be reused
         this.decorationType = vscode.window.createTextEditorDecorationType({
             backgroundColor: new vscode.ThemeColor('editor.selectionBackground'),
             isWholeLine: true
         });
+
+        // Listen for selection changes
+        vscode.window.onDidChangeTextEditorSelection(this.onSelectionChange, this);
+
+        // Listen for active editor changes
+        vscode.window.onDidChangeActiveTextEditor(this.onActiveEditorChange, this);
+
+        this.logger.debug('EditorHighlightService initialized');
     }
 
-    /**
-     * Highlights the JSON element corresponding to the given JSON path
-     */
     public async highlightJsonPath(jsonPath: string, editor?: vscode.TextEditor): Promise<void> {
         const activeEditor = editor ?? vscode.window.activeTextEditor;
         if (!activeEditor || !jsonPath) {
+            this.logger.error('No active editor or JSON path provided.');
             return;
         }
 
+        this.isHighlighting = true;
+        const currentVersion = ++this.highlightVersion;
+        this.logger.debug(`Highlighting JSON path: ${jsonPath}, version: ${currentVersion}`);
+
         try {
             const document = activeEditor.document;
-            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                'vscode.executeDocumentSymbolProvider',
-                document.uri
-            );
+            const text = document.getText();
+            const rootNode = parseTree(text);
 
-            if (!symbols) {
+            if (!rootNode) {
+                this.logger.error('Failed to parse JSON document.');
                 return;
             }
 
             const pathSegments = this.jsonPathToSegments(jsonPath);
-            const targetSymbol = this.findSymbolAtPath(symbols, pathSegments);
+            this.logger.debug(`JSON path segments: ${JSON.stringify(pathSegments)}`);
 
-            if (targetSymbol) {
-                this.currentHighlight = targetSymbol.range;
-                activeEditor.setDecorations(this.decorationType, [targetSymbol.range]);
-                activeEditor.revealRange(targetSymbol.range, vscode.TextEditorRevealType.InCenter);
+            const targetNode = findNodeAtLocation(rootNode, pathSegments);
+
+            if (currentVersion !== this.highlightVersion) {
+                // A newer highlight request has been made; abort this one
+                this.logger.debug(`Aborting outdated highlight version: ${currentVersion}`);
+                return;
+            }
+
+            if (targetNode) {
+                const startPos = document.positionAt(targetNode.offset);
+                const endPos = document.positionAt(targetNode.offset + targetNode.length);
+                const range = new vscode.Range(startPos, endPos);
+
+                this.logger.debug(`Target node found at range: ${range.start.line}:${range.start.character} - ${range.end.line}:${range.end.character}`);
+
+                this.currentHighlight = range;
+                this.currentEditor = activeEditor;
+
+                // Clear any existing selections and set the selection to the start of the range
+                activeEditor.selections = [new vscode.Selection(range.start, range.start)];
+
+                // Apply the decoration
+                activeEditor.setDecorations(this.decorationType, [range]);
+
+                // Reveal the range in the editor
+                activeEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+
             } else {
+                this.logger.error('Target node not found for the given JSON path.');
                 this.clearHighlight();
             }
         } catch (error) {
-            console.error('Failed to highlight JSON path:', error);
+            this.logger.error('Failed to highlight JSON path:', error);
+        } finally {
+            this.isHighlighting = false;
         }
     }
 
@@ -55,10 +96,44 @@ export class EditorHighlightService implements vscode.Disposable {
      * Clears any existing highlights
      */
     public clearHighlight(): void {
-        if (vscode.window.activeTextEditor) {
-            vscode.window.activeTextEditor.setDecorations(this.decorationType, []);
+        if (this.currentEditor && this.currentHighlight) {
+            this.currentEditor.setDecorations(this.decorationType, []);
+            this.currentHighlight = undefined;
+            this.currentEditor = null;
+            this.logger.debug('Highlight cleared');
         }
-        this.currentHighlight = undefined;
+    }
+
+    private onSelectionChange(e: vscode.TextEditorSelectionChangeEvent): void {
+        if (e.textEditor.document.fileName.endsWith('ibm_catalog.json')) {
+            // Ignore if we're currently highlighting to prevent clearing during programmatic selection
+            if (this.isHighlighting) {
+                return;
+            }
+
+            // If the selection is at the start of the highlight range and is empty, do not clear the highlight
+            if (this.currentHighlight) {
+                const highlightStart = this.currentHighlight.start;
+                for (const selection of e.selections) {
+                    if (selection.isEmpty && selection.active.isEqual(highlightStart)) {
+                        // The selection is at the start of the highlight range
+                        return;
+                    }
+                }
+            }
+
+            // Clear the highlight whenever the selection changes
+            this.logger.debug('Selection change detected, clearing highlight');
+            this.clearHighlight();
+        }
+    }
+
+    // Handle active editor changes to clear the highlight when ibm_catalog.json is clicked
+    private onActiveEditorChange(editor: vscode.TextEditor | undefined): void {
+        if (editor && editor.document.fileName.endsWith('ibm_catalog.json')) {
+            this.logger.debug('Active editor changed to ibm_catalog.json, clearing highlight');
+            this.clearHighlight();
+        }
     }
 
     /**
@@ -81,33 +156,11 @@ export class EditorHighlightService implements vscode.Disposable {
     }
 
     /**
-     * Recursively searches for a symbol matching the JSON path segments
-     */
-    private findSymbolAtPath(symbols: vscode.DocumentSymbol[], pathSegments: (string | number)[], depth = 0): vscode.DocumentSymbol | undefined {
-        if (depth >= pathSegments.length) {
-            return undefined;
-        }
-
-        const segment = pathSegments[depth];
-        for (const symbol of symbols) {
-            if (symbol.name === segment.toString()) {
-                if (depth === pathSegments.length - 1) {
-                    return symbol;
-                } else if (symbol.children && symbol.children.length > 0) {
-                    const result = this.findSymbolAtPath(symbol.children, pathSegments, depth + 1);
-                    if (result) {
-                        return result;
-                    }
-                }
-            }
-        }
-        return undefined;
-    }
-
-    /**
-     * Disposes of the highlight service
+     * Dispose of the decoration and event listeners
      */
     public dispose(): void {
+        this.clearHighlight();
         this.decorationType.dispose();
+        // Note: Event listeners are automatically disposed when the extension is deactivated
     }
 }
