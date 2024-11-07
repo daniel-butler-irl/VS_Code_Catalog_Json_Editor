@@ -207,7 +207,19 @@
           "highContrast": "#FF0000"
         }
       }
-    ]
+    ],
+    "keybindings": [
+    {
+        "command": "ibmCatalog.triggerEdit",
+        "key": "space",
+        "when": "focusedView == ibmCatalogTree && !inputFocus"
+    },
+    {
+        "command": "ibmCatalog.triggerEdit",
+        "key": "enter",
+        "when": "focusedView == ibmCatalogTree && !inputFocus"
+    }
+  ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
