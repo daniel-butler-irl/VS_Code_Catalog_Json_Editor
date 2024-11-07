@@ -147,6 +147,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     await highlightService.highlightJsonPath(node.jsonPath, editor);
                 }
             }),
+            vscode.commands.registerCommand('ibmCatalog.triggerEdit', async () => {
+                const selection = treeView.selection;
+                if (selection.length > 0) {
+                    const item = selection[0];
+                    logger.debug('Keyboard edit triggered', { itemPath: item.jsonPath });
+                    if (item.isEditable()) {
+                        await vscode.commands.executeCommand('ibmCatalog.editElement', item);
+                    }
+                }
+            }),
             vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
                 const cacheService = CacheService.getInstance();
                 cacheService.clearAll();

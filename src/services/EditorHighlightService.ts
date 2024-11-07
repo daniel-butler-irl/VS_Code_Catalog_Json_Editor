@@ -78,8 +78,11 @@ export class EditorHighlightService implements vscode.Disposable {
                 // Apply the decoration
                 activeEditor.setDecorations(this.decorationType, [range]);
 
-                // Reveal the range in the editor
+                // Reveal the range in the editor without moving focus
                 activeEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+
+                // Return focus to the tree view
+                await vscode.commands.executeCommand('workbench.view.extension.ibm-catalog-explorer');
 
             } else {
                 this.logger.error('Target node not found for the given JSON path.');
