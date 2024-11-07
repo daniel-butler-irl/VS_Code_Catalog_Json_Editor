@@ -1,7 +1,7 @@
 // src/services/EditorHighlightService.ts
 
 import * as vscode from 'vscode';
-import { parseTree, findNodeAtLocation } from 'jsonc-parser';
+import { parseTree, findNodeAtLocation, Node } from 'jsonc-parser';
 import { LoggingService } from './core/LoggingService';
 
 export class EditorHighlightService implements vscode.Disposable {
@@ -10,6 +10,7 @@ export class EditorHighlightService implements vscode.Disposable {
     private currentEditor: vscode.TextEditor | null = null;
     private isHighlighting: boolean = false;
     private highlightVersion = 0;
+    private parsedJsonCache: { [uri: string]: Node | undefined } = {};
     private readonly logger = LoggingService.getInstance();
 
     constructor() {
@@ -26,6 +27,9 @@ export class EditorHighlightService implements vscode.Disposable {
 
         // Listen for active editor changes
         vscode.window.onDidChangeActiveTextEditor(this.onActiveEditorChange, this);
+
+        // Listen for document changes to invalidate cache
+        vscode.workspace.onDidChangeTextDocument(this.onDocumentChange, this);
 
         this.logger.debug('EditorHighlightService initialized');
     }
@@ -44,7 +48,13 @@ export class EditorHighlightService implements vscode.Disposable {
         try {
             const document = activeEditor.document;
             const text = document.getText();
-            const rootNode = parseTree(text);
+
+            // Use cached parsed JSON if available
+            let rootNode = this.parsedJsonCache[document.uri.toString()];
+            if (!rootNode) {
+                rootNode = parseTree(text);
+                this.parsedJsonCache[document.uri.toString()] = rootNode;
+            }
 
             if (!rootNode) {
                 this.logger.error('Failed to parse JSON document.');
@@ -72,14 +82,15 @@ export class EditorHighlightService implements vscode.Disposable {
                 this.currentHighlight = range;
                 this.currentEditor = activeEditor;
 
-                // Clear any existing selections and set the selection to the start of the range
-                activeEditor.selections = [new vscode.Selection(range.start, range.start)];
-
                 // Apply the decoration
                 activeEditor.setDecorations(this.decorationType, [range]);
 
-                // Reveal the range in the editor without moving focus
-                activeEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                // Adjust the range to reveal to prevent horizontal scrolling
+                const lineStart = new vscode.Position(startPos.line, 0);
+                const revealRange = new vscode.Range(lineStart, lineStart);
+
+                // Reveal the adjusted range vertically without scrolling horizontally
+                activeEditor.revealRange(revealRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 
                 // Return focus to the tree view
                 await vscode.commands.executeCommand('workbench.view.extension.ibm-catalog-explorer');
@@ -114,17 +125,6 @@ export class EditorHighlightService implements vscode.Disposable {
                 return;
             }
 
-            // If the selection is at the start of the highlight range and is empty, do not clear the highlight
-            if (this.currentHighlight) {
-                const highlightStart = this.currentHighlight.start;
-                for (const selection of e.selections) {
-                    if (selection.isEmpty && selection.active.isEqual(highlightStart)) {
-                        // The selection is at the start of the highlight range
-                        return;
-                    }
-                }
-            }
-
             // Clear the highlight whenever the selection changes
             this.logger.debug('Selection change detected, clearing highlight');
             this.clearHighlight();
@@ -136,6 +136,14 @@ export class EditorHighlightService implements vscode.Disposable {
         if (editor && editor.document.fileName.endsWith('ibm_catalog.json')) {
             this.logger.debug('Active editor changed to ibm_catalog.json, clearing highlight');
             this.clearHighlight();
+        }
+    }
+
+    // Invalidate the cache when the document changes
+    private onDocumentChange(e: vscode.TextDocumentChangeEvent): void {
+        if (e.document.fileName.endsWith('ibm_catalog.json')) {
+            this.logger.debug('Document changed, invalidating JSON cache');
+            this.parsedJsonCache[e.document.uri.toString()] = undefined;
         }
     }
 
@@ -164,6 +172,6 @@ export class EditorHighlightService implements vscode.Disposable {
     public dispose(): void {
         this.clearHighlight();
         this.decorationType.dispose();
-        // Note: Event listeners are automatically disposed when the extension is deactivated
+        // Event listeners are automatically disposed when the extension is deactivated
     }
 }
