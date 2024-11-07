@@ -11,7 +11,6 @@ import { InputMappingService } from './InputMappingService';
 import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
 import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
-import { ValueQuickPickItem } from '../types/common';
 import { QuickPickItemEx } from '../types/prompt';
 
 /**
@@ -246,7 +245,7 @@ export class CatalogService {
      */
     private async promptForMappingType(): Promise<string | undefined> {
         this.logger.debug('Prompting for mapping type');
-        const items: ValueQuickPickItem[] = [
+        const items: QuickPickItemEx<string>[] = [
             {
                 label: "Dependency Input",
                 description: "Map an input from this dependency",
@@ -258,18 +257,21 @@ export class CatalogService {
                 description: "Map an output from this dependency",
                 detail: "Creates a mapping with dependency_output field",
                 value: "dependency_output"
+            },
+            {
+                label: "Value",
+                description: "Set a static value",
+                detail: "Creates a mapping with value field",
+                value: "value"
             }
         ];
 
         const result = await PromptService.showQuickPick<string>({
             title: 'Select Input Mapping Type',
             placeholder: 'Choose the type of mapping to add',
-            items: items.map(item => ({
-                label: item.label,
-                description: item.description,
-                detail: item.detail,
-                value: item.value
-            }))
+            items: items,
+            matchOnDescription: true,
+            matchOnDetail: true
         });
 
         return result;
@@ -307,7 +309,7 @@ export class CatalogService {
         }
 
         if (node.isInputMappingField()) {
-            return this.promptForInputMapping(node, currentValue as string);
+            return this.promptForInputMapping(node, currentValue);
         }
 
         const value = await PromptService.showInputBox<string>({
@@ -662,18 +664,26 @@ export class CatalogService {
     }
 
     /**
-     * Prompts the user to select an input mapping value.
+     * Prompts the user to select or enter a value for an input mapping field.
      * @param node The catalog tree item associated with the input mapping.
-     * @param currentValue The current mapping value.
-     * @returns The selected mapping value, or undefined if cancelled.
+     * @param currentValue The current value of the field.
+     * @returns The new value, or undefined if cancelled.
      */
-    private async promptForInputMapping(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+    private async promptForInputMapping(node: CatalogTreeItem, currentValue?: any): Promise<any> {
         await this.ensureInitialized();
 
         this.logger.debug('Prompting for input mapping', {
             node: node.jsonPath,
             currentValue
         });
+
+        const fieldType = this.getInputMappingFieldType(node);
+
+        if (fieldType === 'value') {
+            // For 'value', prompt the user for any arbitrary value
+            const value = await this.promptForAnyValue(currentValue);
+            return value;
+        }
 
         const dependencyNode = node.getDependencyParent();
         if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
@@ -683,6 +693,7 @@ export class CatalogService {
 
         const depValue = dependencyNode.value as Record<string, any>;
         const apiKey = await AuthService.getApiKey(this.context);
+
         if (!apiKey) {
             vscode.window.showWarningMessage('IBM Cloud API Key required for mapping suggestions');
             return undefined;
@@ -703,8 +714,6 @@ export class CatalogService {
         const inputMappingService = new InputMappingService(
             new IBMCloudService(apiKey)
         );
-
-        const fieldType = this.getInputMappingFieldType(node);
 
         if (fieldType === 'version_input') {
             const configurations = await this.getLocalConfigurationItems(node);
@@ -790,6 +799,103 @@ export class CatalogService {
         }
 
         return undefined;
+    }
+
+    /**
+     * Prompts the user to enter any arbitrary value, supporting various data types.
+     * @param currentValue The current value, if any.
+     * @returns The entered value, parsed into the appropriate type.
+     */
+    private async promptForAnyValue(currentValue?: any): Promise<any> {
+        const type = await PromptService.showQuickPick<string>({
+            title: 'Select the type of value',
+            placeholder: 'Choose the type of value',
+            items: [
+                { label: 'String', value: 'string' },
+                { label: 'Number', value: 'number' },
+                { label: 'Boolean', value: 'boolean' },
+                { label: 'Array', value: 'array' },
+                { label: 'Object', value: 'object' },
+                { label: 'Null', value: 'null' }
+            ]
+        });
+
+        if (!type) {
+            return undefined;
+        }
+
+        switch (type) {
+            case 'string':
+                const strValue = await PromptService.showInputBox<string>({
+                    title: 'Enter a string value',
+                    initialValue: currentValue !== undefined ? String(currentValue) : '',
+                    validate: undefined
+                });
+                return strValue;
+            case 'number':
+                const numValueStr = await PromptService.showInputBox<string>({
+                    title: 'Enter a numeric value',
+                    initialValue: currentValue !== undefined ? String(currentValue) : '',
+                    validate: (input) => isNaN(Number(input)) ? 'Please enter a valid number' : null
+                });
+                if (numValueStr !== undefined) {
+                    return Number(numValueStr);
+                }
+                return undefined;
+            case 'boolean':
+                const boolValue = await PromptService.showBooleanPick({
+                    title: 'Select a boolean value',
+                    placeholder: 'Choose true or false',
+                    currentValue: currentValue === true,
+                    trueLabel: 'true',
+                    falseLabel: 'false'
+                });
+                return boolValue;
+            case 'array':
+                const arrayValueStr = await PromptService.showInputBox<string>({
+                    title: 'Enter an array value (in JSON format)',
+                    initialValue: currentValue !== undefined ? JSON.stringify(currentValue) : '',
+                    validate: (input) => {
+                        try {
+                            const parsed = JSON.parse(input);
+                            if (Array.isArray(parsed)) {
+                                return null;
+                            } else {
+                                return 'Please enter a valid JSON array';
+                            }
+                        } catch (e) {
+                            return 'Invalid JSON format';
+                        }
+                    }
+                });
+                if (arrayValueStr !== undefined) {
+                    return JSON.parse(arrayValueStr);
+                }
+                return undefined;
+            case 'object':
+                const objectValueStr = await PromptService.showInputBox<string>({
+                    title: 'Enter an object value (in JSON format)',
+                    initialValue: currentValue !== undefined ? JSON.stringify(currentValue) : '',
+                    validate: (input) => {
+                        try {
+                            const parsed = JSON.parse(input);
+                            if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                return null;
+                            } else {
+                                return 'Please enter a valid JSON object';
+                            }
+                        } catch (e) {
+                            return 'Invalid JSON format';
+                        }
+                    }
+                });
+                if (objectValueStr !== undefined) {
+                    return JSON.parse(objectValueStr);
+                }
+                return undefined;
+            case 'null':
+                return null;
+        }
     }
 
     /**
@@ -956,7 +1062,7 @@ export class CatalogService {
      * @param node The catalog tree item.
      * @returns The field type as a string.
      */
-    private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' {
+    private getInputMappingFieldType(node: CatalogTreeItem): 'dependency_input' | 'dependency_output' | 'version_input' | 'value' {
         const match = node.jsonPath.match(/\.input_mapping\[\d+\]\.([^.]+)$/);
         return (match?.[1] || 'version_input') as any;
     }
