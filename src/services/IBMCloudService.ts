@@ -32,16 +32,55 @@ export class IBMCloudService {
         title: string,
         task: () => Promise<T>
     ): Promise<T> {
-        return vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title,
-            cancellable: false
-        }, async (progress) => {
-            progress.report({ increment: 0 });
-            const result = await task();
-            progress.report({ increment: 100 });
-            return result;
-        });
+        return vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title,
+                cancellable: false
+            },
+            async (progress) => {
+                // Optionally set an initial message
+                progress.report({ message: `In Progress` });
+
+                try {
+                    // Execute the main task
+                    const result = await task();
+
+                    // Update the progress message to indicate completion
+                    progress.report({ message: `Complete` });
+
+                    // Introduce a short delay to allow the user to see the "Complete" message
+                    await this.delay(500); // 1000 milliseconds = 1 second
+
+                    return result;
+                } catch (error) {
+                    // Update the progress message to indicate failure
+                    progress.report({ message: `Failed` });
+
+                    // Optionally introduce a delay before closing the notification
+                    await this.delay(1000);
+
+                    // Show an error notification with an error icon
+                    vscode.window.showErrorMessage(`Task failed: ${this.extractErrorMessage(error)}`);
+
+                    // Re-throw the error to be handled by the caller
+                    throw error;
+                }
+            }
+        );
+    }
+
+
+    /**
+     * Utility function to extract a user-friendly error message.
+     * @param error The error object thrown by the task.
+     * @returns A string representing the error message.
+     */
+    private extractErrorMessage(error: any): string {
+        if (error instanceof Error) {
+            return error.message;
+        }
+        return String(error);
     }
 
     // Throttle the background processing to avoid API rate limits
