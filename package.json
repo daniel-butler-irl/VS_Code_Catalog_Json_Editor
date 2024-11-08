@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "DanielButler",
   "repository": {
     "type": "git",
@@ -115,15 +115,8 @@
           "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
           "group": "inline"
         }
-      ],
-      "view/title": [
-        {
-          "command": "ibmCatalog.createCatalogFile",
-          "when": "!ibmCatalog.catalogFileExists",
-          "group": "navigation",
-          "viewId": "ibmCatalogTree"
-        }
       ]
+      
     },
     "colors": [
       {
