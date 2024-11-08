@@ -1,26 +1,12 @@
 # Changelog
 
-## [0.1.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.1.0) (2024-11-07)
+## [0.1.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.1.1) (2024-11-08)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.0.13...0.1.0)
-
-**Fixed bugs:**
-
-- Hi-light service should not scroll horizontally [\#41](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/41)
-- Popups for fetching data should move [\#34](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/34)
-
-**Closed issues:**
-
-- Input Mapping Add New Value type Mapping [\#36](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/36)
-- Return and space keys should activate edit/prompt of selected element [\#35](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/35)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.1.0...0.1.1)
 
 **Merged pull requests:**
 
-- Bump version to 0.1.0 and update README for clarity [\#45](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/45) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Enhance progress reporting with error handling and user feedback [\#43](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/43) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Implement JSON parsing cache and maintain left alignment during highlighting [\#42](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/42) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Refactor prompt service and enhance input mapping prompts [\#38](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/38) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- feat: add keybindings for editing elements in IBM Catalog tree view [\#37](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/37) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Remove unused command and update version in package.json [\#49](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/49) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
