@@ -12,6 +12,9 @@ import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
 import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
+import { LookupItem } from '../types/cache';
+import { CachePrefetchService } from './core/CachePrefetchService';
+import { JsonPathService } from './core/JsonPathService';
 
 /**
  * Service responsible for managing catalog data within the extension.
@@ -83,6 +86,7 @@ export class CatalogService {
         this.logger.debug('Initializing CatalogService');
         try {
             const initialized = await this.fileSystemService.initialize();
+            await this.queueBackgroundLookups();
             if (initialized) {
                 this.logger.debug('CatalogService initialized successfully');
             } else {
@@ -213,6 +217,7 @@ export class CatalogService {
         try {
             await this.ensureInitialized();
             await this.fileSystemService.reloadCatalogData();
+            await this.queueBackgroundLookups();
             this._onDidChangeContent.fire();
         } catch (error) {
             this.logger.error('Failed to reload catalog data', error);
@@ -1105,5 +1110,80 @@ export class CatalogService {
                 name
             });
         }
+    }
+
+    /**
+     * Retrieves the catalog data from the file system.
+     * @returns The catalog data as an object.
+     */
+private async queueBackgroundLookups(): Promise<void> {
+    const data = await this.getCatalogData();
+    if (!data || typeof data !== 'object') {
+        return;
+    }
+    
+    const jsonPathService = JsonPathService.getInstance();
+    const items = jsonPathService.traverseJson<LookupItem>(data, (key, value, path): LookupItem | LookupItem[] | void => {
+        if (key === 'catalog_id' && typeof value === 'string') {
+            return [
+                {
+                    type: 'catalog',
+                    value: value,
+                    priority: 1,
+                    context: { isPublic: true }
+                } as LookupItem,
+                {
+                    type: 'catalog',
+                    value: value,
+                    priority: 1,
+                    context: { isPublic: false }
+                } as LookupItem,
+                {
+                    type: 'offerings',
+                    value: value,
+                    context: { catalogId: value },
+                    priority: 2
+                } as LookupItem
+            ];
+        }
+        
+        if (key === 'id' && typeof value === 'string' && path.includes('dependencies')) {
+            const context = jsonPathService.findContextForPath(path, data);
+            if (context.catalogId) {
+                return {
+                    type: 'offerings',
+                    value: value,
+                    context: { catalogId: context.catalogId },
+                    priority: 2
+                } as LookupItem;
+            }
+        }
+        
+        if (key === 'flavors' && Array.isArray(value)) {
+            const context = jsonPathService.findContextForPath(path, data);
+            if (context.catalogId && context.offeringId) {
+                return {
+                    type: 'flavors',
+                    value: value.join(','),
+                    context: {
+                        catalogId: context.catalogId,
+                        offeringId: context.offeringId
+                    },
+                    priority: 3
+                } as LookupItem;
+            }
+        }
+        
+        return undefined;
+    });
+    
+    if (items.length > 0) {
+        const prefetchService = CachePrefetchService.getInstance();
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (apiKey) {
+            prefetchService.setIBMCloudService(new IBMCloudService(apiKey));
+            prefetchService.enqueueLookups(items);
+        }
+    }
     }
 }
