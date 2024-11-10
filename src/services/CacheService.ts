@@ -44,7 +44,7 @@ export class CacheService {
             storagePrefix: 'catalog_cache_'
         },
         'offering': {
-            ttlSeconds: 24 * 60 * 60,         // 1 day
+            ttlSeconds: 7 * 24 * 60 * 60,     // 1 week
             persistent: true,
             storagePrefix: 'offering_cache_'
         },
@@ -54,13 +54,13 @@ export class CacheService {
             storagePrefix: 'validation_cache_'
         },
         'catalogId': {
-            ttlSeconds: 12 * 60 * 60,         // 12 hours
+            ttlSeconds: 7 * 24 * 60 * 60,     // 1 week
             persistent: true,
             storagePrefix: 'catalogid_cache_'
         },
         'default': {
-            ttlSeconds: 3600,                 // 1 hour
-            persistent: false,
+            ttlSeconds: 7 * 24 * 60 * 60,     // 1 week
+            persistent: true,
             storagePrefix: 'default_cache_'
         }
     };
@@ -191,20 +191,21 @@ export class CacheService {
      */
     private async loadPersistedCache(): Promise<void> {
         if (!this.context) { return; }
-
+    
         this.logger.debug('Loading persisted cache entries');
-
+    
         try {
             const keys = this.context.globalState.keys();
             let loadedCount = 0;
-
+    
             for (const storageKey of keys) {
                 // Only load keys matching our cache prefixes
                 const config = Object.values(this.cacheConfigs).find(
                     c => storageKey.startsWith(c.storagePrefix)
                 );
-
+    
                 if (config) {
+                    this.logger.debug(`Found storage key: ${storageKey}`);
                     const record = this.context.globalState.get<CacheRecord>(storageKey);
                     if (record) {
                         const key = storageKey.substring(config.storagePrefix.length);
@@ -212,19 +213,22 @@ export class CacheService {
                         if (record.expiry > Date.now()) {
                             this.cache.set(key, record);
                             loadedCount++;
+                            this.logger.debug(`Loaded cache entry: ${key}`, { expiry: new Date(record.expiry).toISOString() });
                         } else {
                             // Clean up expired entries
                             await this.context.globalState.update(storageKey, undefined);
+                            this.logger.debug(`Removed expired cache entry: ${key}`);
                         }
                     }
                 }
             }
-
+    
             this.logger.debug(`Loaded ${loadedCount} persisted cache entries`);
         } catch (error) {
             this.logger.error('Failed to load persisted cache', error);
         }
     }
+    
 
     /**
      * Invalidates a single cache entry and removes it from persistent storage

@@ -36,6 +36,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     try {
         // Initialize services
+         // Set up CacheService early
+         const cacheService = CacheService.getInstance();
+         cacheService.setContext(context); // Set the context before any cache operations
+
+         
+         
         const schemaService = new SchemaService();
         await schemaService.initialize();
 
