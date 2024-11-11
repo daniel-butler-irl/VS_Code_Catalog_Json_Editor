@@ -34,11 +34,6 @@
         "category": "IBM Catalog"
       },
       {
-        "command": "ibmCatalog.clearCatalogCache",
-        "title": "Clear Catalog Cache",
-        "category": "IBM Catalog"
-      },
-      {
         "command": "ibmCatalog.showLogs",
         "title": "Show IBM Catalog Logs",
         "category": "IBM Catalog"
