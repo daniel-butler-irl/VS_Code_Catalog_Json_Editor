@@ -20,8 +20,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const config = vscode.workspace.getConfiguration('ibmCatalog');
         config.update('enableDebugLogging', true, vscode.ConfigurationTarget.Global)
             .then(
-                () => console.log('Debug logging enabled'),
-                (error) => console.error('Error enabling debug logging:', error)
+                () => {
+                    console.log('Debug logging enabled');
+                    // Get the existing output channel
+                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
+                    outputChannel.show();
+                    outputChannel.appendLine('Debug logging enabled');
+                },
+                (error) => {
+                    console.error('Error enabling debug logging:', error);
+                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
+                    outputChannel.show();
+                    outputChannel.appendLine(`Error enabling debug logging: ${error}`);
+                }
             );
     }
 
