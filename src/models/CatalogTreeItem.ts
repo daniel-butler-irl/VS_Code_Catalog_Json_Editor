@@ -148,6 +148,13 @@ export class CatalogTreeItem extends vscode.TreeItem {
         return flavorPattern.test(this.jsonPath);
     }
 
+    public requestValidation(): void {
+        if (this.needsValidation() && this._validationMetadata.status !== ValidationStatus.Validating) {
+            this._validationMetadata.status = ValidationStatus.Pending;
+            void this.queueForValidation();
+        }
+    }
+
     /**
      * Validates a dependency flavor against its offering
      */
@@ -372,25 +379,28 @@ export class CatalogTreeItem extends vscode.TreeItem {
             parts.push(`Description: ${this._schemaMetadata.description}`);
         }
 
-        // Add catalog specific information
-        if (this.label === 'catalog_id' && typeof this.value === 'string' && !this.isUpdatingTooltip) {
-            this.logger.debug(`Initializing tooltip update for catalog_id: ${this.value}`);
-            void this.updateTooltipWithOfferingDetails(this.value);
-            parts.push('Loading catalog details...');
-        } else if (this.isOfferingIdInDependency() && typeof this.value === 'string' && !this.isUpdatingTooltip) {
-            if (!this.catalogId) {
-                parts.push('Cannot determine catalog_id for offering validation.');
-            } else {
-                this.logger.debug(`Initializing tooltip update for offering ID: ${this.value}`);
-                void this.updateTooltipWithOfferingDetails(this.catalogId, this.value);
-                parts.push('Loading offering details...');
+        // Use cached values only, do not trigger lookups
+        if (this.label === 'catalog_id' && typeof this.value === 'string') {
+            parts.push(`Catalog ID: ${this.value}`);
+            if (this._validationMetadata.status === ValidationStatus.Valid) {
+                parts.push('Status: Valid'); // Only show status if already validated
+            }
+        } else if (this.isOfferingIdInDependency() && typeof this.value === 'string') {
+            parts.push(`Offering ID: ${this.value}`);
+            if (this.catalogId) {
+                parts.push(`Parent Catalog: ${this.catalogId}`);
+            }
+            if (this._validationMetadata.status === ValidationStatus.Valid) {
+                parts.push('Status: Valid'); // Only show status if already validated
             }
         } else if (this.isEditable()) {
             parts.push(`Value: ${this.formatValue(this.value)}`);
         }
 
-        // Add validation status
-        parts.push(this.getValidationMessage());
+        // Add validation status if exists
+        if (this._validationMetadata.status !== ValidationStatus.Unknown) {
+            parts.push(this.getValidationMessage());
+        }
 
         return parts.join('\n');
     }

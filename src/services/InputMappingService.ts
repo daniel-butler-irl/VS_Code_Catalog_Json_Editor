@@ -6,17 +6,28 @@ import { LoggingService } from './core/LoggingService';
 import type { InputMappingContext, MappingOption } from '../types/catalog';
 import { compareSemVer } from '../utils/semver';
 import type { Configuration, Output } from '../types/ibmCloud';
+import { CacheKeys, CacheConfigurations, CacheConfig } from '../types/cache/cacheConfig';
 
+/**
+ * Service responsible for fetching and caching input mapping options for dependencies.
+ * It interacts with IBM Cloud services to retrieve configurations and outputs for offerings.
+ */
 export class InputMappingService {
     private logger = LoggingService.getInstance();
     private cacheService: CacheService;
 
+    /**
+     * Constructs the InputMappingService.
+     * @param ibmCloudService - Instance of IBMCloudService for making API calls.
+     */
     constructor(private ibmCloudService?: IBMCloudService) {
         this.cacheService = CacheService.getInstance();
     }
 
     /**
-     * Fetches available mapping options for inputs/outputs based on offering version
+     * Fetches available mapping options for inputs/outputs based on offering version.
+     * @param context - The context containing catalogId, offeringId, and version.
+     * @returns Promise resolving to an array of MappingOption.
      */
     public async fetchMappingOptions(context: InputMappingContext): Promise<MappingOption[]> {
         this.logger.debug('Fetching mapping options with context', context);
@@ -27,6 +38,7 @@ export class InputMappingService {
         const cacheKey = `mapping_options:${context.catalogId}:${context.offeringId}:${context.version || ''}`;
         const cached = this.cacheService.get<MappingOption[]>(cacheKey);
         if (cached) {
+            this.logger.debug('Using cached mapping options');
             return cached;
         }
 
@@ -66,10 +78,15 @@ export class InputMappingService {
                 }
             }
 
-            this.cacheService.set(cacheKey, options, {
-                timestamp: new Date().toISOString(),
-                offeringVersion: version.version
-            });
+            // Define cache configuration for mapping options
+            const cacheConfig: CacheConfig = {
+                ttlSeconds: 3600, // Cache for 1 hour
+                persistent: false, // Not persisted across sessions
+                storagePrefix: 'mapping_options',
+            };
+
+            // Cache the generated options
+            this.cacheService.set(cacheKey, options, cacheConfig);
             this.logger.debug('Generated Mapping Options', options);
 
             return options;
@@ -81,9 +98,9 @@ export class InputMappingService {
     }
 
     /**
-     * Creates a MappingOption from a configuration item
-     * @param config The configuration item from the IBM Cloud API
-     * @returns MappingOption
+     * Creates a MappingOption from a configuration item.
+     * @param config - The configuration item from the IBM Cloud API.
+     * @returns MappingOption object.
      */
     private createConfigurationOption(config: Configuration): MappingOption {
         return {
@@ -93,15 +110,18 @@ export class InputMappingService {
             type: config.type || 'string',
             required: config.required || false,
             defaultValue: config.default_value !== undefined ? config.default_value : 'Not Set',
-            detail: '', // Will be formatted later
-            mappingType: 'input' // Indicates this is an input
+            detail: this.formatMappingDetail({
+                defaultValue: config.default_value !== undefined ? config.default_value : 'Not Set',
+                description: config.description || '',
+            }),
+            mappingType: 'input', // Indicates this is an input
         };
     }
 
     /**
-     * Creates a MappingOption from an output item
-     * @param output The output item from the IBM Cloud API
-     * @returns MappingOption
+     * Creates a MappingOption from an output item.
+     * @param output - The output item from the IBM Cloud API.
+     * @returns MappingOption object.
      */
     private createOutputOption(output: Output): MappingOption {
         return {
@@ -111,23 +131,28 @@ export class InputMappingService {
             type: 'string', // Outputs do not have type, assume 'string'
             required: false, // Outputs are always optional
             defaultValue: 'Not Set', // Outputs do not have default values
-            detail: '', // Will be formatted later
-            mappingType: 'output' // Indicates this is an output
+            detail: this.formatMappingDetail({
+                defaultValue: 'Not Set',
+                description: output.description || '',
+            }),
+            mappingType: 'output', // Indicates this is an output
         };
     }
 
     /**
-     * Formats the detail string for a mapping option
-     * @param option The mapping option to format
-     * @returns Formatted detail string
+     * Formats the detail string for a mapping option.
+     * @param option - The mapping option to format.
+     * @returns Formatted detail string.
      */
-    private formatMappingDetail(option: MappingOption): string {
+    private formatMappingDetail(option: { defaultValue: any; description: string }): string {
         return `Default: ${option.defaultValue} • ${option.description || ''}`;
     }
 
-
     /**
-     * Gets the lowest version that satisfies the version constraint
+     * Gets the lowest version that satisfies the version constraint.
+     * @param versions - Array of versions.
+     * @param constraint - Version constraint string.
+     * @returns The matching version object or undefined if not found.
      */
     private findLowestMatchingVersion(versions: any[], constraint?: string): any {
         if (!versions.length) {
@@ -149,7 +174,10 @@ export class InputMappingService {
     }
 
     /**
-     * Checks if a version satisfies a semver constraint
+     * Checks if a version satisfies a semver constraint.
+     * @param version - The version to check.
+     * @param constraint - The semver constraint.
+     * @returns True if version satisfies the constraint.
      */
     private satisfiesConstraint(version: string, constraint: string): boolean {
         const normalizeVersion = (v: string) => v.replace(/^[\^~><=v]/, '').split(/[\.-]/)[0];

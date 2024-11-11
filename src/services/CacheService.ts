@@ -1,78 +1,28 @@
-// src/services/CacheService.ts
-
 import * as vscode from 'vscode';
 import { LoggingService } from './core/LoggingService';
+import { CacheConfig } from '../types/cache/cacheConfig';
 
 /**
- * Configuration for different cache types
- */
-interface CacheConfig {
-    /** Time-to-live in seconds */
-    ttlSeconds: number;
-    /** Whether to persist across sessions */
-    persistent: boolean;
-    /** Storage key prefix for persistence */
-    storagePrefix: string;
-}
-
-/**
- * Cache record structure for storing values with metadata
- */
-interface CacheRecord {
-    /** The cached value */
-    value: any;
-    /** Expiration timestamp */
-    expiry: number;
-    /** Key-specific metadata */
-    metadata?: Record<string, unknown>;
-}
-
-/**
- * Service for caching API responses and other data with TTL and persistence support
+ * Service for caching API responses and other data with TTL and persistence support.
  */
 export class CacheService {
     private static instance: CacheService;
-    private cache: Map<string, CacheRecord> = new Map();
+    private cache: Map<string, { value: any; expiry: number; config: CacheConfig }> = new Map();
     private logger: LoggingService;
     private context?: vscode.ExtensionContext;
+    private readonly CACHE_PREFIX = 'cache:'; // Prefix for all cache keys
 
-    // Cache configuration for different types of data
-    private readonly cacheConfigs: Record<string, CacheConfig> = {
-        'catalog': {
-            ttlSeconds: 7 * 24 * 60 * 60,     // 1 week
-            persistent: true,
-            storagePrefix: 'catalog_cache_'
-        },
-        'offering': {
-            ttlSeconds: 24 * 60 * 60,         // 1 day
-            persistent: true,
-            storagePrefix: 'offering_cache_'
-        },
-        'validation': {
-            ttlSeconds: 24 * 60 * 60,         // 1 day
-            persistent: true,
-            storagePrefix: 'validation_cache_'
-        },
-        'catalogId': {
-            ttlSeconds: 12 * 60 * 60,         // 12 hours
-            persistent: true,
-            storagePrefix: 'catalogid_cache_'
-        },
-        'default': {
-            ttlSeconds: 3600,                 // 1 hour
-            persistent: false,
-            storagePrefix: 'default_cache_'
-        }
-    };
-
+    /**
+     * Private constructor to enforce singleton pattern.
+     */
     private constructor() {
         this.logger = LoggingService.getInstance();
         this.logger.debug('Initializing CacheService');
     }
 
     /**
-     * Sets the VS Code extension context for persistence
-     * @param context The VS Code extension context
+     * Sets the VS Code extension context for persistence.
+     * @param context - The VS Code extension context.
      */
     public setContext(context: vscode.ExtensionContext): void {
         this.context = context;
@@ -80,7 +30,8 @@ export class CacheService {
     }
 
     /**
-     * Gets the singleton instance of the cache service
+     * Gets the singleton instance of the cache service.
+     * @returns CacheService instance.
      */
     public static getInstance(): CacheService {
         if (!CacheService.instance) {
@@ -90,96 +41,59 @@ export class CacheService {
     }
 
     /**
-     * Gets the appropriate cache configuration for a key
-     */
-    private getConfigForKey(key: string): CacheConfig {
-        const prefix = key.split(':')[0];
-        return this.cacheConfigs[prefix] || this.cacheConfigs.default;
-    }
-
-    /**
-     * Builds a cache key for offerings specific to a catalog
-     * @param catalogId The catalog ID
-     * @param offeringId Optional specific offering ID
-     */
-    public static buildOfferingKey(catalogId: string, offeringId?: string): string {
-        return `offering:${catalogId}${offeringId ? `:${offeringId}` : ''}`;
-    }
-
-    /**
-     * Gets a value from the cache with optional type safety
-     * @param key The cache key
-     * @returns The cached value or undefined if not found or expired
+     * Retrieves a value from the cache.
+     * @param key - The cache key (without prefix).
+     * @returns The cached value or undefined if not found or expired.
      */
     public get<T>(key: string): T | undefined {
-        this.logger.debug(`Cache lookup for key: ${key}`);
+        const prefixedKey = this.CACHE_PREFIX + key;
+        this.logger.debug(`Cache lookup for key: ${prefixedKey}`);
 
-        const record = this.cache.get(key);
+        const record = this.cache.get(prefixedKey);
         if (!record) {
-            this.logger.debug(`Cache MISS - Key not found: ${key}`);
+            this.logger.debug(`Cache MISS - Key not found: ${prefixedKey}`);
             return undefined;
         }
 
         const now = Date.now();
         if (now >= record.expiry) {
-            this.logger.debug(`Cache MISS - Expired entry for key: ${key}`, {
-                expiredAt: new Date(record.expiry).toISOString(),
-                now: new Date(now).toISOString()
-            });
-            void this.invalidateKey(key);
+            this.logger.debug(`Cache MISS - Expired entry for key: ${prefixedKey}`);
+            void this.invalidateKey(prefixedKey);
             return undefined;
         }
 
-        this.logger.debug(`Cache HIT for key: ${key}`, {
-            timeLeftSeconds: Math.round((record.expiry - now) / 1000),
-            expiresAt: new Date(record.expiry).toISOString(),
-            metadata: record.metadata
-        });
-
+        this.logger.debug(`Cache HIT for key: ${prefixedKey}`);
         return record.value as T;
     }
 
     /**
-     * Sets a value in the cache
-     * @param key The cache key
-     * @param value The value to cache
-     * @param metadata Optional metadata to store with the value
+     * Stores a value in the cache with the specified configuration.
+     * @param key - The cache key (without prefix).
+     * @param value - The value to cache.
+     * @param config - Configuration for cache entry.
      */
-    public set(key: string, value: any, metadata?: Record<string, unknown>): void {
-        const config = this.getConfigForKey(key);
+    public set(key: string, value: any, config: CacheConfig): void {
+        const prefixedKey = this.CACHE_PREFIX + key;
         const expiry = Date.now() + config.ttlSeconds * 1000;
-
-        const record: CacheRecord = {
-            value,
-            expiry,
-            metadata
-        };
-
-        this.cache.set(key, record);
+        this.cache.set(prefixedKey, { value, expiry, config });
 
         if (config.persistent && this.context) {
-            void this.persistCacheEntry(key, record);
+            void this.persistCacheEntry(prefixedKey, value, expiry);
         }
 
-        this.logger.debug(`Cache SET for key: ${key}`, {
-            expiresAt: new Date(expiry).toISOString(),
-            ttlSeconds: config.ttlSeconds,
-            isPersistent: config.persistent,
-            metadata
-        });
+        this.logger.debug(`Cache SET for key: ${prefixedKey}`);
     }
 
     /**
-     * Persists a cache entry to VS Code storage
+     * Persists a cache entry to VS Code's globalState.
+     * @param key - The cache key (with prefix).
+     * @param value - The value to persist.
+     * @param expiry - Expiry timestamp in milliseconds.
      */
-    private async persistCacheEntry(key: string, record: CacheRecord): Promise<void> {
+    private async persistCacheEntry(key: string, value: any, expiry: number): Promise<void> {
         if (!this.context) { return; }
-
-        const config = this.getConfigForKey(key);
-        const storageKey = `${config.storagePrefix}${key}`;
-
         try {
-            await this.context.globalState.update(storageKey, record);
+            await this.context.globalState.update(key, { value, expiry });
             this.logger.debug(`Persisted cache entry: ${key}`);
         } catch (error) {
             this.logger.error(`Failed to persist cache entry: ${key}`, error);
@@ -187,172 +101,101 @@ export class CacheService {
     }
 
     /**
-     * Loads persisted cache entries from VS Code storage
+     * Loads persisted cache entries from VS Code's globalState into the in-memory cache.
      */
     private async loadPersistedCache(): Promise<void> {
         if (!this.context) { return; }
-
         this.logger.debug('Loading persisted cache entries');
 
         try {
             const keys = this.context.globalState.keys();
-            let loadedCount = 0;
+            for (const key of keys) {
+                if (!key.startsWith(this.CACHE_PREFIX)) {
+                    continue; // Skip keys without the cache prefix
+                }
 
-            for (const storageKey of keys) {
-                // Only load keys matching our cache prefixes
-                const config = Object.values(this.cacheConfigs).find(
-                    c => storageKey.startsWith(c.storagePrefix)
-                );
-
-                if (config) {
-                    const record = this.context.globalState.get<CacheRecord>(storageKey);
-                    if (record) {
-                        const key = storageKey.substring(config.storagePrefix.length);
-                        // Only load if not expired
-                        if (record.expiry > Date.now()) {
-                            this.cache.set(key, record);
-                            loadedCount++;
-                        } else {
-                            // Clean up expired entries
-                            await this.context.globalState.update(storageKey, undefined);
-                        }
-                    }
+                const record = this.context.globalState.get<{ value: any; expiry: number }>(key);
+                if (record && record.expiry > Date.now()) {
+                    this.cache.set(key, { ...record, config: { ttlSeconds: 0, persistent: true, storagePrefix: '' } });
+                    this.logger.debug(`Loaded cache entry: ${key}`);
+                } else {
+                    await this.context.globalState.update(key, undefined);
+                    this.logger.debug(`Removed expired cache entry: ${key}`);
                 }
             }
-
-            this.logger.debug(`Loaded ${loadedCount} persisted cache entries`);
         } catch (error) {
             this.logger.error('Failed to load persisted cache', error);
         }
     }
 
     /**
-     * Invalidates a single cache entry and removes it from persistent storage
+     * Invalidates a single cache entry and removes it from persisted storage if applicable.
+     * @param key - The cache key (with prefix).
      */
     private async invalidateKey(key: string): Promise<void> {
         this.cache.delete(key);
-
         if (this.context) {
-            const config = this.getConfigForKey(key);
-            const storageKey = `${config.storagePrefix}${key}`;
-            await this.context.globalState.update(storageKey, undefined);
+            await this.context.globalState.update(key, undefined);
         }
+        this.logger.debug(`Cache entry invalidated: ${key}`);
     }
 
     /**
-     * Updates expiry for all cached items matching a prefix
-     * @param prefix The key prefix to refresh
-     */
-    public refreshPrefix(prefix: string): void {
-        const config = this.getConfigForKey(prefix);
-        const now = Date.now();
-        const newExpiry = now + config.ttlSeconds * 1000;
-
-        let refreshCount = 0;
-        this.cache.forEach((record, key) => {
-            if (key.startsWith(prefix)) {
-                record.expiry = newExpiry;
-                if (config.persistent) {
-                    void this.persistCacheEntry(key, record);
-                }
-                refreshCount++;
-            }
-        });
-
-        if (refreshCount > 0) {
-            this.logger.debug(`Refreshed ${refreshCount} cache entries with prefix: ${prefix}`, {
-                newExpiryTime: new Date(newExpiry).toISOString()
-            });
-        }
-    }
-
-    /**
-     * Clears the entire cache including persistent storage
+     * Clears the entire cache, both in-memory and persisted entries with the cache prefix.
+     * This will remove all cache entries managed by CacheService and cannot be undone.
      */
     public async clearAll(): Promise<void> {
-        const size = this.cache.size;
+        // Clear in-memory cache
         this.cache.clear();
+        this.logger.debug('In-memory cache cleared');
 
         if (this.context) {
-            // Clear all persisted cache entries
-            for (const config of Object.values(this.cacheConfigs)) {
-                if (config.persistent) {
-                    const keys = this.context.globalState.keys()
-                        .filter(key => key.startsWith(config.storagePrefix));
+            try {
+                const keys = this.context.globalState.keys();
+                const updatePromises: Thenable<void>[] = [];
 
-                    for (const key of keys) {
-                        await this.context.globalState.update(key, undefined);
+                for (const key of keys) {
+                    if (key.startsWith(this.CACHE_PREFIX)) {
+                        updatePromises.push(this.context.globalState.update(key, undefined));
                     }
                 }
-            }
-        }
 
-        this.logger.info(`Cleared entire cache (${size} entries)`);
+                await Promise.all(updatePromises);
+                this.logger.debug('Persisted cache entries cleared');
+            } catch (error) {
+                this.logger.error('Failed to clear persisted cache entries', error);
+            }
+        } else {
+            this.logger.warn('CacheService context is not set. Persisted cache entries cannot be cleared.');
+        }
     }
 
     /**
-     * Clears cache entries matching a prefix
-     * @param prefix The key prefix to clear
-     * @returns Number of entries cleared
+     * Invalidates all cache entries that start with a specific prefix.
+     * @param prefix - The prefix to match cache keys.
      */
-    public async clearPrefix(prefix: string): Promise<number> {
-        let cleared = 0;
-        const config = this.getConfigForKey(prefix);
+    public async invalidatePrefix(prefix: string): Promise<void> {
+        const fullPrefix = this.CACHE_PREFIX + prefix;
+        if (this.context) {
+            try {
+                const keys = this.context.globalState.keys();
+                const updatePromises: Thenable<void>[] = [];
 
-        // Clear in-memory cache
-        for (const key of this.cache.keys()) {
-            if (key.startsWith(prefix)) {
-                this.cache.delete(key);
-                cleared++;
+                for (const key of keys) {
+                    if (key.startsWith(fullPrefix)) {
+                        updatePromises.push(this.context.globalState.update(key, undefined));
+                        this.cache.delete(key);
+                        this.logger.debug(`Cache entry invalidated via prefix: ${key}`);
+                    }
+                }
+
+                await Promise.all(updatePromises);
+                this.logger.debug(`All cache entries with prefix "${fullPrefix}" have been invalidated`);
+            } catch (error) {
+                this.logger.error(`Failed to invalidate cache entries with prefix "${fullPrefix}"`, error);
             }
+        } else {
+            this.logger.warn('CacheService context is not set. Cannot invalidate cache entries by prefix.');
         }
-
-        // Clear persistent storage if applicable
-        if (config.persistent && this.context) {
-            const storageKeys = this.context.globalState.keys()
-                .filter(key => key.startsWith(config.storagePrefix));
-
-            for (const key of storageKeys) {
-                await this.context.globalState.update(key, undefined);
-            }
-        }
-
-        if (cleared > 0) {
-            this.logger.info(`Cleared ${cleared} cache entries with prefix: ${prefix}`);
-        }
-
-        return cleared;
-    }
-
-    /**
-     * Gets cache statistics and health metrics
-     */
-    public getStats(): Record<string, any> {
-        const now = Date.now();
-        const stats = {
-            totalSize: this.cache.size,
-            entriesByPrefix: {} as Record<string, number>,
-            activeEntries: 0,
-            expiredEntries: 0,
-            persistentEntries: 0
-        };
-
-        this.cache.forEach((record, key) => {
-            const prefix = key.split(':')[0];
-            stats.entriesByPrefix[prefix] = (stats.entriesByPrefix[prefix] || 0) + 1;
-
-            if (now < record.expiry) {
-                stats.activeEntries++;
-            } else {
-                stats.expiredEntries++;
-            }
-
-            const config = this.getConfigForKey(key);
-            if (config.persistent) {
-                stats.persistentEntries++;
-            }
-        });
-
-        return stats;
     }
 }

@@ -12,6 +12,9 @@ import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
 import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
+import { LookupItem } from '../types/cache';
+import { CachePrefetchService } from './core/CachePrefetchService';
+import { JsonPathService } from './core/JsonPathService';
 
 /**
  * Service responsible for managing catalog data within the extension.
@@ -83,6 +86,7 @@ export class CatalogService {
         this.logger.debug('Initializing CatalogService');
         try {
             const initialized = await this.fileSystemService.initialize();
+            await this.queueBackgroundLookups();
             if (initialized) {
                 this.logger.debug('CatalogService initialized successfully');
             } else {
@@ -213,6 +217,7 @@ export class CatalogService {
         try {
             await this.ensureInitialized();
             await this.fileSystemService.reloadCatalogData();
+            await this.queueBackgroundLookups();
             this._onDidChangeContent.fire();
         } catch (error) {
             this.logger.error('Failed to reload catalog data', error);
@@ -466,18 +471,33 @@ export class CatalogService {
             const ibmCloudService = new IBMCloudService(apiKey);
             const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
 
+            // Verify offerings is an array and has content
+            if (!Array.isArray(offerings) || offerings.length === 0) {
+                this.logger.debug('No offerings found or invalid offerings data', {
+                    isArray: Array.isArray(offerings),
+                    length: Array.isArray(offerings) ? offerings.length : 0
+                });
+                return this.promptForManualOfferingId(currentValue);
+            }
+
             const items: QuickPickItemEx<string>[] = [
                 {
                     label: "Available Offerings",
                     kind: vscode.QuickPickItemKind.Separator
-                } as QuickPickItemEx<string>,
-                ...offerings.map(offering => ({
-                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.name}`,
-                    description: offering.id,
-                    detail: offering.shortDescription,
-                    value: offering.id
-                }))
+                } as QuickPickItemEx<string>
             ];
+
+            // Safe mapping of offerings with null checks
+            const offeringItems = offerings
+                .filter(offering => offering && offering.id) // Filter out invalid offerings
+                .map(offering => ({
+                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.name || offering.id}`,
+                    description: offering.id,
+                    detail: offering.shortDescription || '',
+                    value: offering.id
+                }));
+
+            items.push(...offeringItems);
 
             const result = await PromptService.showQuickPickWithCustom<string>({
                 title: 'Select Offering',
@@ -1104,6 +1124,38 @@ export class CatalogService {
                 ...currentValue,
                 name
             });
+        }
+    }
+
+    /**
+     * Retrieves the catalog data from the file system.
+     * @returns The catalog data as an object.
+     */
+    private async queueBackgroundLookups(): Promise<void> {
+        const data = await this.getCatalogData();
+        if (!data || typeof data !== 'object') {
+            this.logger.debug('No valid catalog data found for prefetch analysis');
+            return;
+        }
+
+        this.logger.debug('Starting background prefetch analysis of catalog data');
+        const prefetchService = CachePrefetchService.getInstance();
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (apiKey) {
+            prefetchService.setIBMCloudService(new IBMCloudService(apiKey));
+            prefetchService.analyzeCatalogAndPrefetch(data as Record<string, unknown>);
+        } else {
+            this.logger.debug('No API key available for prefetch');
+        }
+    }
+    
+    /**
+     * Retrieves the catalog data from the file system.
+     * @returns The catalog data as an object.
+     */
+    public async validateItem(item: CatalogTreeItem): Promise<void> {
+        if (item.needsValidation()) {
+            item.requestValidation();
         }
     }
 }

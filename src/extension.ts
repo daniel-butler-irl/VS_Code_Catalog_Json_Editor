@@ -11,6 +11,7 @@ import { CatalogTreeItem } from './models/CatalogTreeItem';
 import { AuthService } from './services/AuthService';
 import { LoggingService, LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
+import { UIStateService } from './services/core/UIStateService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
@@ -19,8 +20,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const config = vscode.workspace.getConfiguration('ibmCatalog');
         config.update('enableDebugLogging', true, vscode.ConfigurationTarget.Global)
             .then(
-                () => console.log('Debug logging enabled'),
-                (error) => console.error('Error enabling debug logging:', error)
+                () => {
+                    console.log('Debug logging enabled');
+                    // Get the existing output channel
+                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
+                    outputChannel.show();
+                    outputChannel.appendLine('Debug logging enabled');
+                },
+                (error) => {
+                    console.error('Error enabling debug logging:', error);
+                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
+                    outputChannel.show();
+                    outputChannel.appendLine(`Error enabling debug logging: ${error}`);
+                }
             );
     }
 
@@ -36,6 +48,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     try {
         // Initialize services
+        // Set up CacheService early
+        const cacheService = CacheService.getInstance();
+        cacheService.setContext(context); // Set the context before any cache operations
+
+        const uiStateService = UIStateService.getInstance(context);
+        context.subscriptions.push(uiStateService);
+
         const schemaService = new SchemaService();
         await schemaService.initialize();
 
@@ -161,12 +180,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 const cacheService = CacheService.getInstance();
                 cacheService.clearAll();
                 vscode.window.showInformationMessage('IBM Catalog cache cleared');
-                treeProvider.refresh(); // Refresh the tree view to reflect changes
-            }),
-            vscode.commands.registerCommand('ibmCatalog.clearCatalogCache', () => {
-                const cacheService = CacheService.getInstance();
-                const cleared = cacheService.clearPrefix('catalog');
-                vscode.window.showInformationMessage(`Cleared ${cleared} catalog cache entries`);
                 treeProvider.refresh(); // Refresh the tree view to reflect changes
             }),
             vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
