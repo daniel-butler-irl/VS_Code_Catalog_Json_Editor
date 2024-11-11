@@ -1,0 +1,9 @@
+{
+    "ui": "tdd",
+    "require": [
+        "ts-node/register",
+        "source-map-support/register"
+    ],
+    "watch-files": ["out/tests/**/*.test.js"],
+    "recursive": true
+}
