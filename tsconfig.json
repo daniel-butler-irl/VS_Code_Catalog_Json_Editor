@@ -13,5 +13,5 @@
     "emitDecoratorMetadata": true,
   },
   "exclude": ["node_modules", ".vscode-test"],
-  "include": ["src"]
+  "include": ["src/**/*.ts"]
 }
