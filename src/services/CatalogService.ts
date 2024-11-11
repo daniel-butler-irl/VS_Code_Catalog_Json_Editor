@@ -1134,74 +1134,21 @@ export class CatalogService {
     private async queueBackgroundLookups(): Promise<void> {
         const data = await this.getCatalogData();
         if (!data || typeof data !== 'object') {
+            this.logger.debug('No valid catalog data found for prefetch analysis');
             return;
         }
 
-        const jsonPathService = JsonPathService.getInstance();
-        const items = jsonPathService.traverseJson<LookupItem>(data, (key, value, path): LookupItem | LookupItem[] | void => {
-            if (key === 'catalog_id' && typeof value === 'string') {
-                return [
-                    {
-                        type: 'catalog',
-                        value: value,
-                        priority: 1,
-                        context: { isPublic: true }
-                    } as LookupItem,
-                    {
-                        type: 'catalog',
-                        value: value,
-                        priority: 1,
-                        context: { isPublic: false }
-                    } as LookupItem,
-                    {
-                        type: 'offerings',
-                        value: value,
-                        context: { catalogId: value },
-                        priority: 2
-                    } as LookupItem
-                ];
-            }
-
-            if (key === 'id' && typeof value === 'string' && path.includes('dependencies')) {
-                const context = jsonPathService.findContextForPath(path, data);
-                if (context.catalogId) {
-                    return {
-                        type: 'offerings',
-                        value: value,
-                        context: { catalogId: context.catalogId },
-                        priority: 2
-                    } as LookupItem;
-                }
-            }
-
-            if (key === 'flavors' && Array.isArray(value)) {
-                const context = jsonPathService.findContextForPath(path, data);
-                if (context.catalogId && context.offeringId) {
-                    return {
-                        type: 'flavors',
-                        value: value.join(','),
-                        context: {
-                            catalogId: context.catalogId,
-                            offeringId: context.offeringId
-                        },
-                        priority: 3
-                    } as LookupItem;
-                }
-            }
-
-            return undefined;
-        });
-
-        if (items.length > 0) {
-            const prefetchService = CachePrefetchService.getInstance();
-            const apiKey = await AuthService.getApiKey(this.context);
-            if (apiKey) {
-                prefetchService.setIBMCloudService(new IBMCloudService(apiKey));
-                prefetchService.enqueueLookups(items);
-            }
+        this.logger.debug('Starting background prefetch analysis of catalog data');
+        const prefetchService = CachePrefetchService.getInstance();
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (apiKey) {
+            prefetchService.setIBMCloudService(new IBMCloudService(apiKey));
+            prefetchService.analyzeCatalogAndPrefetch(data as Record<string, unknown>);
+        } else {
+            this.logger.debug('No API key available for prefetch');
         }
     }
-
+    
     /**
      * Retrieves the catalog data from the file system.
      * @returns The catalog data as an object.

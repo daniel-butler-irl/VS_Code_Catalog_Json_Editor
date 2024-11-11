@@ -11,7 +11,7 @@ export interface LookupContext {
     isPublic?: boolean;
 }
 
-export type LookupType = 'catalog' | 'offerings' | 'flavors';
+export type LookupType = 'catalog' | 'offerings' | 'flavors' | 'catalog_validation';
 
 /**
  * Item interface used for cache prefetching.
@@ -19,6 +19,7 @@ export type LookupType = 'catalog' | 'offerings' | 'flavors';
 export interface LookupItem {
     type: LookupType;
     value: string;
+    priority?: number;
     context?: {
         catalogId?: string;
         offeringId?: string;
