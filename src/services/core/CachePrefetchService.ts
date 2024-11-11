@@ -3,7 +3,7 @@
 import { LoggingService } from './LoggingService';
 import { IBMCloudService } from '../IBMCloudService';
 import { CacheService } from '../CacheService';
-import { throttle } from 'lodash';
+import { chunk, throttle } from 'lodash';
 import type { LookupItem, PrefetchOptions } from '../../types/cache';
 import { CacheKeys, DynamicCacheKeys } from '../../types/cache/cacheConfig';
 
@@ -133,6 +133,7 @@ export class CachePrefetchService {
         try {
             switch (item.type) {
                 case 'catalog':
+                    this.logger.debug(`Prefetching catalog data for ${item.value}`);
                     if (item.context?.isPublic) {
                         await this.ibmCloudService.getAvailablePublicCatalogs();
                     } else {
@@ -140,12 +141,14 @@ export class CachePrefetchService {
                     }
                     break;
                 case 'offerings':
+                    this.logger.debug(`Prefetching offerings for catalog ${item.context?.catalogId}`);
                     if (!item.context?.catalogId) {
                         throw new Error('Catalog ID required for offerings lookup');
                     }
                     await this.ibmCloudService.getOfferingsForCatalog(item.context.catalogId);
                     break;
                 case 'flavors':
+                    this.logger.debug(`Prefetching flavors for offering ${item.context?.offeringId}`);
                     if (!item.context?.catalogId || !item.context?.offeringId) {
                         throw new Error('Catalog ID and Offering ID required for flavors lookup');
                     }
@@ -192,6 +195,96 @@ export class CachePrefetchService {
             default:
                 this.logger.error(`Unknown cache key type: ${item.type}`);
                 return '';
+        }
+    }
+
+    /**
+     * Initiates prefetching for a catalog and all its related data.
+     * @param catalogId - The catalog ID to prefetch data for
+     */
+    public async prefetchCatalogData(catalogId: string): Promise<void> {
+        if (!this.ibmCloudService) {
+            this.logger.warn('Cannot prefetch - IBM Cloud Service not initialized');
+            return;
+        }
+
+        try {
+            // First enqueue catalog validation and details
+            this.enqueueLookups([{
+                type: 'catalog',
+                value: catalogId,
+                context: { catalogId }
+            }]);
+
+            // Fetch and cache offerings
+            const offerings = await this.ibmCloudService.getOfferingsForCatalog(catalogId);
+
+            // Enqueue flavor prefetch for each offering
+            const flavorLookups: LookupItem[] = offerings.map(offering => ({
+                type: 'flavors',
+                value: offering.id,
+                context: {
+                    catalogId,
+                    offeringId: offering.id
+                }
+            }));
+
+            this.enqueueLookups(flavorLookups);
+
+        } catch (error) {
+            this.logger.error(`Failed to initiate prefetch for catalog ${catalogId}`, error);
+        }
+    }
+
+    /**
+     * Prefetches data for multiple catalogs concurrently.
+     * @param catalogIds - Array of catalog IDs to prefetch
+     */
+    public async prefetchMultipleCatalogs(catalogIds: string[]): Promise<void> {
+        this.logger.debug(`Initiating prefetch for ${catalogIds.length} catalogs`);
+
+        // Use lodash chunk instead of our local implementation
+        const batches = chunk(catalogIds, this.options.concurrency || 3);
+
+        for (const catalogBatch of batches) {
+            await Promise.all(
+                catalogBatch.map(catalogId => this.prefetchCatalogData(catalogId))
+            );
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
+
+    /**
+     * Analyzes a catalog JSON structure and initiates prefetching for all referenced catalogs.
+     * @param catalogJson - The catalog JSON structure to analyze
+     */
+    public analyzeCatalogAndPrefetch(catalogJson: Record<string, unknown>): void {
+        const catalogIds = new Set<string>();
+
+        const extractCatalogIds = (obj: unknown): void => {
+            if (!obj || typeof obj !== 'object') return;
+
+            if (
+                obj &&
+                typeof obj === 'object' &&
+                'catalog_id' in obj &&
+                typeof obj.catalog_id === 'string'
+            ) {
+                catalogIds.add(obj.catalog_id);
+            }
+
+            if (Array.isArray(obj)) {
+                obj.forEach(item => extractCatalogIds(item));
+            } else if (obj && typeof obj === 'object') {
+                Object.values(obj).forEach(value => extractCatalogIds(value));
+            }
+        };
+
+        extractCatalogIds(catalogJson);
+
+        if (catalogIds.size > 0) {
+            this.logger.debug(`Found ${catalogIds.size} catalogs to prefetch`);
+            void this.prefetchMultipleCatalogs(Array.from(catalogIds));
         }
     }
 }

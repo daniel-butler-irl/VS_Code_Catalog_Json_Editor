@@ -1,5 +1,7 @@
 // src/types/cache/prefetchTypes.ts
 
+import { OfferingItem } from "../ibmCloud";
+
 /**
  * Context interface for items being looked up.
  */
@@ -9,14 +11,19 @@ export interface LookupContext {
     isPublic?: boolean;
 }
 
+export type LookupType = 'catalog' | 'offerings' | 'flavors';
+
 /**
  * Item interface used for cache prefetching.
  */
 export interface LookupItem {
-    type: 'catalog' | 'offerings' | 'flavors';
+    type: LookupType;
     value: string;
-    context?: LookupContext;
-    priority?: number;
+    context?: {
+        catalogId?: string;
+        offeringId?: string;
+        isPublic?: boolean;
+    }
 }
 
 /**
@@ -26,5 +33,13 @@ export interface PrefetchOptions {
     concurrency?: number;
     retryAttempts?: number;
     retryDelay?: number;
-    maxItemsPerType?: Record<LookupItem['type'], number>;
+    maxItemsPerType?: {
+        [K in LookupType]?: number;
+    };
+}
+
+export interface CatalogPrefetchContext {
+    catalogId: string;
+    offerings?: OfferingItem[];
+    isPublic?: boolean;
 }
