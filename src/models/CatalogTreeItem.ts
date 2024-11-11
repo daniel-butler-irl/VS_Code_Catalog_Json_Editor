@@ -154,7 +154,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
             void this.queueForValidation();
         }
     }
-    
+
     /**
      * Validates a dependency flavor against its offering
      */

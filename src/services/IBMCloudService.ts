@@ -157,21 +157,49 @@ export class IBMCloudService {
      * @param catalogId - ID of the catalog to validate.
      * @returns Promise<boolean> - True if catalog ID is valid, false otherwise.
      */
+    // src/services/IBMCloudService.ts
+
+    /**
+     * Validates a catalog ID using cached data.
+     * @param catalogId - The catalog ID to validate
+     * @returns Promise<boolean> indicating if the catalog ID is valid
+     * @throws {Error} with 'not found in account' message if catalog doesn't exist
+     */
     public async validateCatalogId(catalogId: string): Promise<boolean> {
         const cacheKey = DynamicCacheKeys.CATALOG_VALIDATION(catalogId);
-        this.logger.debug(`Validating catalog ID: ${catalogId} using cached data`);
+        this.logger.debug(`Validating catalog ID: ${catalogId}`);
 
-        const cachedValue = this.cacheService.get<boolean>(cacheKey);
-        if (cachedValue !== undefined) {
-            this.logger.debug(`Using cached validation result for ${catalogId}`, { isValid: cachedValue });
-            if (cachedValue) {
-                this.enqueueCatalogId(catalogId);
+        const cached = this.cacheService.get<boolean>(cacheKey);
+        if (cached !== undefined) {
+            this.logger.debug(`Using cached validation result for ${catalogId}`, { isValid: cached });
+            if (!cached) {
+                throw new Error(`Catalog ID ${catalogId} not found in account`);
             }
-            return cachedValue;
+            return cached;
         }
 
-        this.logger.debug(`No cached validation result for ${catalogId}. Validation cannot proceed.`);
-        return false;
+        try {
+            const catalogs = await this.getAvailableCatalogs();
+            const isValid = catalogs.some(cat => cat.id === catalogId);
+
+            if (isValid) {
+                this.logger.debug(`Catalog ${catalogId} validated successfully`);
+                // Cache the validation result
+                this.cacheService.set(cacheKey, true, CacheConfigurations[CacheKeys.CATALOG_VALIDATION]);
+                return true;
+            } else {
+                this.logger.debug(`Catalog ${catalogId} not found in available catalogs`);
+                this.cacheService.set(cacheKey, false, CacheConfigurations[CacheKeys.CATALOG_VALIDATION]);
+                throw new Error(`Catalog ID ${catalogId} not found in account`);
+            }
+        } catch (error) {
+            // If it's already our "not found" error, rethrow it
+            if (error instanceof Error && error.message.includes('not found in account')) {
+                throw error;
+            }
+            this.logger.error(`Error validating catalog ${catalogId}`, error);
+            throw new Error(`Failed to validate catalog: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
     }
 
     /**
@@ -569,20 +597,16 @@ export class IBMCloudService {
     ): Promise<OfferingFlavor | undefined> {
         const cacheKey = DynamicCacheKeys.FLAVOR_DETAILS(catalogId, offeringId, flavorName);
 
-        const cachedDetails = this.cacheService.get<OfferingFlavor>(cacheKey);
-        if (cachedDetails) {
-            return cachedDetails;
+        const cached = this.cacheService.get<OfferingFlavor>(cacheKey);
+        if (cached !== undefined) {
+            this.logger.debug(`Using cached flavor details for ${flavorName}`);
+            return cached;
         }
 
         try {
-            const response = await this.withProgress(`Fetching flavor details for ${flavorName}`, () =>
-                this.catalogManagement.getOffering({
-                    catalogIdentifier: catalogId,
-                    offeringId: offeringId,
-                })
-            );
+            const offerings = await this.getOfferingsForCatalog(catalogId);
+            const offering = offerings.find(o => o.id === offeringId);
 
-            const offering = response.result;
             if (!offering?.kinds?.length) {
                 return undefined;
             }
@@ -590,53 +614,34 @@ export class IBMCloudService {
             let flavorDetails: OfferingFlavor | undefined;
 
             for (const kind of offering.kinds) {
-                if (!kind.versions?.length) {
-                    continue;
-                }
+                if (!kind.versions?.length) continue;
 
                 for (const version of kind.versions) {
-                    const flavor = version.flavor;
-                    if (flavor?.name && flavor.name === flavorName) {
-                        if (flavor.name && flavor.label) {
-                            flavorDetails = {
-                                name: flavor.name,
-                                label: flavor.label,
-                                label_i18n: flavor.label_i18n,
-                                index: flavor.index ?? 0,
-                            };
-                            break;
-                        }
+                    if (version.flavor?.name === flavorName) {
+                        flavorDetails = {
+                            name: version.flavor.name,
+                            label: version.flavor.label || version.flavor.name,
+                            label_i18n: version.flavor.label_i18n,
+                            index: version.flavor.index ?? 0,
+                        };
+                        break;
                     }
                 }
-                if (flavorDetails) {
-                    break;
-                }
+                if (flavorDetails) break;
             }
 
             if (flavorDetails) {
-                this.cacheService.set(cacheKey, flavorDetails, CacheConfigurations[CacheKeys.DEFAULT]);
-                this.logger.debug('Found and cached flavor details', {
-                    catalogId,
-                    offeringId,
-                    flavorName,
-                    label: flavorDetails.label,
-                });
-            } else {
-                this.logger.debug('No matching flavor found', {
-                    catalogId,
-                    offeringId,
-                    flavorName,
-                });
+                this.cacheService.set(
+                    cacheKey,
+                    flavorDetails,
+                    CacheConfigurations[CacheKeys.FLAVOR_DETAILS]
+                );
+                this.logger.debug(`Cached flavor details for ${flavorName}`);
             }
 
             return flavorDetails;
         } catch (error) {
-            this.logger.error('Failed to get flavor details', {
-                catalogId,
-                offeringId,
-                flavorName,
-                error: this.formatError(error),
-            });
+            this.logger.error('Failed to get flavor details', error);
             return undefined;
         }
     }
