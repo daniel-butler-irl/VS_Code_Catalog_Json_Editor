@@ -55,10 +55,23 @@ export const CacheConfigurations: Record<CacheKeys, CacheConfig> = {
     },
 };
 
+
 /**
  * Dynamic cache key generation functions for offerings and flavors.
  */
 export const DynamicCacheKeys = {
+    /**
+     * Generates a key for caching offerings of a specific catalog.
+     * @param catalogId - The ID of the catalog.
+     * @returns The cache key for the offerings of the specified catalog.
+     */
     OFFERINGS: (catalogId: string) => `offerings:${catalogId}`,
+
+    /**
+     * Generates a key for caching flavors of a specific offering in a catalog.
+     * @param catalogId - The ID of the catalog.
+     * @param offeringId - The ID of the offering.
+     * @returns The cache key for the flavors of the specified offering in the catalog.
+     */
     FLAVORS: (catalogId: string, offeringId: string) => `flavors:${catalogId}:${offeringId}`
 };
