@@ -1,72 +1,77 @@
+// src/services/CatalogTreeProvider.ts
+
 import * as vscode from 'vscode';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
 import { CatalogService } from '../services/CatalogService';
 import { SchemaService } from '../services/SchemaService';
 import { LoggingService } from '../services/core/LoggingService';
+import { UIStateService } from '../services/core/UIStateService';
 import { SchemaMetadata } from '../types/schema';
 import { ValidationStatus } from '../types/validation';
 
 /**
- * Provides a tree data provider for the IBM Catalog JSON structure with optimized loading
- */
+* Provides a performant tree view representation of the IBM Catalog JSON structure.
+* Handles tree item creation, state persistence, validation, and dynamic updates.
+*/
 export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeItem> {
+    //
+    // Event Emitters & Core Properties
+    //
     private _onDidChangeTreeData = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-    private readonly expandedNodes: Set<string>;
-    private static readonly EXPANDED_NODES_KEY = 'ibmCatalog.expandedNodes';
     private treeView?: vscode.TreeView<CatalogTreeItem>;
-    private logger = LoggingService.getInstance();
+    private readonly logger = LoggingService.getInstance();
+    private readonly uiStateService: UIStateService;
 
+    //
+    // Performance Optimizations & Caching
+    //
+    private readonly expandedNodes = new Map<string, boolean>();
+    private readonly memoizedPaths = new Map<string, string>();
+    private readonly memoizedSchemaMetadata = new Map<string, SchemaMetadata | undefined>();
+    private batchStateUpdateTimer: NodeJS.Timeout | null = null;
+
+    /**
+     * Creates a new CatalogTreeProvider instance.
+     * Initializes state management and sets up change listeners.
+     */
     constructor(
         private readonly catalogService: CatalogService,
         private readonly context: vscode.ExtensionContext,
         private readonly schemaService: SchemaService
     ) {
-        this.expandedNodes = new Set(this.loadExpandedState());
-        this.catalogService.onDidChangeContent(() => this.refresh());
-    }
+        this.uiStateService = UIStateService.getInstance(context);
 
-    /**
-     * Sets the tree view and configures it
-     */
-    public setTreeView(treeView: vscode.TreeView<CatalogTreeItem>): void {
-        this.treeView = treeView;
-
-        // Track expanded/collapsed state changes
-        this.treeView.onDidExpandElement((e) => {
-            this.expandedNodes.add(e.element.jsonPath);
-            this.saveExpandedState();
+        // Initialize expanded nodes from persistent storage
+        this.uiStateService.getTreeState().expandedNodes.forEach(node => {
+            this.expandedNodes.set(node, true);
         });
 
-        this.treeView.onDidCollapseElement((e) => {
-            this.expandedNodes.delete(e.element.jsonPath);
-            this.saveExpandedState();
+        // Setup content change handler with cache invalidation
+        this.catalogService.onDidChangeContent(() => {
+            this.clearCaches();
+            this.refresh();
         });
-
-        this.context.subscriptions.push(this.treeView);
     }
 
-    /**
-     * Refreshes the tree view
-     */
-    public refresh(item?: CatalogTreeItem): void {
-        this._onDidChangeTreeData.fire(item);
-    }
+    //
+    // TreeDataProvider Implementation 
+    //
 
     /**
-     * Gets the tree item for a given element
+     * Gets the rendered tree item for a given element.
+     * Uses cached state for expanded/collapsed status.
      */
     public getTreeItem(element: CatalogTreeItem): vscode.TreeItem {
         const isExpanded = this.expandedNodes.has(element.jsonPath);
-        const treeItem = element.withCollapsibleState(
+        return element.withCollapsibleState(
             this.getCollapsibleState(element.value, isExpanded)
         );
-
-        return treeItem;
     }
 
     /**
-     * Gets the children for a given element
+     * Gets child tree items for a given element.
+     * Returns root items if no element is provided.
      */
     public async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
         try {
@@ -82,8 +87,90 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-    * Creates tree items from a JSON value
-    */
+     * Refreshes all or part of the tree view.
+     * Clears caches on full refresh.
+     */
+    public refresh(item?: CatalogTreeItem): void {
+        if (!item) {
+            this.clearCaches();
+        }
+        this._onDidChangeTreeData.fire(item);
+    }
+
+    //
+    // Tree View Management
+    //
+
+    /**
+     * Sets up the tree view and configures state tracking.
+     * Registers expand/collapse handlers and state persistence.
+     */
+    public setTreeView(treeView: vscode.TreeView<CatalogTreeItem>): void {
+        this.treeView = treeView;
+        this.setupEventHandlers();
+        this.context.subscriptions.push(this.treeView);
+    }
+
+    /**
+     * Sets up event handlers for tree view interactions.
+     * Implements debounced state updates for performance.
+     */
+    private setupEventHandlers(): void {
+        if (!this.treeView) return;
+
+        this.treeView.onDidExpandElement((e) => {
+            this.expandedNodes.set(e.element.jsonPath, true);
+            this.queueStateUpdate();
+        });
+
+        this.treeView.onDidCollapseElement((e) => {
+            this.expandedNodes.delete(e.element.jsonPath);
+            this.queueStateUpdate();
+        });
+    }
+
+    //
+    // State Management
+    //
+
+    /**
+     * Queues a state update with debouncing.
+     * Prevents rapid consecutive saves for better performance.
+     */
+    private queueStateUpdate(): void {
+        if (this.batchStateUpdateTimer) {
+            clearTimeout(this.batchStateUpdateTimer);
+        }
+
+        this.batchStateUpdateTimer = setTimeout(async () => {
+            try {
+                await this.uiStateService.updateTreeState({
+                    expandedNodes: Array.from(this.expandedNodes.keys())
+                });
+            } catch (error) {
+                this.logger.error('Failed to save expanded state', error);
+            }
+            this.batchStateUpdateTimer = null;
+        }, 250);
+    }
+
+    /**
+     * Clears all internal caches.
+     * Called during full refresh or catalog content changes.
+     */
+    private clearCaches(): void {
+        this.memoizedPaths.clear();
+        this.memoizedSchemaMetadata.clear();
+    }
+
+    //
+    // Tree Item Creation & Modification
+    //
+
+    /**
+     * Creates tree items from a JSON value.
+     * Handles validation state and special node types.
+     */
     private createTreeItems(
         value: unknown,
         parentPath: string,
@@ -99,15 +186,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             const path = this.buildJsonPath(parentPath, key);
             const schemaMetadata = this.getSchemaMetadata(path);
 
-            // Determine if this is an 'id' under 'dependencies'
             const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
-            let catalogId: string | undefined = undefined;
+            const catalogId = isIdNode && parentItem?.catalogId ? parentItem.catalogId : undefined;
 
-            if (isIdNode && parentItem?.catalogId) {
-                catalogId = parentItem.catalogId;
-            }
-
-            // Set initial validation status based on field type
+            // Set initial validation status
             const initialStatus = (key === 'catalog_id' || isIdNode) ?
                 ValidationStatus.Pending :
                 ValidationStatus.Unknown;
@@ -125,7 +207,6 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 initialStatus
             );
 
-            // Queue validation if needed
             if (initialStatus === ValidationStatus.Pending) {
                 void this.queueValidation(item);
             }
@@ -137,82 +218,57 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-     * Queues an item for background validation
+     * Queues an item for background validation.
      */
     private async queueValidation(item: CatalogTreeItem): Promise<void> {
-        // Don't await - let validation happen in background
         void item.queueForValidation();
     }
 
+    //
+    // Path & Schema Management
+    //
+
     /**
-     * Builds a JSONPath expression
+     * Builds a JSONPath expression with caching.
      */
     private buildJsonPath(parentPath: string, key: string): string {
+        const cacheKey = `${parentPath}:${key}`;
+        const cached = this.memoizedPaths.get(cacheKey);
+        if (cached) return cached;
+
+        let result: string;
         if (/^\[\d+\]$/.test(key)) {
-            // Key is already an array index
-            return `${parentPath}${key}`;
+            result = `${parentPath}${key}`;
+        } else if (/^\d+$/.test(key)) {
+            result = `${parentPath}[${key}]`;
+        } else if (parentPath === '$') {
+            result = `$.${key}`;
+        } else {
+            result = `${parentPath}.${key}`;
         }
-        if (/^\d+$/.test(key)) {
-            // Numeric key indicates array index
-            return `${parentPath}[${key}]`;
-        }
-        if (parentPath === '$') {
-            return `$.${key}`;
-        }
-        return `${parentPath}.${key}`;
+
+        this.memoizedPaths.set(cacheKey, result);
+        return result;
     }
 
     /**
-   * Gets schema metadata for a JSON path
-   */
+     * Gets cached schema metadata for a path.
+     */
     private getSchemaMetadata(path: string): SchemaMetadata | undefined {
-        const schema = this.schemaService?.getSchemaForPath(path);
-        return schema;
+        const cached = this.memoizedSchemaMetadata.get(path);
+        if (cached !== undefined) return cached;
+
+        const metadata = this.schemaService?.getSchemaForPath(path);
+        this.memoizedSchemaMetadata.set(path, metadata);
+        return metadata;
     }
 
+    //
+    // Tree Item Utilities
+    //
 
     /**
-     * Sorts tree items for consistent display
-     */
-    private sortTreeItems(items: CatalogTreeItem[]): CatalogTreeItem[] {
-        return items.sort((a, b) => {
-            // First priority: Required fields (if schema is available)
-            const aRequired = a.schemaMetadata?.required ?? false;
-            const bRequired = b.schemaMetadata?.required ?? false;
-            if (aRequired !== bRequired) {
-                return bRequired ? 1 : -1;
-            }
-
-            // Second priority: Type order
-            const aOrder = this.getTypeOrder(a);
-            const bOrder = this.getTypeOrder(b);
-            if (aOrder !== bOrder) {
-                return aOrder - bOrder;
-            }
-
-            // Final priority: Alphabetical
-            return a.label.localeCompare(b.label);
-        });
-    }
-
-    /**
-     * Gets the sort order for a tree item type
-     */
-    private getTypeOrder(item: CatalogTreeItem): number {
-        switch (item.contextValue) {
-            case 'editable':
-                return 0; // Simple values first
-            case 'container':
-                return 1; // Objects second
-            case 'array':
-                return 2; // Arrays last
-            default:
-                return 3;
-        }
-    }
-
-    /**
-     * Determines the collapsible state for a value
+     * Determines the collapsible state for a value.
      */
     private getCollapsibleState(value: unknown, isExpanded: boolean): vscode.TreeItemCollapsibleState {
         if (typeof value !== 'object' || value === null) {
@@ -224,35 +280,55 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-     * Determines the context value for menu contributions
+     * Gets the context value for menu contributions.
      */
     private getContextValue(value: unknown): string {
-        if (Array.isArray(value)) {
-            return 'array';
-        }
-        if (typeof value === 'object' && value !== null) {
-            return 'container';
-        }
+        if (Array.isArray(value)) return 'array';
+        if (typeof value === 'object' && value !== null) return 'container';
         return 'editable';
     }
 
     /**
-     * Loads the expanded state from persistent storage
+     * Sorts tree items for consistent display.
      */
-    private loadExpandedState(): string[] {
-        return this.context.globalState.get<string[]>(
-            CatalogTreeProvider.EXPANDED_NODES_KEY,
-            []
-        );
+    private sortTreeItems(items: CatalogTreeItem[]): CatalogTreeItem[] {
+        return items.sort((a, b) => {
+            const aRequired = a.schemaMetadata?.required ?? false;
+            const bRequired = b.schemaMetadata?.required ?? false;
+            if (aRequired !== bRequired) {
+                return bRequired ? 1 : -1;
+            }
+
+            const aOrder = this.getTypeOrder(a);
+            const bOrder = this.getTypeOrder(b);
+            if (aOrder !== bOrder) {
+                return aOrder - bOrder;
+            }
+
+            return a.label.localeCompare(b.label);
+        });
     }
 
     /**
-     * Saves the current expanded state to persistent storage
+     * Gets sort order priority for tree item types.
      */
-    private saveExpandedState(): void {
-        this.context.globalState.update(
-            CatalogTreeProvider.EXPANDED_NODES_KEY,
-            Array.from(this.expandedNodes)
-        );
+    private getTypeOrder(item: CatalogTreeItem): number {
+        switch (item.contextValue) {
+            case 'editable': return 0;
+            case 'container': return 1;
+            case 'array': return 2;
+            default: return 3;
+        }
+    }
+
+    /**
+     * Disposes of resources and cleans up event handlers.
+     */
+    public dispose(): void {
+        if (this.batchStateUpdateTimer) {
+            clearTimeout(this.batchStateUpdateTimer);
+        }
+        this.clearCaches();
+        this._onDidChangeTreeData.dispose();
     }
 }
