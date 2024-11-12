@@ -13,8 +13,6 @@
         "esbenp.prettier-vscode",
         // Path Intellisense for auto-completing file paths (widely trusted)
         "christian-kohler.path-intellisense",
-        // Bracket Pair Colorizer for better readability of matching brackets (widely trusted)
-        "coenraads.bracket-pair-colorizer-2",
         // Visual Studio IntelliCode (Microsoft)
         "VisualStudioExptTeam.vscodeintellicode",
     ]

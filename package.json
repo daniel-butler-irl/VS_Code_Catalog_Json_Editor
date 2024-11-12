@@ -213,7 +213,7 @@
         "vscode:prepublish": "node esbuild.js --production",
         "build": "node esbuild.js",
         "watch": "node esbuild.js --watch",
-        "test": "node ./out/tests/runTest.js",
+        "test": "CI=true node ./out/tests/runTest.js",
         "pretest": "tsc -p ./ && node esbuild.js --test",
         "compile-tests": "tsc -p ./",
         "watch-tests": "tsc -p ./ -w",

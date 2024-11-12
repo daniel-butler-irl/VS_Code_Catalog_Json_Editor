@@ -1,11 +1,12 @@
+// src/tests/suite/index.ts
 import path from 'path';
-import Mocha from 'mocha';  // Changed to default import
+import Mocha from 'mocha';
 import { glob } from 'glob';
+import fs from 'fs';
 
 export async function run(): Promise<void> {
-    // Create the mocha test
     const mocha = new Mocha({
-        ui: 'tdd',  // Using TDD interface (suite/test)
+        ui: 'tdd',  // Use TDD syntax
         color: true,
         reporter: process.env.CI ? 'mocha-junit-reporter' : 'spec',
         reporterOptions: {
@@ -16,26 +17,28 @@ export async function run(): Promise<void> {
     const testsRoot = path.resolve(__dirname);
 
     try {
-        // Find all test files
-        const files = await glob('**/*.test.js', {
-            cwd: testsRoot
-        });
-
-        // Add files to the test suite
-        files.forEach(f => {
-            mocha.addFile(path.resolve(testsRoot, f));
-        });
+        const files = await glob('**/*.test.js', { cwd: testsRoot });
+        files.forEach(f => mocha.addFile(path.resolve(testsRoot, f)));
 
         return new Promise<void>((resolve, reject) => {
-            mocha.run((failures: number) => {  // Added type for failures
+            mocha.run((failures: number) => {
                 if (failures > 0) {
                     reject(new Error(`${failures} tests failed.`));
                 } else {
+                    console.log("All tests passed!");
                     resolve();
                 }
             });
         });
     } catch (err) {
         throw new Error(`Error loading test files: ${err}`);
+    } finally {
+        // Check if report file was created
+        const reportFile = path.resolve(__dirname, '../../../test-results/test-report.xml');
+        if (fs.existsSync(reportFile)) {
+            console.log(`Test report generated at ${reportFile}`);
+        } else {
+            console.error("Failed to generate test report.");
+        }
     }
 }
