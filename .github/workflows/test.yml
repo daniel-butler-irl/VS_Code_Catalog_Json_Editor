@@ -55,4 +55,11 @@ jobs:
       with:
         name: Test Results
         path: test-results/*.xml
-        reporter: junit
+        reporter: java-junit
+        path-replace-backslashes: false
+        list-suites: all
+        list-tests: all
+        max-annotations: 10
+        fail-on-error: true
+        fail-on-empty: true
+        only-summary: false
