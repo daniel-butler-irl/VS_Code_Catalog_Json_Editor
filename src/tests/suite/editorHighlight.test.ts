@@ -1,3 +1,4 @@
+// src/services/EditorHighlightService.ts
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { EditorHighlightService } from '../../services/EditorHighlightService';
@@ -110,3 +111,4 @@ suite('EditorHighlight Test Suite', () => {
         }
     });
 });
+
