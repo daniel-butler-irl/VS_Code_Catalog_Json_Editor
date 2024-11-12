@@ -1,0 +1,19 @@
+{
+    // This file contains a list of extensions that are recommended for this workspace.
+    "recommendations": [
+        // Test Explorer UI (widely trusted)
+        "hbenl.vscode-test-explorer",
+        // Mocha Test Adapter (widely trusted)
+        "hbenl.vscode-mocha-test-adapter",
+        // TypeScript and JavaScript language support (Microsoft)
+        "ms-vscode.vscode-typescript-next",
+        // ESLint for linting JavaScript and TypeScript (maintained by a Microsoft employee)
+        "dbaeumer.vscode-eslint",
+        // Prettier for code formatting (widely trusted)
+        "esbenp.prettier-vscode",
+        // Path Intellisense for auto-completing file paths (widely trusted)
+        "christian-kohler.path-intellisense",
+        // Visual Studio IntelliCode (Microsoft)
+        "VisualStudioExptTeam.vscodeintellicode",
+    ]
+}

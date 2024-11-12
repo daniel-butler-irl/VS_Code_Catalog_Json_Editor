@@ -48,7 +48,7 @@
         "title": "Add Element",
         "icon": "$(add)"
       },
-        {
+      {
         "command": "ibmCatalog.selectElement",
         "title": "Select Element"
       },
@@ -197,45 +197,53 @@
       }
     ],
     "keybindings": [
-    {
+      {
         "command": "ibmCatalog.triggerEdit",
         "key": "space",
         "when": "focusedView == ibmCatalogTree && !inputFocus"
-    },
-    {
+      },
+      {
         "command": "ibmCatalog.triggerEdit",
         "key": "enter",
         "when": "focusedView == ibmCatalogTree && !inputFocus"
-    }
-  ]
+      }
+    ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:jsonc-parser --format=cjs --platform=node",
-    "watch": "npm run build -- --watch",
-    "clean": "rimraf dist",
-    "compile": "tsc -p ./",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run build",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
-  },
+        "vscode:prepublish": "node esbuild.js --production",
+        "build": "node esbuild.js",
+        "watch": "node esbuild.js --watch",
+        "test": "node ./out/tests/runTest.js",
+        "pretest": "tsc -p ./ && node esbuild.js --test",
+        "compile-tests": "tsc -p ./",
+        "watch-tests": "tsc -p ./ -w",
+        "clean": "rimraf dist out test-workspace .vscode-test"
+    },
   "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
     "@types/glob": "^8.1.0",
     "@types/lodash": "^4.17.12",
-    "@types/mocha": "^10.0.6",
+    "@types/mocha": "^10.0.9",
     "@types/node": "^18.19.0",
+    "@types/sinon": "^17.0.3",
+    "@types/source-map-support": "^0.5.10",
     "@types/vscode": "^1.87.0",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
     "esbuild": "^0.19.12",
     "eslint": "^8.54.0",
+    "fs-extra": "^11.2.0",
     "glob": "^10.3.10",
     "lodash": "^4.17.21",
-    "mocha": "^10.2.0",
+    "mocha": "^10.8.2",
+    "mocha-junit-reporter": "^2.2.1",
     "rimraf": "^5.0.10",
     "semver": "^7.6.3",
+    "sinon": "^19.0.2",
+    "source-map-support": "^0.5.21",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.2"
   },
   "dependencies": {

@@ -60,8 +60,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         logger.debug('Initializing CatalogService');
         const catalogService = new CatalogService(context);
+        const initialized = await catalogService.initialize();
+
+        if (!initialized) {
+            throw new Error('Failed to initialize CatalogService');
+        }
+
+        // Create tree provider even if no workspace (will show welcome view)
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
-        const fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
+
+        // Only create file watcher if we have a workspace
+        let fileWatcher: CatalogFileSystemWatcher | undefined;
+        if (catalogService.hasWorkspace()) {
+            fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
+            context.subscriptions.push(fileWatcher);
+        }
         const highlightService = new EditorHighlightService();
 
         // Create status bar item
@@ -235,9 +248,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }),
             // Register the custom tree item click command
             vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
-            fileWatcher,
             highlightService,
-            treeView
+            treeView,
+            ...(fileWatcher ? [fileWatcher] : [])
         );
 
 
@@ -334,6 +347,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             updateCatalogFileContext();
             treeProvider.refresh();
         }, null, context.subscriptions);
+
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', catalogService.hasWorkspace());
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
 
         logger.info('IBM Catalog Extension activated successfully');
     } catch (error) {

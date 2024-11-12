@@ -1,0 +1,49 @@
+// .vscode/tasks.json
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Task to build the project
+            "type": "npm",
+            "script": "build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$tsc",
+            "label": "npm: build"
+        },
+        {
+            // Task to build the tests
+            "type": "npm",
+            "script": "build-test",
+            "group": "test",
+            "problemMatcher": "$tsc",
+            "label": "npm: build-test"
+        },
+        {
+            // Task to compile tests
+            "type": "npm",
+            "script": "compile-tests",
+            "group": "build",
+            "problemMatcher": [],
+            "label": "npm: compile-tests"
+        },
+        {
+            // Task to run tests
+            "type": "npm",
+            "script": "test",
+            "group": "test",
+            "problemMatcher": [],
+            "label": "npm: test"
+        },
+        {
+            // Task to lint the code
+            "type": "npm",
+            "script": "lint",
+            "group": "build",
+            "problemMatcher": [],
+            "label": "npm: lint"
+        }
+    ]
+}

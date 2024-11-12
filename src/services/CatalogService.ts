@@ -10,7 +10,7 @@ import { FileSystemService } from './core/FileSystemService';
 import { InputMappingService } from './InputMappingService';
 import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
-import type { ICatalogFileInfo, MappingOption } from '../types/catalog';
+import { CatalogServiceMode, type CatalogServiceState, type ICatalogFileInfo, type MappingOption } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
 import { CachePrefetchService } from './core/CachePrefetchService';
@@ -26,10 +26,23 @@ export class CatalogService {
     public readonly onDidChangeContent = this._onDidChangeContent.event;
     private logger = LoggingService.getInstance();
     private readonly fileSystemService: FileSystemService;
+    private serviceState: CatalogServiceState = {
+        initialized: false,
+        hasWorkspace: false,
+        mode: CatalogServiceMode.NoWorkspace
+    };
+    private initializing: boolean = false; // Add initialization lock
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.logger.debug('Constructing CatalogService');
         this.fileSystemService = FileSystemService.getInstance(context);
+
+        // Only set up workspace change handler after initial initialization
+        void this.initialize().then(() => {
+            vscode.workspace.onDidChangeWorkspaceFolders(() => {
+                void this.handleWorkspaceChange();
+            });
+        });
 
         this.fileSystemService.onDidChangeContent(() => {
             this._onDidChangeContent.fire();
@@ -37,12 +50,32 @@ export class CatalogService {
     }
 
     /**
+    * Handles changes to workspace folders
+    */
+    private async handleWorkspaceChange(): Promise<void> {
+        const hasWorkspace = Boolean(vscode.workspace.workspaceFolders?.length);
+        if (hasWorkspace === this.serviceState.hasWorkspace) {
+            return; // No change in workspace state
+        }
+
+        this.serviceState.hasWorkspace = hasWorkspace;
+        this.logger.debug('Workspace changed', { hasWorkspace });
+
+        if (!hasWorkspace) {
+            // Clear catalog state if we lose workspace
+            this.serviceState.catalogFile = undefined;
+            this.serviceState.mode = CatalogServiceMode.NoWorkspace;
+            this._onDidChangeContent.fire();
+        }
+        // Don't automatically reinitialize - let the user trigger that if needed
+    }
+
+    /**
      * Retrieves the file system path of the current catalog file.
      * @returns The file path as a string, or undefined if not initialized.
      */
     public getCatalogFilePath(): string | undefined {
-        const currentFile = this.fileSystemService.getCurrentCatalogFile();
-        return currentFile?.uri.fsPath;
+        return this.serviceState.catalogFile?.uri.fsPath;
     }
 
     /**
@@ -71,43 +104,96 @@ export class CatalogService {
     }
 
     /**
-     * Checks if the catalog service has been initialized.
-     * @returns True if initialized, false otherwise.
-     */
-    public isInitialized(): boolean {
-        return this.fileSystemService.isInitialized();
-    }
-
-    /**
-     * Initializes the catalog service by loading the catalog file.
-     * @returns A promise that resolves to true if initialized successfully.
-     */
+      * Initializes the catalog service by loading the catalog file if available
+      * @returns A promise that resolves to true if initialization is successful
+      */
     public async initialize(): Promise<boolean> {
+        // Prevent concurrent initialization
+        if (this.initializing || this.serviceState.initialized) {
+            return true;
+        }
+
+        this.initializing = true;
         this.logger.debug('Initializing CatalogService');
+
         try {
+            // Check workspace state
+            this.serviceState.hasWorkspace = Boolean(vscode.workspace.workspaceFolders?.length);
+
+            if (!this.serviceState.hasWorkspace) {
+                this.logger.debug('No workspace found - operating in limited mode');
+                this.serviceState.mode = CatalogServiceMode.NoWorkspace;
+                this.serviceState.initialized = true;
+                return true;
+            }
+
             const initialized = await this.fileSystemService.initialize();
             await this.queueBackgroundLookups();
             if (initialized) {
-                this.logger.debug('CatalogService initialized successfully');
+                this.serviceState.catalogFile = this.fileSystemService.getCurrentCatalogFile();
+                this.serviceState.mode = CatalogServiceMode.Full;
+                await this.queueBackgroundLookups();
+                this.logger.debug('CatalogService initialized successfully with workspace');
             } else {
-                this.logger.debug('CatalogService initialization failed - no catalog file found');
+                this.serviceState.mode = CatalogServiceMode.WorkspaceOnly;
+                this.logger.debug('CatalogService initialized without catalog file');
             }
-            return initialized;
+
+            this.serviceState.initialized = true;
+            return true;
+
         } catch (error) {
+            this.serviceState.lastError = error instanceof Error ? error : new Error(String(error));
             this.logger.error('Failed to initialize CatalogService', error);
             return false;
+        } finally {
+            this.initializing = false;
         }
     }
 
     /**
-     * Ensures that the catalog service is initialized.
-     * @throws An error if initialization fails.
+     * Returns whether the service is initialized
+     */
+    public isInitialized(): boolean {
+        return this.serviceState.initialized;
+    }
+
+    /**
+     * Returns whether a workspace is available
+     */
+    public hasWorkspace(): boolean {
+        return this.serviceState.hasWorkspace;
+    }
+
+    /**
+ * Checks if full catalog functionality is available
+ */
+    public hasFullFunctionality(): boolean {
+        return this.serviceState.mode === CatalogServiceMode.Full;
+    }
+
+    /**
+     * Gets the current operating mode of the service
+     */
+    public getMode(): CatalogServiceMode {
+        return this.serviceState.mode;
+    }
+
+    /**
+     * Returns the current service state
+     */
+    public getState(): Readonly<CatalogServiceState> {
+        return { ...this.serviceState };
+    }
+
+    /**
+     * Ensures the service is initialized before proceeding
      */
     private async ensureInitialized(): Promise<void> {
-        if (!this.fileSystemService.isInitialized()) {
+        if (!this.serviceState.initialized && !this.initializing) {
             const success = await this.initialize();
             if (!success) {
-                throw new Error('Catalog file not initialized');
+                throw new Error(this.serviceState.lastError?.message || 'Failed to initialize CatalogService');
             }
         }
     }
@@ -1148,7 +1234,7 @@ export class CatalogService {
             this.logger.debug('No API key available for prefetch');
         }
     }
-    
+
     /**
      * Retrieves the catalog data from the file system.
      * @returns The catalog data as an object.

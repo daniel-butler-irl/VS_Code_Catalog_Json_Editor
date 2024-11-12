@@ -1,0 +1,14 @@
+{
+    "ui": "tdd",
+    "require": [
+        "ts-node/register",
+        "source-map-support/register"
+    ],
+    "reporter": "mocha-junit-reporter",
+    "reporterOptions": {
+        "mochaFile": "./test-results/results.xml",
+        "outputs": true
+    },
+    "watch-files": ["out/tests/**/*.test.js"],
+    "recursive": true
+}

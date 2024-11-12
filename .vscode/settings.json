@@ -1,0 +1,46 @@
+// Place your settings in this file to overwrite default and user settings.
+{
+    "files.exclude": {
+        "out": false, // set this to true to hide the "out" folder with the compiled JS files
+        "dist": false // set this to true to hide the "dist" folder with the compiled JS files
+    },
+    "search.exclude": {
+        "out": true, // set this to false to include "out" folder in search results
+        "dist": true // set this to false to include "dist" folder in search results
+    },
+    // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
+    "typescript.tsc.autoDetect": "off",
+    "IBM Cloud Deployable Architecture Builder.disable GHE URI check": false,
+    "mochaExplorer.files": "out/tests/**/*.test.js",
+    "mochaExplorer.require": [
+        "ts-node/register"
+    ],
+    "mochaExplorer.ui": "tdd",
+    "mochaExplorer.timeout": 10000,
+    "mochaExplorer.debuggerConfig": "Extension Tests",
+    "mochaExplorer.monkeyPatch": true,
+    "mochaExplorer.cwd": "${workspaceFolder}",
+    "mochaExplorer.exit": true,
+    "mochaExplorer.launcherScript": "out/tests/runTest.js",
+    "mochaExplorer.env": {
+        "VSCODE_VERSION": "stable",
+        "NODE_ENV": "test"
+    },
+    "mochaExplorer.runTestsOnChange": false,
+    "mochaExplorer.nodeArgv": [
+        "--require",
+        "${workspaceFolder}/test-setup.js"
+    ],
+    "typescript.preferences.importModuleSpecifier": "relative",
+    "editor.formatOnSave": true, // Automatically format files on save
+    "editor.tabSize": 2, // Set tab size to 2 spaces
+    "editor.insertSpaces": true, // Use spaces instead of tabs
+    "files.eol": "\n", // Use LF for line endings
+    "files.autoSave": "onFocusChange", // Automatically save files when focus is lost
+    "eslint.validate": [
+        "javascript",
+        "typescript"
+    ],
+    "prettier.singleQuote": true, // Use single quotes
+    "prettier.trailingComma": "all" // Add trailing commas where possible
+}
