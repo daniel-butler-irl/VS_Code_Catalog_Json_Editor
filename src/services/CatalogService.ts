@@ -128,6 +128,7 @@ export class CatalogService {
             }
 
             const initialized = await this.fileSystemService.initialize();
+            await this.queueBackgroundLookups();
             if (initialized) {
                 this.serviceState.catalogFile = this.fileSystemService.getCurrentCatalogFile();
                 this.serviceState.mode = CatalogServiceMode.Full;
