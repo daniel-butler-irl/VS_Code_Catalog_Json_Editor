@@ -671,22 +671,69 @@ export class CatalogService {
     }
 
     /**
-     * Handles the addition of a new input mapping.
+     * Handles the addition of a new input mapping with a guided experience.
      * @param parentNode The parent node representing the input mapping array.
      */
     private async handleInputMappingAddition(parentNode: CatalogTreeItem): Promise<void> {
-        const mappingType = await this.promptForMappingType();
-        if (!mappingType) {
-            return; // User cancelled
+        try {
+            // 1. Get mapping type
+            const mappingType = await this.promptForMappingType();
+            if (!mappingType) {
+                return; // User cancelled
+            }
+
+            // Create a temporary node for the mapping value
+            const tempMappingNode = new CatalogTreeItem(
+                this.context,
+                mappingType,
+                '',
+                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${mappingType}`,
+                vscode.TreeItemCollapsibleState.None,
+                'editable',
+                undefined,
+                parentNode
+            );
+
+            // 2. Get mapping value using existing prompt
+            const mappingValue = await this.promptForInputMapping(tempMappingNode);
+            if (mappingValue === undefined) {
+                return; // User cancelled
+            }
+
+            // Create a temporary node for version_input
+            const tempVersionInputNode = new CatalogTreeItem(
+                this.context,
+                'version_input',
+                '',
+                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
+                vscode.TreeItemCollapsibleState.None,
+                'editable',
+                undefined,
+                parentNode
+            );
+
+            // 3. Get version_input using existing prompt
+            const versionInput = await this.promptForInputMapping(tempVersionInputNode);
+            if (versionInput === undefined) {
+                return; // User cancelled
+            }
+
+            // 4. Create and add the new mapping
+            const newMapping = {
+                [mappingType]: mappingValue,
+                "version_input": versionInput
+            };
+
+            const currentArray = (parentNode.value as any[]) || [];
+            await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newMapping]);
+
+            void vscode.window.showInformationMessage('Successfully added input mapping');
+
+        } catch (error) {
+            this.logger.error('Failed to add input mapping', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to add input mapping: ${message}`);
         }
-
-        const newMapping = {
-            [mappingType]: "",
-            "version_input": ""
-        };
-
-        const currentArray = (parentNode.value as any[]) || [];
-        await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newMapping]);
     }
 
     /**
