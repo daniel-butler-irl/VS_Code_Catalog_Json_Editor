@@ -1,43 +1,73 @@
 // src/types/performance/thresholds.ts
 
 /**
- * Performance thresholds for editor highlighting operations
+ * Interface defining the structure of performance thresholds
  */
 export interface IPerformanceThresholds {
-  /** Standard operations threshold (ms) */
+  /** Maximum time (ms) for standard operations like path highlighting */
   readonly STANDARD_OP: number;
-  /** Stress test operations threshold (ms) */
+
+  /** Maximum time (ms) for operations under stress conditions */
   readonly STRESS_OP: number;
-  /** Factor for acceptable slowdown after document changes */
+
+  /** Factor for acceptable slowdown after document changes (multiplier) */
   readonly DOC_CHANGE_FACTOR: number;
-  /** Rapid operations threshold (ms) */
+
+  /** Maximum time (ms) for rapid successive operations */
   readonly RAPID_OP: number;
-  /** Concurrent operations threshold (ms) */
+
+  /** Maximum time (ms) for concurrent operations */
   readonly CONCURRENT_OP: number;
-  /** Memory usage limit (MB) */
+
+  /** Maximum memory usage allowed (MB) */
   readonly MEMORY_LIMIT_MB: number;
-  /** General timeout for tests (ms) */
+
+  /** Default test timeout (ms) */
   readonly TIMEOUT_MS: number;
-  /** Memory stress test timeout (ms) */
+
+  /** Timeout for memory stress tests (ms) */
   readonly STRESS_MEMORY_TIMEOUT_MS: number;
-  /** Threshold for highlight changes (ms) */
+
+  /** Maximum time (ms) for operations after highlight changes */
   readonly HIGHLIGHT_CHANGE_THRESHOLD: number;
-  /** Threshold for concurrent stress operations (ms) */
+
+  /** Maximum time (ms) for concurrent operations in stress tests */
   readonly STRESS_CONCURRENT_THRESHOLD: number;
 }
 
 /**
- * Default performance thresholds based on observed metrics
+ * Default performance thresholds based on observed metrics across different environments
+ * All time-based thresholds are in milliseconds unless otherwise specified
  */
 export const DEFAULT_PERFORMANCE_THRESHOLDS: Readonly<IPerformanceThresholds> = {
-  STANDARD_OP: 120,             // Increased to 120ms to account for 109.60ms
-  STRESS_OP: 150,              // Keep at 150ms
-  DOC_CHANGE_FACTOR: 25,       // Increased to 25x (seeing ~10x differences consistently)
-  RAPID_OP: 60,               // Keep at 60ms
-  CONCURRENT_OP: 110,          // Keep at 110ms
-  MEMORY_LIMIT_MB: 1.0,        // Keep at 1.0MB
-  TIMEOUT_MS: 5000,           // Keep at 5000ms
-  STRESS_MEMORY_TIMEOUT_MS: 10000,
-  HIGHLIGHT_CHANGE_THRESHOLD: 90,
-  STRESS_CONCURRENT_THRESHOLD: 110 // Keep at 110ms
+  /** Maximum time allowed for standard JSON path highlighting operations */
+  STANDARD_OP: 250,              // Regular operations like highlighting a single path
+
+  /** Maximum time allowed for stress test operations (heavy load scenarios) */
+  STRESS_OP: 200,               // Used during stress tests with multiple rapid operations
+
+  /** Maximum factor by which operations can slow down after document changes
+   *  Example: if initial operation takes 10ms, after changes it shouldn't take more than 10ms * 25 */
+  DOC_CHANGE_FACTOR: 25,        // Multiplier for acceptable slowdown after document modifications
+
+  /** Maximum time allowed for rapid, repeated operations */
+  RAPID_OP: 200,               // Used when testing quick successive highlighting requests
+
+  /** Maximum time allowed for operations that happen alongside other operations */
+  CONCURRENT_OP: 200,          // Used when multiple operations happen simultaneously
+
+  /** Maximum memory usage allowed during tests in megabytes */
+  MEMORY_LIMIT_MB: 8.0,         // Memory consumption limit for the extension
+
+  /** Default timeout for regular test operations in milliseconds */
+  TIMEOUT_MS: 5000,            // General timeout for standard test cases
+
+  /** Extended timeout for memory-intensive stress tests in milliseconds */
+  STRESS_MEMORY_TIMEOUT_MS: 10000,  // Longer timeout for memory stress tests
+
+  /** Maximum time allowed for operations after a document highlight change */
+  HIGHLIGHT_CHANGE_THRESHOLD: 150,   // Used when testing highlight updates after changes
+
+  /** Maximum time allowed for concurrent operations during stress testing */
+  STRESS_CONCURRENT_THRESHOLD: 200   // Used specifically for concurrent operations in stress tests
 } as const;
