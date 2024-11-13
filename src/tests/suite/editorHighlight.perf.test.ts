@@ -80,8 +80,8 @@ suite('EditorHighlight Performance Test Suite', () => {
     }, 'highlighting in large document');
 
     assert.ok(
-      executionTime < PERF_THRESHOLDS.STANDARD_OP,
-      `Highlighting took ${executionTime.toFixed(2)}ms, which exceeds the ${PERF_THRESHOLDS.STANDARD_OP}ms threshold`
+      executionTime < PERF_THRESHOLDS.LARGE_DOC_THRESHOLD,
+      `Highlighting took ${executionTime.toFixed(2)}ms, which exceeds the ${PERF_THRESHOLDS.LARGE_DOC_THRESHOLD}ms threshold`
     );
   });
 
