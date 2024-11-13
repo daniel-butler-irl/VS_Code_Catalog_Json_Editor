@@ -1,12 +1,24 @@
 # Changelog
 
-## [0.1.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.1.1) (2024-11-08)
+## [0.1.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.1.2) (2024-11-13)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.1.0...0.1.1)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.1.1...0.1.2)
+
+**Fixed bugs:**
+
+- Prompt appears after lookup [\#27](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/27)
+
+**Closed issues:**
+
+- Improve performance [\#52](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/52)
+- Hi-lighting Slow Can it be sped up? [\#40](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/40)
+- Error Highlight Known Incorrect Values [\#21](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/21)
 
 **Merged pull requests:**
 
-- Remove unused command and update version in package.json [\#49](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/49) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance performance testing and data handling improvements [\#53](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/53) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Add testing framework and enhance caching services [\#51](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/51) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Add Prefetch and enhance Caching [\#50](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/50) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
