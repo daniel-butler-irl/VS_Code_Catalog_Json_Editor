@@ -1,3 +1,5 @@
+# .github/workflows/ci.yml
+
 name: CI
 
 on:
@@ -11,6 +13,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false  # Allows all matrix jobs to run to completion
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node-version: [20.x]
@@ -18,30 +21,37 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@v4
-      - name: Use Node.js ${{ matrix.node-version }}
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Install dependencies
+
+      - name: Install Dependencies
         run: npm ci
-      - name: Run tests
+
+      - name: Run Tests
         shell: bash
         run: |
           if [ "$RUNNER_OS" == 'Linux' ]; then
+            sudo apt-get update
             sudo apt-get install -y xvfb
             xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test
           else
             npm test
           fi
-      - name: Upload test results
-        if: always()
+
+      - name: Upload Test Results
+        if: always()  # Ensures this step runs even if previous steps fail
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}-${{ github.run_id }}
           path: test-results
-      - name: Report test results
-        if: always()
+
+      - name: Report Test Results
+        if: always()  # Ensures this step runs even if previous steps fail
         uses: dorny/test-reporter@v1
         with:
           name: Test Results - ${{ matrix.os }} - ${{ matrix.node-version }}
@@ -53,4 +63,3 @@ jobs:
           max-annotations: 10
           fail-on-error: true
           fail-on-empty: true
-          only-summary: false
