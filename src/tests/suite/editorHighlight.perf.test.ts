@@ -5,45 +5,58 @@ import * as vscode from 'vscode';
 import { EditorHighlightService } from '../../services/EditorHighlightService';
 import { generateLargeMockData } from './fixtures/mockData';
 import { performance } from 'perf_hooks';
+import { DEFAULT_PERFORMANCE_THRESHOLDS, IPerformanceThresholds } from '../../types/performance/thresholds';
 
 suite('EditorHighlight Performance Test Suite', () => {
+  const PERF_THRESHOLDS: IPerformanceThresholds = DEFAULT_PERFORMANCE_THRESHOLDS;
+
   let highlightService: EditorHighlightService;
   let document: vscode.TextDocument;
   let editor: vscode.TextEditor;
   let largeDocument: vscode.TextDocument;
   let largeEditor: vscode.TextEditor;
-  const PERFORMANCE_THRESHOLD = 50; // ms
 
-  // Helper to measure execution time
-  async function measurePerformance(fn: () => Promise<void>): Promise<number> {
+  /**
+   * Measures the execution time of an asynchronous function and logs the result
+   * @param fn The async function to measure
+   * @param testName The name of the test for logging
+   * @returns The execution time in milliseconds
+   */
+  async function measurePerformance(fn: () => Promise<void>, testName: string): Promise<number> {
     const start = performance.now();
     await fn();
-    return performance.now() - start;
+    const duration = performance.now() - start;
+    console.log(`Test "${testName}" execution time: ${duration.toFixed(2)}ms`);
+    return duration;
   }
 
-  suiteSetup(async () => {
-    // Setup for standard tests
-    const workspaceEdit = new vscode.WorkspaceEdit();
-    const uri = vscode.Uri.parse('untitled:test.json');
-    const largeUri = vscode.Uri.parse('untitled:large_test.json');
+  suiteSetup(function () {
+    this.timeout(PERF_THRESHOLDS.TIMEOUT_MS);
 
-    workspaceEdit.createFile(uri, { ignoreIfExists: true });
-    workspaceEdit.createFile(largeUri, { ignoreIfExists: true });
-    await vscode.workspace.applyEdit(workspaceEdit);
+    return (async () => {
+      // Setup for standard tests
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      const uri = vscode.Uri.parse('untitled:test.json');
+      const largeUri = vscode.Uri.parse('untitled:large_test.json');
 
-    // Create regular test document
-    document = await vscode.workspace.openTextDocument(uri);
-    editor = await vscode.window.showTextDocument(document);
+      workspaceEdit.createFile(uri, { ignoreIfExists: true });
+      workspaceEdit.createFile(largeUri, { ignoreIfExists: true });
+      await vscode.workspace.applyEdit(workspaceEdit);
 
-    // Create large test document (1MB+ of JSON)
-    largeDocument = await vscode.workspace.openTextDocument(largeUri);
-    const edit = new vscode.WorkspaceEdit();
-    const largeMockData = generateLargeMockData(1000); // Generate 1000 products
-    edit.insert(largeUri, new vscode.Position(0, 0), JSON.stringify(largeMockData, null, 2));
-    await vscode.workspace.applyEdit(edit);
-    largeEditor = await vscode.window.showTextDocument(largeDocument);
+      // Create regular test document
+      document = await vscode.workspace.openTextDocument(uri);
+      editor = await vscode.window.showTextDocument(document);
 
-    highlightService = new EditorHighlightService();
+      // Create large test document (1MB+ of JSON)
+      largeDocument = await vscode.workspace.openTextDocument(largeUri);
+      const edit = new vscode.WorkspaceEdit();
+      const largeMockData = generateLargeMockData(1000); // Generate 1000 products
+      edit.insert(largeUri, new vscode.Position(0, 0), JSON.stringify(largeMockData, null, 2));
+      await vscode.workspace.applyEdit(edit);
+      largeEditor = await vscode.window.showTextDocument(largeDocument);
+
+      highlightService = new EditorHighlightService();
+    })();
   });
 
   suiteTeardown(async () => {
@@ -52,15 +65,14 @@ suite('EditorHighlight Performance Test Suite', () => {
   });
 
   test('performance - highlighting in large document', async () => {
-    // Test deep path highlight
     const deepPath = '$.products[999].flavors[0].dependencies[0].input_mapping[0].version_input';
     const executionTime = await measurePerformance(async () => {
       await highlightService.highlightJsonPath(deepPath, largeEditor);
-    });
+    }, 'highlighting in large document');
 
     assert.ok(
-      executionTime < PERFORMANCE_THRESHOLD,
-      `Highlighting took ${executionTime}ms, which exceeds the ${PERFORMANCE_THRESHOLD}ms threshold`
+      executionTime < PERF_THRESHOLDS.STANDARD_OP,
+      `Highlighting took ${executionTime.toFixed(2)}ms, which exceeds the ${PERF_THRESHOLDS.STANDARD_OP}ms threshold`
     );
   });
 
@@ -75,50 +87,164 @@ suite('EditorHighlight Performance Test Suite', () => {
 
     const times: number[] = [];
 
-    // Simulate rapid highlight requests
     for (const path of paths) {
       const executionTime = await measurePerformance(async () => {
         await highlightService.highlightJsonPath(path, largeEditor);
-      });
+      }, `rapid highlight request for path ${path}`);
       times.push(executionTime);
-      // Small delay to simulate rapid but not simultaneous requests
       await new Promise(resolve => setTimeout(resolve, 50));
     }
 
     const averageTime = times.reduce((a, b) => a + b) / times.length;
+    console.log(`Average execution time for rapid highlight requests: ${averageTime.toFixed(2)}ms`);
+
     assert.ok(
-      averageTime < PERFORMANCE_THRESHOLD,
-      `Average highlighting time ${averageTime}ms exceeds the ${PERFORMANCE_THRESHOLD}ms threshold`
+      averageTime < PERF_THRESHOLDS.RAPID_OP,
+      `Average highlighting time ${averageTime.toFixed(2)}ms exceeds the ${PERF_THRESHOLDS.RAPID_OP}ms threshold`
     );
   });
 
   test('performance - highlight after document changes', async () => {
     const path = '$.products[0].label';
 
-    // First highlight
     const initialTime = await measurePerformance(async () => {
       await highlightService.highlightJsonPath(path, largeEditor);
-    });
+    }, 'initial highlight');
 
-    // Make a document change
     const edit = new vscode.WorkspaceEdit();
     edit.insert(largeDocument.uri, new vscode.Position(0, 0), '\n');
     await vscode.workspace.applyEdit(edit);
 
-    // Highlight again
     const afterChangeTime = await measurePerformance(async () => {
       await highlightService.highlightJsonPath(path, largeEditor);
-    });
+    }, 'highlight after document change');
 
     assert.ok(
-      afterChangeTime < PERFORMANCE_THRESHOLD,
-      `Highlighting after change took ${afterChangeTime}ms, which exceeds the ${PERFORMANCE_THRESHOLD}ms threshold`
+      afterChangeTime < PERF_THRESHOLDS.HIGHLIGHT_CHANGE_THRESHOLD,
+      `Highlighting after change took ${afterChangeTime.toFixed(2)}ms, which exceeds the ${PERF_THRESHOLDS.HIGHLIGHT_CHANGE_THRESHOLD}ms threshold`
     );
 
-    // Compare times
     assert.ok(
-      afterChangeTime < initialTime * 2,
-      `Highlighting after change (${afterChangeTime}ms) was significantly slower than initial highlight (${initialTime}ms)`
+      afterChangeTime < initialTime * PERF_THRESHOLDS.DOC_CHANGE_FACTOR,
+      `Highlighting after change (${afterChangeTime.toFixed(2)}ms) was too much slower than initial highlight (${initialTime.toFixed(2)}ms)`
+    );
+  });
+
+  test('performance - highlight multiple JSON paths in succession', async () => {
+    const paths = [
+      '$.products[10].flavors[0].name',
+      '$.products[200].flavors[0].dependencies[0].input_mapping[0].version_input',
+      '$.products[500].flavors[1].name',
+      '$.products[750].flavors[0].dependencies[0].catalog_id'
+    ];
+
+    for (const path of paths) {
+      const executionTime = await measurePerformance(async () => {
+        await highlightService.highlightJsonPath(path, largeEditor);
+      }, `highlight multiple paths - ${path}`);
+
+      assert.ok(
+        executionTime < PERF_THRESHOLDS.STANDARD_OP,
+        `Highlighting path ${path} took ${executionTime.toFixed(2)}ms, exceeding threshold`
+      );
+    }
+  });
+
+  test('performance - debounce highlight re-triggering', async () => {
+    const path = '$.products[999].flavors[0].dependencies[0].input_mapping[0].version_input';
+
+    const times: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const executionTime = await measurePerformance(async () => {
+        await highlightService.highlightJsonPath(path, largeEditor);
+      }, `debounce re-trigger ${i}`);
+      times.push(executionTime);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    const averageTime = times.reduce((a, b) => a + b) / times.length;
+    assert.ok(
+      averageTime < PERF_THRESHOLDS.RAPID_OP,
+      `Average debounce highlight time ${averageTime.toFixed(2)}ms exceeds threshold`
+    );
+  });
+
+  test('stress - rapid highlights in very large document', async () => {
+    const times: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const executionTime = await measurePerformance(async () => {
+        await highlightService.highlightJsonPath(
+          `$.products[${i}].flavors[0].dependencies[0].catalog_id`,
+          largeEditor
+        );
+      }, `stress test highlight ${i}`);
+      times.push(executionTime);
+    }
+
+    const maxTime = Math.max(...times);
+    assert.ok(
+      maxTime < PERF_THRESHOLDS.STRESS_OP,
+      `Maximum highlight time ${maxTime.toFixed(2)}ms exceeds stress threshold of ${PERF_THRESHOLDS.STRESS_OP}ms`
+    );
+  });
+
+  test('stress - concurrent document modifications and highlights', async () => {
+    const times: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const executionTime = await measurePerformance(async () => {
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(largeDocument.uri, new vscode.Position(0, 0), '\n');
+        await vscode.workspace.applyEdit(edit);
+        await highlightService.highlightJsonPath('$.products[0].label', largeEditor);
+      }, `concurrent modification stress test ${i}`);
+      times.push(executionTime);
+    }
+
+    const averageTime = times.reduce((a, b) => a + b) / times.length;
+    assert.ok(
+      averageTime < PERF_THRESHOLDS.STRESS_CONCURRENT_THRESHOLD,
+      `Average time under stress ${averageTime.toFixed(2)}ms exceeds threshold`
+    );
+  });
+
+  test('stress - memory usage with large documents', async function () {
+    this.timeout(PERF_THRESHOLDS.STRESS_MEMORY_TIMEOUT_MS);
+
+    const initialMemory = process.memoryUsage().heapUsed;
+
+    // Perform multiple operations
+    for (let i = 0; i < 100; i++) {
+      await highlightService.highlightJsonPath(
+        `$.products[${i % 1000}].flavors[0].dependencies[0].catalog_id`,
+        largeEditor
+      );
+    }
+
+    const finalMemory = process.memoryUsage().heapUsed;
+    const memoryUsedMB = (finalMemory - initialMemory) / 1024 / 1024;
+
+    console.log(`Memory used during stress test: ${memoryUsedMB.toFixed(2)}MB`);
+
+    assert.ok(
+      memoryUsedMB < PERF_THRESHOLDS.MEMORY_LIMIT_MB,
+      `Memory usage ${memoryUsedMB.toFixed(2)}MB exceeds limit of ${PERF_THRESHOLDS.MEMORY_LIMIT_MB}MB`
+    );
+  });
+
+  test('stress - rapid switching between documents', async () => {
+    const times: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const executionTime = await measurePerformance(async () => {
+        await vscode.window.showTextDocument(i % 2 === 0 ? document : largeDocument);
+        await highlightService.highlightJsonPath('$.products[0].label');
+      }, `document switch stress test ${i}`);
+      times.push(executionTime);
+    }
+
+    const maxTime = Math.max(...times);
+    assert.ok(
+      maxTime < PERF_THRESHOLDS.STRESS_OP,
+      `Maximum switch and highlight time ${maxTime.toFixed(2)}ms exceeds threshold`
     );
   });
 });

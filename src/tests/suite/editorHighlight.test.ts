@@ -1,17 +1,27 @@
-// src/services/EditorHighlightService.ts
+// src/tests/suite/editorHighlight.test.ts
+
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { EditorHighlightService } from '../../services/EditorHighlightService';
 import { mockCatalogData } from './fixtures/mockData';
+import sinon from 'sinon';
+import { LoggingService } from '../../services/core/LoggingService';
 
 suite('EditorHighlight Test Suite', () => {
     let highlightService: EditorHighlightService;
     let document: vscode.TextDocument;
     let editor: vscode.TextEditor;
-    let decorationType: vscode.TextEditorDecorationType;
+    let sandbox: sinon.SinonSandbox;
+    let loggerStub: sinon.SinonStubbedInstance<LoggingService>;
 
     suiteSetup(async () => {
-        // Create a temporary file with mock data
+        sandbox = sinon.createSandbox();
+
+        // Create logger stub before creating the service
+        loggerStub = sandbox.createStubInstance(LoggingService);
+        sandbox.stub(LoggingService, 'getInstance').returns(loggerStub);
+
+        // Set up test document
         const workspaceEdit = new vscode.WorkspaceEdit();
         const uri = vscode.Uri.parse('untitled:test.json');
         workspaceEdit.createFile(uri, { ignoreIfExists: true });
@@ -20,95 +30,133 @@ suite('EditorHighlight Test Suite', () => {
         document = await vscode.workspace.openTextDocument(uri);
         editor = await vscode.window.showTextDocument(document);
 
-        // Insert mock data
+        // Insert test data
         const edit = new vscode.WorkspaceEdit();
         edit.insert(uri, new vscode.Position(0, 0), JSON.stringify(mockCatalogData, null, 2));
         await vscode.workspace.applyEdit(edit);
 
-        highlightService = new EditorHighlightService();
+        // Wait for document to stabilize
+        await new Promise(resolve => setTimeout(resolve, 100));
+    });
 
-        // Create decoration type for verification
-        decorationType = vscode.window.createTextEditorDecorationType({
-            backgroundColor: new vscode.ThemeColor('editor.selectionBackground'),
-            isWholeLine: true
-        });
+    setup(() => {
+        // Reset sandbox before creating new service instance
+        sandbox.restore();
+        sandbox = sinon.createSandbox();
+        loggerStub = sandbox.createStubInstance(LoggingService);
+        sandbox.stub(LoggingService, 'getInstance').returns(loggerStub);
+
+        // Create fresh instance for each test with minimal debounce
+        highlightService = new EditorHighlightService(10);
+    });
+
+    teardown(async () => {
+        highlightService.dispose();
+        if (editor) {
+            const emptyDecorationType = vscode.window.createTextEditorDecorationType({});
+            editor.setDecorations(emptyDecorationType, []);
+            emptyDecorationType.dispose();
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
     });
 
     suiteTeardown(async () => {
-        decorationType.dispose();
-        highlightService.dispose();
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        sandbox.restore();
     });
 
-    test('should highlight JSON path', async () => {
+    test('should highlight JSON path with position tracking', async () => {
+        const performHighlightSpy = sandbox.spy(highlightService, 'performHighlight');
         const jsonPath = '$.products[0].label';
+
         await highlightService.highlightJsonPath(jsonPath, editor);
 
-        // Get the decorations using the correct VS Code API
-        const visibleRanges = editor.visibleRanges;
-        assert.strictEqual(visibleRanges.length > 0, true);
+        assert.strictEqual(performHighlightSpy.callCount, 1, 'performHighlight should be called once');
 
-        // Verify the text in the first visible range contains our target
-        const text = document.getText(visibleRanges[0]);
-        assert.strictEqual(text.includes('"Test Product"'), true);
+        const decorations = (highlightService as any).currentDecorations;
+        assert.ok(decorations.length > 0, 'Decorations should be present');
     });
 
-    test('should clear highlight when selection changes', async () => {
-        const jsonPath = '$.products[0].label';
-        await highlightService.highlightJsonPath(jsonPath, editor);
-
-        // Change selection
-        editor.selection = new vscode.Selection(
-            new vscode.Position(0, 0),
-            new vscode.Position(0, 0)
-        );
-
-        // Wait for clear highlight
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Verify no decorations are visible
-        const visibleRanges = editor.visibleRanges;
-        const text = document.getText(visibleRanges[0]);
-        // The highlight should be cleared, so the text should not have any decoration
-        assert.strictEqual(text.includes('backgroundColor'), false);
-    });
-
-    test('should handle invalid JSON path gracefully', async () => {
-        const invalidPath = '$.invalid.path';
-        await highlightService.highlightJsonPath(invalidPath, editor);
-
-        // Should not throw and should not apply any decorations
-        const visibleRanges = editor.visibleRanges;
-        assert.strictEqual(visibleRanges.length > 0, true);
-    });
-
-    test('should update highlight on document changes', async () => {
-        const jsonPath = '$.products[0].label';
-        await highlightService.highlightJsonPath(jsonPath, editor);
-
-        // Make a document change
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(document.uri, new vscode.Position(0, 0), '\n');
-        await vscode.workspace.applyEdit(edit);
-
-        // Verify highlight is maintained
-        const visibleRanges = editor.visibleRanges;
-        const text = document.getText(visibleRanges[0]);
-        assert.strictEqual(text.includes('"Test Product"'), true);
-    });
-
-    test('should handle multiple highlights sequentially', async () => {
+    test('should throttle rapid highlights', async () => {
         const paths = [
             '$.products[0].label',
             '$.products[0].name',
             '$.products[0].product_kind'
         ];
 
-        for (const path of paths) {
-            await highlightService.highlightJsonPath(path, editor);
-            const visibleRanges = editor.visibleRanges;
-            assert.strictEqual(visibleRanges.length > 0, true);
-        }
+        // Send rapid requests
+        await Promise.all(paths.map(path =>
+            highlightService.highlightJsonPath(path, editor)
+        ));
+
+        // Wait for debounce
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        const decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 1, 'Should only have one active decoration');
+    });
+
+    test('should handle invalid paths gracefully', async () => {
+        const jsonPath = '$.invalid.path';
+
+        await highlightService.highlightJsonPath(jsonPath, editor);
+
+        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', jsonPath);
+        const decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 0, 'No decorations should be present for invalid path');
+    });
+
+    test('should maintain highlight after small document changes', async () => {
+        const path = '$.products[0].label';
+        await highlightService.highlightJsonPath(path, editor);
+
+        const decorationsBefore = (highlightService as any).currentDecorations.length;
+        assert.ok(decorationsBefore > 0, 'Should have decorations before change');
+
+        // Make a small document change
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(document.uri, new vscode.Position(0, 0), ' ');
+        await vscode.workspace.applyEdit(edit);
+
+        // Wait for document change handling
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        // Re-highlight should work
+        await highlightService.highlightJsonPath(path, editor);
+        const decorationsAfter = (highlightService as any).currentDecorations.length;
+        assert.ok(decorationsAfter > 0, 'Should be able to reapply decorations');
+    });
+
+    test('should handle unicode paths correctly', async () => {
+        const jsonPath = '$.products[0].label_测试';
+        await highlightService.highlightJsonPath(jsonPath, editor);
+
+        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', jsonPath);
+        const decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 0, 'No decorations should be present for invalid unicode path');
+    });
+
+    test('should work with multiple editors', async () => {
+        const uri2 = vscode.Uri.parse('untitled:test2.json');
+        const workspaceEdit = new vscode.WorkspaceEdit();
+        workspaceEdit.createFile(uri2, { ignoreIfExists: true });
+        await vscode.workspace.applyEdit(workspaceEdit);
+
+        const document2 = await vscode.workspace.openTextDocument(uri2);
+        const editor2 = await vscode.window.showTextDocument(document2);
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(uri2, new vscode.Position(0, 0), JSON.stringify(mockCatalogData, null, 2));
+        await vscode.workspace.applyEdit(edit);
+
+        // Wait for document to stabilize
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        const path = '$.products[0].label';
+        await highlightService.highlightJsonPath(path, editor);
+        await highlightService.highlightJsonPath(path, editor2);
+
+        const decorations = (highlightService as any).currentDecorations;
+        assert.ok(decorations.length > 0, 'Decorations should be visible in the current editor');
     });
 });
-

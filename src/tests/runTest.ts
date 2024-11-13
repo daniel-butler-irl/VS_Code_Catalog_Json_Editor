@@ -24,6 +24,8 @@ async function main() {
         console.error('Failed to run tests:', err);
         process.exit(1);
     }
+    // Ensure process exits with code 0 if tests pass
+    process.exit(0);
 }
 
 void main();
