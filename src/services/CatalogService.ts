@@ -26,6 +26,7 @@ export class CatalogService {
     public readonly onDidChangeContent = this._onDidChangeContent.event;
     private logger = LoggingService.getInstance();
     private readonly fileSystemService: FileSystemService;
+    private ibmCloudService: IBMCloudService | undefined;
     private serviceState: CatalogServiceState = {
         initialized: false,
         hasWorkspace: false,
@@ -198,6 +199,25 @@ export class CatalogService {
         }
     }
 
+
+    /**
+     * Gets the IBM Cloud service instance with an API key
+     * @returns The IBM Cloud service instance, or undefined if no API key is available
+     */
+    private async getIBMCloudService(): Promise<IBMCloudService | undefined> {
+        if (this.ibmCloudService) {
+            return this.ibmCloudService;
+        }
+    
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (!apiKey) {
+            return undefined;
+        }
+    
+        this.ibmCloudService = new IBMCloudService(apiKey);
+        return this.ibmCloudService;
+    }
+
     /**
      * Updates a value in the catalog JSON data at the specified JSON path.
      * @param jsonPath The JSON path where the value should be updated.
@@ -217,6 +237,13 @@ export class CatalogService {
         await this.ensureInitialized();
 
         try {
+
+            // Special handling for dependencies array
+            if (parentNode.jsonPath.endsWith('.dependencies')) {
+                await this.handleDependencyAddition(parentNode);
+                return;
+            }
+            
             // Handle input_mapping additions
             if (parentNode.jsonPath.endsWith('.input_mapping')) {
                 await this.handleInputMappingAddition(parentNode);
@@ -309,6 +336,271 @@ export class CatalogService {
             this.logger.error('Failed to reload catalog data', error);
             throw new Error(`Failed to update catalog view: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
+    }
+
+    private async handleDependencyAddition(parentNode: CatalogTreeItem): Promise<void> {
+        const ibmCloudService = await this.getIBMCloudService();
+        if (!ibmCloudService) {
+            const result = await vscode.window.showWarningMessage(
+                'IBM Cloud API key required to browse catalogs and offerings. Would you like to add one now?',
+                'Yes', 'No'
+            );
+            
+            if (result === 'Yes') {
+                await vscode.commands.executeCommand('ibmCatalog.login');
+                return this.handleDependencyAddition(parentNode);
+            }
+            return;
+        }
+    
+        try {
+            // 1. Select Catalog
+            const catalogId = await this.promptForCatalogId();
+            if (!catalogId) return;
+    
+            // 2. Select Offering
+            const offeringDetails = await this.promptForOfferingWithDetails(catalogId);
+            if (!offeringDetails) return;
+    
+            // 3. Get available versions for the offering
+            const versions = await this.getAvailableVersions(catalogId, offeringDetails.id);
+            let versionConstraint = `>=${versions[0] || '1.0.0'}`; // Set default value
+
+            const selectedVersion = await PromptService.showQuickPick<string>({
+                title: 'Select Version Constraint',
+                placeholder: 'Choose a version constraint',
+                items: [
+                    {
+                        label: `Latest (${versionConstraint})`,
+                        value: versionConstraint,
+                        description: 'Always use the latest compatible version'
+                    },
+                    {
+                        label: 'Custom',
+                        value: 'custom',
+                        description: 'Enter a custom version constraint'
+                    },
+                    ...versions.map(version => ({
+                        label: `Exact: ${version}`,
+                        value: version,
+                        description: 'Lock to this specific version'
+                    }))
+                ]
+            });
+
+            if (!selectedVersion) return;
+
+            if (selectedVersion === 'custom') {
+                const customVersion = await PromptService.showInputBox<string>({
+                    title: 'Enter Version Constraint',
+                    placeholder: 'e.g., >=1.0.0, ^2.0.0, ~1.2.3',
+                    initialValue: versionConstraint,
+                    validate: (value) => this.validateVersionConstraint(value)
+                });
+                if (!customVersion) return; // User cancelled
+                versionConstraint = customVersion;
+            } else {
+                versionConstraint = selectedVersion;
+            }
+    
+            // 4. Select Flavors with details
+            const flavors = await ibmCloudService.getAvailableFlavors(
+                catalogId, 
+                offeringDetails.id
+            );
+    
+            // Fetch details for each flavor using OfferingFlavor interface
+            const flavorDetails = await Promise.all(
+                flavors.map(async (flavorName) => {
+                    try {
+                        const details = await ibmCloudService.getFlavorDetails(
+                            catalogId,
+                            offeringDetails.id,
+                            flavorName
+                        );
+                        return details || {
+                            name: flavorName,
+                            label: flavorName,
+                            description: 'No description available'
+                        } as OfferingFlavor;
+                    } catch (error) {
+                        this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
+                        return {
+                            name: flavorName,
+                            label: flavorName,
+                            description: 'No description available'
+                        } as OfferingFlavor;
+                    }
+                })
+            );
+    
+            const selectedFlavors = await PromptService.showQuickPick<string>({
+                title: 'Select Flavors',
+                placeholder: 'Choose one or more flavors (Space to select, Enter to confirm)',
+                items: flavorDetails.map(flavor => ({
+                    label: `${flavor.label || flavor.name}`,
+                    description: `(${flavor.name})`,
+                    detail: flavor.description || flavor.label_i18n?.['en'] || 'No description available',
+                    value: flavor.name,
+                    picked: false,
+                    iconPath: new vscode.ThemeIcon('circle-outline')
+                })),
+                canPickMany: true,  // This will make the return type string[] even though each item has string value
+                matchOnDescription: true,
+                matchOnDetail: true,
+                buttons: [
+                    {
+                        iconPath: new vscode.ThemeIcon('info'),
+                        tooltip: 'Space to select/deselect, Enter to confirm selection'
+                    }
+                ]
+            });
+    
+            if (!selectedFlavors || selectedFlavors.length === 0) {
+                vscode.window.showWarningMessage('At least one flavor must be selected');
+                return;
+            }
+    
+            // 5. Prompt for optional flag
+            const isOptional = await PromptService.showBooleanPick({
+                title: 'Is this dependency optional?',
+                placeholder: 'Select whether this dependency is required',
+                trueLabel: 'Optional',
+                falseLabel: 'Required',
+                decorator: {
+                    validationMessage: 'Optional dependencies can be excluded from deployment'
+                }
+            });
+    
+            if (isOptional === undefined) return;
+    
+            // 6. Create the dependency object
+            const newDependency = {
+                name: offeringDetails.name,
+                id: offeringDetails.id,
+                version: versionConstraint,
+                flavors: selectedFlavors,
+                catalog_id: catalogId,
+                optional: isOptional,
+                input_mapping: []
+            };
+    
+            // Add to the dependencies array
+            const currentDependencies = (parentNode.value as any[]) || [];
+            await this.updateJsonValue(
+                parentNode.jsonPath, 
+                [...currentDependencies, newDependency]
+            );
+    
+            // Show success message
+            void vscode.window.showInformationMessage(
+                `Successfully added dependency: ${offeringDetails.name}`
+            );
+    
+        } catch (error) {
+            this.logger.error('Failed to add dependency', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to add dependency: ${message}`);
+            throw error;
+        }
+    }
+    
+    private async getAvailableVersions(catalogId: string, offeringId: string): Promise<string[]> {
+        const logger = this.logger;
+        const ibmCloudService = await this.getIBMCloudService();
+        if (!ibmCloudService) {
+            return [];
+        }
+    
+        try {
+            const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+            const offering = offerings?.find(o => o.id === offeringId);
+            
+            if (!offering?.kinds?.[0]?.versions) {
+                return [];
+            }
+    
+            const versions = offering.kinds[0].versions
+                .map(v => v.version)
+                .filter((v): v is string => !!v)
+                .sort((a, b) => -1 * this.compareSemVer(a, b)); // Sort descending
+    
+            logger.debug('Available versions', { offeringId, versions });
+            return versions;
+    
+        } catch (error) {
+            logger.error('Failed to fetch versions', error);
+            return [];
+        }
+    }
+    
+    private compareSemVer(a: string, b: string): number {
+        const cleanA = a.replace(/^[v=\^~<>]*/, '');
+        const cleanB = b.replace(/^[v=\^~<>]*/, '');
+        
+        const partsA = cleanA.split('.').map(Number);
+        const partsB = cleanB.split('.').map(Number);
+        
+        for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+            const numA = partsA[i] || 0;
+            const numB = partsB[i] || 0;
+            if (numA !== numB) {
+                return numA - numB;
+            }
+        }
+        return 0;
+    }
+
+    private validateVersionConstraint(value: string): string | null {
+        if (!value.trim()) {
+            return 'Version constraint cannot be empty';
+        }
+    
+        // Valid operators and their regex pattern
+        const operatorPattern = '(>=|<=|>|<|~|\\^|=|v)?';
+        
+        // Version number pattern that allows:
+        // - Optional 'v' prefix after operator
+        // - Multiple digits in each segment
+        // - Optional additional segments (like 1.2.3.4)
+        const versionPattern = 'v?\\d+(\\.\\d+)*';
+        
+        // Complete regex pattern
+        const fullPattern = new RegExp(`^${operatorPattern}${versionPattern}$`);
+    
+        if (!fullPattern.test(value)) {
+            return 'Invalid version format. Examples: >=1.0.0, v8.14.0, ^2.0.0, >=v8.14.0';
+        }
+    
+        return null;
+    }
+    
+
+    private async promptForOfferingWithDetails(catalogId: string): Promise<{ 
+        id: string; 
+        name: string; 
+    } | undefined> {
+        const apiKey = await AuthService.getApiKey(this.context);
+        if (!apiKey) return undefined;
+    
+        const ibmCloudService = new IBMCloudService(apiKey);
+        const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+    
+        const result = await PromptService.showQuickPick<{ id: string; name: string; }>({
+            title: 'Select Offering',
+            placeholder: 'Choose an offering for this dependency',
+            items: offerings.map(offering => ({
+                label: offering.name || offering.id,
+                description: offering.id,
+                detail: offering.shortDescription,
+                value: {
+                    id: offering.id,
+                    name: offering.name || offering.id
+                }
+            }))
+        });
+    
+        return result;
     }
 
     /**
