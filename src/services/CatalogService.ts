@@ -442,48 +442,35 @@ export class CatalogService {
             const offeringDetails = await this.promptForOfferingWithDetails(catalogId);
             if (!offeringDetails) return;
     
-            // 3. Get available versions for the offering
-            const versions = await this.getAvailableVersions(catalogId, offeringDetails.id);
-            let versionConstraint = `>=${versions[0] || '1.0.0'}`; // Set default value
+           // 3. Create a temporary dependency node and version node for version selection
+            const tempDependencyNode = new CatalogTreeItem(
+                this.context,
+                'dependency',
+                {
+                    catalog_id: catalogId,
+                    id: offeringDetails.id
+                },
+                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}]`,
+                vscode.TreeItemCollapsibleState.None,
+                'container'
+            );
 
-            const selectedVersion = await PromptService.showQuickPick<string>({
-                title: 'Select Version Constraint',
-                placeholder: 'Choose a version constraint',
-                items: [
-                    {
-                        label: `Latest (${versionConstraint})`,
-                        value: versionConstraint,
-                        description: 'Always use the latest compatible version'
-                    },
-                    {
-                        label: 'Custom',
-                        value: 'custom',
-                        description: 'Enter a custom version constraint'
-                    },
-                    ...versions.map(version => ({
-                        label: `Exact: ${version}`,
-                        value: version,
-                        description: 'Lock to this specific version'
-                    }))
-                ]
-            });
+            const tempVersionNode = new CatalogTreeItem(
+                this.context,
+                'version',
+                '',  // current value
+                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version`,
+                vscode.TreeItemCollapsibleState.None,
+                'editable',
+                undefined,
+                tempDependencyNode  // Set the parent node
+            );
 
-            if (!selectedVersion) return;
-
-            if (selectedVersion === 'custom') {
-                const customVersion = await PromptService.showInputBox<string>({
-                    title: 'Enter Version Constraint',
-                    placeholder: 'e.g., >=1.0.0, ^2.0.0, ~1.2.3',
-                    initialValue: versionConstraint,
-                    validate: (value) => this.validateVersionConstraint(value)
-                });
-                if (!customVersion) return; // User cancelled
-                versionConstraint = customVersion;
-            } else {
-                versionConstraint = selectedVersion;
-            }
-    
-            // 4. Select Flavors with details
+            // 4. Get version using the promptForVersion method
+            const versionConstraint = await this.promptForVersion(tempVersionNode);
+            if (!versionConstraint) return;
+        
+            // 5. Select Flavors with details
             const flavors = await ibmCloudService.getAvailableFlavors(
                 catalogId, 
                 offeringDetails.id
@@ -541,7 +528,7 @@ export class CatalogService {
                 return;
             }
     
-            // 5. Prompt for optional flag
+            // 6. Prompt for optional flag
             const isOptional = await PromptService.showBooleanPick({
                 title: 'Is this dependency optional?',
                 placeholder: 'Select whether this dependency is required',
@@ -554,7 +541,7 @@ export class CatalogService {
     
             if (isOptional === undefined) return;
     
-            // 6. Create the dependency object
+            // 7. Create the dependency object
             const newDependency = {
                 name: offeringDetails.name,
                 id: offeringDetails.id,
@@ -775,6 +762,14 @@ export class CatalogService {
             return this.promptForInputMapping(node, currentValue);
         }
 
+        if (node.label === 'install_type') {
+            return this.promptForInstallType(currentValue as string);
+        }
+
+        if (node.label === 'version' && node.getDependencyParent()) {
+            return this.promptForVersion(node, currentValue as string);
+        }
+
         const value = await PromptService.showInputBox<string>({
             title: `Enter value for ${node.label}`,
             initialValue: currentValue?.toString() ?? '',
@@ -815,6 +810,42 @@ export class CatalogService {
             currentValue,
             trueLabel: 'true',
             falseLabel: 'false'
+        });
+    }
+
+
+    /**
+     * Prompts the user to select an install type.
+     * @param currentValue The current install type value.
+     * @returns The selected install type, or undefined if cancelled.
+     */
+    private async promptForInstallType(currentValue?: string): Promise<string | undefined> {
+        this.logger.debug('Prompting for install type', {
+            currentValue
+        });
+
+        const installTypes = [
+            {
+                label: 'Extension',
+                description: 'Extends an existing architecture',
+                value: 'extension'
+            },
+            {
+                label: 'Fullstack',
+                description: 'Complete deployable architecture',
+                value: 'fullstack'
+            }
+        ];
+
+        return PromptService.showQuickPick<string>({
+            title: 'Select Install Type',
+            placeholder: currentValue || 'Choose an install type',
+            items: installTypes.map(type => ({
+                label: `${type.value === currentValue ? '$(check) ' : ''}${type.label}`,
+                description: type.description,
+                value: type.value
+            })),
+            matchOnDescription: true
         });
     }
 
@@ -1007,6 +1038,112 @@ export class CatalogService {
         });
     }
 
+    /**
+     * Prompts the user to select a version for a dependency.
+     * @param node The catalog tree item representing the version field.
+     * @param currentValue The current version value.
+     * @returns The selected version, or undefined if cancelled.
+     */
+    private async promptForVersion(node: CatalogTreeItem, currentValue?: string): Promise<string | undefined> {
+        const logger = this.logger;
+        const dependencyNode = node.getDependencyParent();
+        if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
+            logger.error('Cannot find dependency context for version selection');
+            return undefined;
+        }
+
+        // Get dependency details
+        const depValue = dependencyNode.value as Record<string, any>;
+        const catalogId = depValue.catalog_id;
+        const offeringId = depValue.id;
+
+        if (!catalogId || !offeringId) {
+            logger.error('Missing catalog_id or offering_id for version selection', { catalogId, offeringId });
+            void vscode.window.showErrorMessage('Cannot determine catalog or offering for version selection');
+            return undefined;
+        }
+
+        // Get IBM Cloud Service instance
+        const ibmCloudService = await this.getIBMCloudService();
+        if (!ibmCloudService) {
+            const result = await vscode.window.showWarningMessage(
+                'IBM Cloud API key required to fetch available versions. Would you like to add one now?',
+                'Yes', 'No'
+            );
+            
+            if (result === 'Yes') {
+                await vscode.commands.executeCommand('ibmCatalog.login');
+                return this.promptForVersion(node, currentValue);
+            }
+            return this.promptForCustomVersionOnly(currentValue);
+        }
+
+        // Fetch available versions
+        const versions = await this.getAvailableVersions(catalogId, offeringId);
+        if (versions.length === 0) {
+            const message = 'No versions found for this offering. Would you like to enter a version constraint manually?';
+            const result = await vscode.window.showWarningMessage(message, 'Yes', 'No');
+            if (result !== 'Yes') {
+                return undefined;
+            }
+            return this.promptForCustomVersionOnly(currentValue);
+        }
+
+        // Set default version constraint
+        let versionConstraint = `>=${versions[0]}`;
+
+        // Show version selection dialog
+        const selectedVersion = await PromptService.showQuickPick<string>({
+            title: 'Select Version Constraint',
+            placeholder: 'Choose a version constraint',
+            items: [
+                {
+                    label: `Latest (${versionConstraint})`,
+                    value: versionConstraint,
+                    description: 'Always use the latest compatible version',
+                    detail: 'Automatically updates to the latest compatible version'
+                },
+                {
+                    label: 'Custom',
+                    value: 'custom',
+                    description: 'Enter a custom version constraint',
+                    detail: 'Specify a custom version range or constraint'
+                },
+                ...versions.map(version => ({
+                    label: `Exact: ${version}`,
+                    value: version,
+                    description: 'Lock to this specific version',
+                    detail: `Sets a fixed version: ${version}`
+                }))
+            ],
+            matchOnDescription: true,
+            matchOnDetail: true
+        });
+
+        if (!selectedVersion) {
+            return undefined;
+        }
+
+        if (selectedVersion === 'custom') {
+            return this.promptForCustomVersionOnly(currentValue || versionConstraint);
+        }
+
+        return selectedVersion;
+    }
+
+    /**
+     * Prompts for a custom version constraint with validation.
+     * @param initialValue The initial version constraint value.
+     * @returns The entered version constraint or undefined if cancelled.
+     */
+    private async promptForCustomVersionOnly(initialValue?: string): Promise<string | undefined> {
+        return PromptService.showInputBox<string>({
+            title: 'Enter Version Constraint',
+            placeholder: 'e.g., >=1.0.0, ^2.0.0, ~1.2.3',
+            initialValue,
+            validate: (value) => this.validateVersionConstraint(value)
+        });
+    }
     /**
      * Prompts the user to select a flavor, fetching available flavors if possible.
      * @param node The catalog tree item associated with the flavor.
