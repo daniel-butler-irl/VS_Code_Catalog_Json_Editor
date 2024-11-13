@@ -370,36 +370,13 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
-     * Creates a tooltip for the item including validation status and item details
+     * Creates a tooltip for the item showing name and description
      */
     private createTooltip(): string {
-        const parts: string[] = [`Path: ${this.jsonPath}`, `Type: ${this.getValueType()}`];
+        const parts: string[] = [`Name: ${this.label}`];
 
         if (this._schemaMetadata?.description) {
             parts.push(`Description: ${this._schemaMetadata.description}`);
-        }
-
-        // Use cached values only, do not trigger lookups
-        if (this.label === 'catalog_id' && typeof this.value === 'string') {
-            parts.push(`Catalog ID: ${this.value}`);
-            if (this._validationMetadata.status === ValidationStatus.Valid) {
-                parts.push('Status: Valid'); // Only show status if already validated
-            }
-        } else if (this.isOfferingIdInDependency() && typeof this.value === 'string') {
-            parts.push(`Offering ID: ${this.value}`);
-            if (this.catalogId) {
-                parts.push(`Parent Catalog: ${this.catalogId}`);
-            }
-            if (this._validationMetadata.status === ValidationStatus.Valid) {
-                parts.push('Status: Valid'); // Only show status if already validated
-            }
-        } else if (this.isEditable()) {
-            parts.push(`Value: ${this.formatValue(this.value)}`);
-        }
-
-        // Add validation status if exists
-        if (this._validationMetadata.status !== ValidationStatus.Unknown) {
-            parts.push(this.getValidationMessage());
         }
 
         return parts.join('\n');
@@ -432,10 +409,10 @@ export class CatalogTreeItem extends vscode.TreeItem {
      * Gets the appropriate icon based on the item's type and validation status
      */
     private getIconPath(): vscode.ThemeIcon {
-        // For validatable fields, use validation status icon
-        if (this.needsValidation()) {
-            return this.getValidationIcon();
-        }
+        // // For validatable fields, use validation status icon
+        // if (this.needsValidation()) {
+        //     return this.getValidationIcon();
+        // }
 
         // For other fields, use type-based icon
         return this.getTypeIcon();
@@ -484,6 +461,20 @@ export class CatalogTreeItem extends vscode.TreeItem {
      * Gets an icon based on the value's type (string, number, boolean, etc.)
      */
     private getValueTypeIcon(): vscode.ThemeIcon {
+        // Special Icons for specific fields
+        if (this.label === 'catalog_id'){
+            return new vscode.ThemeIcon('book', new vscode.ThemeColor('ibmCatalog.catalogIdColor'));
+
+        }else if (this.isOfferingIdInDependency()){
+            return new vscode.ThemeIcon('cloud', new vscode.ThemeColor('ibmCatalog.offeringIdColor'));
+
+        }else if (this.isDependencyFlavor()){
+            return new vscode.ThemeIcon('link', new vscode.ThemeColor('ibmCatalog.flavorColor'));
+
+        }else if (this.isVersionInDependency()){
+            return new vscode.ThemeIcon('versions', new vscode.ThemeColor('ibmCatalog.versionColor'));
+        }
+
         switch (typeof this.value) {
             case 'boolean':
                 return new vscode.ThemeIcon('symbol-boolean', new vscode.ThemeColor('ibmCatalog.booleanColor'));
@@ -652,6 +643,13 @@ export class CatalogTreeItem extends vscode.TreeItem {
         return dependencyIdPattern.test(this.jsonPath) && this.label === 'id';
     }
 
+    /**
+     * Checks if this item represents a version field within a dependency structure
+     */
+    public isVersionInDependency(): boolean {
+        const versionPattern = /\$\.products\[\d+\]\.flavors\[\d+\]\.dependencies\[\d+\]\.version$/;
+        return versionPattern.test(this.jsonPath) && this.label === 'version';
+    }
     /**
      * Determines if the item is editable based on its context
      */
