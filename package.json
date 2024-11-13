@@ -194,6 +194,42 @@
           "light": "#B50000",
           "highContrast": "#FF0000"
         }
+      },
+      {
+        "id": "ibmCatalog.catalogIdColor",
+        "description": "Color for catalog id",
+        "defaults": {
+          "dark": "#007ACC",
+          "light": "#007ACC",
+          "highContrast": "#007ACC"
+        }
+      },
+      {
+        "id": "ibmCatalog.offeringIdColor",
+        "description": "Color for offering id",
+        "defaults": {
+          "dark": "#007ACC",
+          "light": "#007ACC",
+          "highContrast": "#007ACC"
+        }
+      },
+      {
+        "id": "ibmCatalog.flavorColor",
+        "description": "Color for flavor",
+        "defaults": {
+          "dark": "#007ACC",
+          "light": "#007ACC",
+          "highContrast": "#007ACC"
+        }
+      },
+      {
+        "id": "ibmCatalog.versionColor",
+        "description": "Color for version",
+        "defaults": {
+          "dark": "#007ACC",
+          "light": "#007ACC",
+          "highContrast": "#007ACC"
+        }
       }
     ],
     "keybindings": [
