@@ -4,32 +4,67 @@ import * as vscode from 'vscode';
 import { parseTree, Node, findNodeAtLocation, ParseOptions } from 'jsonc-parser';
 import { LoggingService } from './core/LoggingService';
 
+/**
+ * Service responsible for highlighting and tracking JSON paths in the editor
+ * Handles document parsing, caching, and decoration management
+ */
 export class EditorHighlightService implements vscode.Disposable {
-    private documentVersions = new Map<string, number>();
-    private parsedDocuments = new Map<string, { version: number; root: Node }>();
-    private decorationType: vscode.TextEditorDecorationType;
-    private currentDecorations: string[] = [];
-    private readonly logger = LoggingService.getInstance();
-    private parseOptions: ParseOptions = { disallowComments: false };
-    private pendingHighlight: NodeJS.Timeout | undefined;
-    private symbolProvider: vscode.Disposable;
+    private static readonly MAX_CACHE_SIZE = 100; // Prevent memory leaks
+    private static readonly CACHE_CLEANUP_INTERVAL = 1000 * 60 * 5; // 5 minutes
 
-    constructor() {
+    private documentVersions = new Map<string, number>();
+    private parsedDocuments = new Map<string, {
+        version: number;
+        root: Node;
+        lastAccessed: number;
+    }>();
+    private decorationType: vscode.TextEditorDecorationType;
+    private currentDecorations: vscode.DecorationOptions[] = [];
+    public readonly logger = LoggingService.getInstance();
+    private readonly parseOptions: ParseOptions = {
+        disallowComments: false,
+        allowTrailingComma: true,
+        allowEmptyContent: true
+    };
+    private pendingHighlight?: {
+        timeout: NodeJS.Timeout;
+        resolve: () => void;
+    };
+    private symbolProvider: vscode.Disposable;
+    private readonly debounceDelay: number;
+    private cleanupInterval: ReturnType<typeof setInterval>;
+
+    constructor(debounceDelay = 50) {
+        this.debounceDelay = debounceDelay;
         this.logger.debug('Initializing EditorHighlightService');
-        
-        // Use a more performant decoration type
+
         this.decorationType = vscode.window.createTextEditorDecorationType({
             backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
-            rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed
+            rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+            isWholeLine: false,
+            overviewRulerColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+            overviewRulerLane: vscode.OverviewRulerLane.Center
         });
 
-        // Register document symbol provider for ibm_catalog.json
         this.symbolProvider = vscode.languages.registerDocumentSymbolProvider(
             { language: 'json', pattern: '**/ibm_catalog.json' },
             {
                 provideDocumentSymbols: (document) => this.provideDocumentSymbols(document)
             }
         );
+
+        // Setup cache cleanup
+        this.cleanupInterval = setInterval(() => this.cleanupCache(),
+            EditorHighlightService.CACHE_CLEANUP_INTERVAL);
+
+        // Listen for document changes
+        vscode.workspace.onDidChangeTextDocument(this.handleDocumentChange, this);
+    }
+
+    private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+        const uri = event.document.uri.toString();
+        this.parsedDocuments.delete(uri);
+        this.documentVersions.delete(uri);
     }
 
     private async provideDocumentSymbols(document: vscode.TextDocument): Promise<vscode.DocumentSymbol[]> {
@@ -50,14 +85,11 @@ export class EditorHighlightService implements vscode.Disposable {
         if (!node.children) return;
 
         for (const child of node.children) {
-            if (child.type === 'property') {
-                const propertyNode = child.children?.[0];
-                if (!propertyNode) continue;
+            if (child.type === 'property' && child.children) {
+                const [propertyNode, valueNode] = child.children;
+                if (!propertyNode || !valueNode) continue;
 
                 const name = propertyNode.value;
-                const valueNode = child.children?.[1];
-                if (!valueNode) continue;
-
                 const range = new vscode.Range(
                     document.positionAt(child.offset),
                     document.positionAt(child.offset + child.length)
@@ -69,13 +101,8 @@ export class EditorHighlightService implements vscode.Disposable {
                 );
 
                 const kind = this.getSymbolKind(valueNode.type);
-                const symbol = new vscode.DocumentSymbol(
-                    name,
-                    parent ? `${parent.property}.${name}` : name,
-                    kind,
-                    range,
-                    selectionRange
-                );
+                const detail = parent ? `${parent.property}.${name}` : name;
+                const symbol = new vscode.DocumentSymbol(name, detail, kind, range, selectionRange);
 
                 if (valueNode.type === 'object' || valueNode.type === 'array') {
                     this.buildSymbolTree(document, valueNode, symbol.children, { property: name });
@@ -87,53 +114,66 @@ export class EditorHighlightService implements vscode.Disposable {
     }
 
     private getSymbolKind(type: string): vscode.SymbolKind {
-        switch (type) {
-            case 'object': return vscode.SymbolKind.Object;
-            case 'array': return vscode.SymbolKind.Array;
-            case 'string': return vscode.SymbolKind.String;
-            case 'number': return vscode.SymbolKind.Number;
-            case 'boolean': return vscode.SymbolKind.Boolean;
-            default: return vscode.SymbolKind.Variable;
-        }
+        const kindMap: Record<string, vscode.SymbolKind> = {
+            'object': vscode.SymbolKind.Object,
+            'array': vscode.SymbolKind.Array,
+            'string': vscode.SymbolKind.String,
+            'number': vscode.SymbolKind.Number,
+            'boolean': vscode.SymbolKind.Boolean
+        };
+        return kindMap[type] ?? vscode.SymbolKind.Variable;
     }
 
     private async getParsedDocument(document: vscode.TextDocument): Promise<Node | undefined> {
         const uri = document.uri.toString();
         const version = document.version;
-        
-        // Check if we have a valid cached version
+
         const cached = this.parsedDocuments.get(uri);
-        if (cached && cached.version === version) {
+        if (cached?.version === version) {
+            cached.lastAccessed = Date.now();
             return cached.root;
         }
 
-        // Parse and cache the document
         try {
             const text = document.getText();
             const root = parseTree(text, undefined, this.parseOptions);
             if (root) {
-                this.parsedDocuments.set(uri, { version, root });
+                if (this.parsedDocuments.size >= EditorHighlightService.MAX_CACHE_SIZE) {
+                    this.cleanupCache();
+                }
+                this.parsedDocuments.set(uri, {
+                    version,
+                    root,
+                    lastAccessed: Date.now()
+                });
                 this.documentVersions.set(uri, version);
                 return root;
             }
         } catch (error) {
             this.logger.error('Failed to parse document', error);
+            this.parsedDocuments.delete(uri);
         }
         return undefined;
     }
 
     public async highlightJsonPath(jsonPath: string, editor?: vscode.TextEditor): Promise<void> {
         if (this.pendingHighlight) {
-            clearTimeout(this.pendingHighlight);
+            clearTimeout(this.pendingHighlight.timeout);
+            this.pendingHighlight.resolve();
         }
 
-        // Debounce highlights to prevent rapid updates
-        this.pendingHighlight = setTimeout(async () => {
-            await this.performHighlight(jsonPath, editor);
-        }, 50);
+        return new Promise<void>((resolve) => {
+            this.pendingHighlight = {
+                timeout: setTimeout(async () => {
+                    await this.performHighlight(jsonPath, editor);
+                    resolve();
+                }, this.debounceDelay),
+                resolve
+            };
+        });
     }
 
-    private async performHighlight(jsonPath: string, editor?: vscode.TextEditor): Promise<void> {
+    public async performHighlight(jsonPath: string, editor?: vscode.TextEditor): Promise<void> {
         const activeEditor = editor ?? vscode.window.activeTextEditor;
         if (!activeEditor || !jsonPath) {
             return;
@@ -144,64 +184,102 @@ export class EditorHighlightService implements vscode.Disposable {
             const root = await this.getParsedDocument(document);
             if (!root) return;
 
-            const pathSegments = this.jsonPathToSegments(jsonPath);
-            const node = findNodeAtLocation(root, pathSegments);
+            const pathSegments = this.parseJsonPath(jsonPath);
+            if (!pathSegments) {
+                this.logger.debug('Invalid JSON path format', jsonPath);
+                return;
+            }
 
+            const node = findNodeAtLocation(root, pathSegments);
             if (node) {
                 const range = new vscode.Range(
                     document.positionAt(node.offset),
                     document.positionAt(node.offset + node.length)
                 );
 
-                // Apply decorations more efficiently
-                const decorations = [{
+                const decoration: vscode.DecorationOptions = {
                     range,
                     hoverMessage: `JSON Path: ${jsonPath}`
-                }];
+                };
 
-                activeEditor.setDecorations(this.decorationType, decorations);
-                this.currentDecorations = [range.start.line.toString()];
+                this.currentDecorations = [decoration];
+                activeEditor.setDecorations(this.decorationType, this.currentDecorations);
 
-                // Reveal the range without changing selection
                 activeEditor.revealRange(
                     range,
                     vscode.TextEditorRevealType.InCenterIfOutsideViewport
                 );
+            } else {
+                this.logger.debug('Node not found for path', jsonPath);
+                this.clearHighlight();
             }
         } catch (error) {
             this.logger.error('Failed to highlight JSON path:', error);
+            this.clearHighlight();
         }
     }
 
-    private jsonPathToSegments(jsonPath: string): (string | number)[] {
-        const segments: (string | number)[] = [];
-        const regex = /\[(\d+)\]|\.([^.\[\]]+)/g;
-        let match;
+    private parseJsonPath(jsonPath: string): (string | number)[] | null {
+        try {
+            const segments: (string | number)[] = [];
+            const regex = /^\$|(\.([^.\[\]]+)|\[(\d+)\])/g;
+            let match;
 
-        while ((match = regex.exec(jsonPath)) !== null) {
-            if (match[1] !== undefined) {
-                segments.push(parseInt(match[1], 10));
-            } else if (match[2] !== undefined) {
-                segments.push(match[2]);
+            // Validate basic format
+            if (!jsonPath.startsWith('$')) {
+                return null;
             }
+
+            while ((match = regex.exec(jsonPath)) !== null) {
+                if (match[2] !== undefined) {
+                    segments.push(match[2]);
+                } else if (match[3] !== undefined) {
+                    segments.push(parseInt(match[3], 10));
+                }
+            }
+
+            return segments.length > 0 ? segments : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private cleanupCache(): void {
+        if (this.parsedDocuments.size <= EditorHighlightService.MAX_CACHE_SIZE / 2) {
+            return;
         }
 
-        return segments;
+        const now = Date.now();
+        const entries = Array.from(this.parsedDocuments.entries());
+        entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
+
+        // Remove older half of entries
+        const removeCount = Math.floor(entries.length / 2);
+        entries.slice(0, removeCount).forEach(([uri]) => {
+            this.parsedDocuments.delete(uri);
+            this.documentVersions.delete(uri);
+        });
     }
 
     public clearHighlight(): void {
         const activeEditor = vscode.window.activeTextEditor;
         if (activeEditor) {
             activeEditor.setDecorations(this.decorationType, []);
-            this.currentDecorations = [];
         }
+        this.currentDecorations = [];
     }
 
     public dispose(): void {
         this.clearHighlight();
         this.decorationType.dispose();
         this.symbolProvider.dispose();
+        clearInterval(this.cleanupInterval);
         this.parsedDocuments.clear();
         this.documentVersions.clear();
+
+        if (this.pendingHighlight) {
+            clearTimeout(this.pendingHighlight.timeout);
+            this.pendingHighlight.resolve();
+        }
     }
 }
