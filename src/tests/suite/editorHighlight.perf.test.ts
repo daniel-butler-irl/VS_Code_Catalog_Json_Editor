@@ -6,10 +6,11 @@ import { EditorHighlightService } from '../../services/EditorHighlightService';
 import { generateLargeMockData } from './fixtures/mockData';
 import { performance } from 'perf_hooks';
 import { DEFAULT_PERFORMANCE_THRESHOLDS, IPerformanceThresholds } from '../../types/performance/thresholds';
+import sinon from 'sinon';
 
 suite('EditorHighlight Performance Test Suite', () => {
   const PERF_THRESHOLDS: IPerformanceThresholds = DEFAULT_PERFORMANCE_THRESHOLDS;
-
+  let sandbox: sinon.SinonSandbox;
   let highlightService: EditorHighlightService;
   let document: vscode.TextDocument;
   let editor: vscode.TextEditor;
@@ -29,6 +30,14 @@ suite('EditorHighlight Performance Test Suite', () => {
     console.log(`Test "${testName}" execution time: ${duration.toFixed(2)}ms`);
     return duration;
   }
+
+  setup(() => {
+    sandbox = sinon.createSandbox();
+  });
+
+  teardown(() => {
+    sandbox.restore();
+  });
 
   suiteSetup(function () {
     this.timeout(PERF_THRESHOLDS.TIMEOUT_MS);
@@ -169,16 +178,26 @@ suite('EditorHighlight Performance Test Suite', () => {
     );
   });
 
-  test('stress - rapid highlights in very large document', async () => {
+  test('stress - rapid highlights in very large document', async function () {
+    // Add timeout specifically for this test
+    this.timeout(PERF_THRESHOLDS.STRESS_MEMORY_TIMEOUT_MS);
+
+    const paths = Array.from({ length: 20 }, (_, i) =>
+      `$.products[${i * 250}].flavors[0].dependencies[0].input_mapping[0].version_input`
+    );
+
     const times: number[] = [];
-    for (let i = 0; i < 20; i++) {
+
+    // Spy on the public performHighlight method
+    const highlightSpy = sandbox.spy(highlightService, 'performHighlight');
+
+    for (let i = 0; i < paths.length; i++) {
       const executionTime = await measurePerformance(async () => {
-        await highlightService.highlightJsonPath(
-          `$.products[${i}].flavors[0].dependencies[0].catalog_id`,
-          largeEditor
-        );
+        await highlightService.highlightJsonPath(paths[i], largeEditor);
       }, `stress test highlight ${i}`);
       times.push(executionTime);
+      // Add small delay between operations to prevent system overload
+      await new Promise(resolve => setTimeout(resolve, 10));
     }
 
     const maxTime = Math.max(...times);
@@ -186,6 +205,9 @@ suite('EditorHighlight Performance Test Suite', () => {
       maxTime < PERF_THRESHOLDS.STRESS_OP,
       `Maximum highlight time ${maxTime.toFixed(2)}ms exceeds stress threshold of ${PERF_THRESHOLDS.STRESS_OP}ms`
     );
+
+    // Expect 'performHighlight' to be called for each path
+    assert.strictEqual(highlightSpy.callCount, paths.length, `performHighlight should be called ${paths.length} times`);
   });
 
   test('stress - concurrent document modifications and highlights', async () => {
