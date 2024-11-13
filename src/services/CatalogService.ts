@@ -10,6 +10,7 @@ import { FileSystemService } from './core/FileSystemService';
 import { InputMappingService } from './InputMappingService';
 import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
+import type { FlavorObject } from '../types/catalog';
 import { CatalogServiceMode, type CatalogServiceState, type ICatalogFileInfo, type MappingOption } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
@@ -238,7 +239,7 @@ export class CatalogService {
 
         try {
 
-            // Special handling for dependencies array
+            // Handle for dependencies array
             if (parentNode.jsonPath.endsWith('.dependencies')) {
                 await this.handleDependencyAddition(parentNode);
                 return;
@@ -247,6 +248,12 @@ export class CatalogService {
             // Handle input_mapping additions
             if (parentNode.jsonPath.endsWith('.input_mapping')) {
                 await this.handleInputMappingAddition(parentNode);
+                return;
+            }
+
+            // Handle flavor additions
+            if (this.isFlavorNode(parentNode)) {
+                await this.handleFlavorAddition(parentNode);
                 return;
             }
 
@@ -335,6 +342,79 @@ export class CatalogService {
         } catch (error) {
             this.logger.error('Failed to reload catalog data', error);
             throw new Error(`Failed to update catalog view: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    private isFlavorNode(node: CatalogTreeItem): boolean {
+        // Match pattern like $.products[0].flavors[0] but not deeper nested flavors
+        return /\$\.products\[\d+\]\.flavors\[\d+\]$/.test(node.jsonPath);
+    }
+    
+    private async handleFlavorAddition(flavorNode: CatalogTreeItem): Promise<void> {
+        // Get the current flavor object
+        const flavorObj = flavorNode.value as Record<string, any>;
+        
+        // Check what can be added
+        const availableAdditions: QuickPickItemEx<string>[] = [];
+        
+        // Check for dependencies
+        if (!flavorObj.hasOwnProperty('dependencies')) {
+            availableAdditions.push({
+                label: 'Dependencies',
+                description: 'Add dependencies array',
+                detail: 'Add a new dependencies section to this flavor',
+                value: 'dependencies'
+            });
+        }
+    
+        // If no available additions, show message
+        if (availableAdditions.length === 0) {
+            void vscode.window.showInformationMessage('No additional elements can be added to this flavor');
+            return;
+        }
+    
+        // Prompt user to select what to add
+        const selection = await PromptService.showQuickPick<string>({
+            title: 'Select Element to Add',
+            placeholder: 'Choose an element to add to the flavor',
+            items: availableAdditions
+        });
+    
+        if (!selection) return;
+    
+        // Handle the selection
+        switch (selection) {
+            case 'dependencies':
+                await this.addDependenciesToFlavor(flavorNode);
+                break;
+        }
+    }
+    
+    private async addDependenciesToFlavor(flavorNode: CatalogTreeItem): Promise<void> {
+        try {
+            // Get current flavor object with correct type
+            const currentValue = flavorNode.value as FlavorObject;
+            
+            // Create updated flavor object
+            const updatedValue: FlavorObject = {
+                ...currentValue,
+                dependencies: [], // Add empty dependencies array
+            };
+    
+            // Check if dependency_version_2 is missing
+            if (!currentValue.hasOwnProperty('dependency_version_2')) {
+                updatedValue.dependency_version_2 = true;
+            }
+    
+            // Update the flavor
+            await this.updateJsonValue(flavorNode.jsonPath, updatedValue);
+    
+            void vscode.window.showInformationMessage('Successfully added dependencies to flavor');
+        } catch (error) {
+            this.logger.error('Failed to add dependencies to flavor', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to add dependencies: ${message}`);
+            throw error;
         }
     }
 

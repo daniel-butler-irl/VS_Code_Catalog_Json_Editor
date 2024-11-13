@@ -25,6 +25,13 @@ export interface MappingOption {
     mappingType: 'input' | 'output';
 }
 
+export interface FlavorObject {
+    dependencies?: any[];
+    dependency_version_2?: boolean;
+    [key: string]: any; // Allow other properties
+}
+
+
 export interface ICatalogFileInfo {
     /**
      * The URI of the catalog file.
