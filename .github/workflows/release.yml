@@ -92,7 +92,7 @@ jobs:
             --output CHANGELOG.md \
             --future-release "$CURRENT_VERSION" \
             --since-tag "$PREVIOUS_VERSION" \
-            --token "$GH_PAT"
+            --token "$GITHUB_TOKEN"
         env:
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

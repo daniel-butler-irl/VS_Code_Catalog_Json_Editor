@@ -116,7 +116,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Implements debounced state updates for performance.
      */
     private setupEventHandlers(): void {
-        if (!this.treeView) return;
+        if (!this.treeView) { return; }
 
         this.treeView.onDidExpandElement((e) => {
             this.expandedNodes.set(e.element.jsonPath, true);
@@ -234,7 +234,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private buildJsonPath(parentPath: string, key: string): string {
         const cacheKey = `${parentPath}:${key}`;
         const cached = this.memoizedPaths.get(cacheKey);
-        if (cached) return cached;
+        if (cached) { return cached; }
 
         let result: string;
         if (/^\[\d+\]$/.test(key)) {
@@ -256,7 +256,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     private getSchemaMetadata(path: string): SchemaMetadata | undefined {
         const cached = this.memoizedSchemaMetadata.get(path);
-        if (cached !== undefined) return cached;
+        if (cached !== undefined) { return cached; }
 
         const metadata = this.schemaService?.getSchemaForPath(path);
         this.memoizedSchemaMetadata.set(path, metadata);
@@ -283,8 +283,8 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Gets the context value for menu contributions.
      */
     private getContextValue(value: unknown): string {
-        if (Array.isArray(value)) return 'array';
-        if (typeof value === 'object' && value !== null) return 'container';
+        if (Array.isArray(value)) { return 'array'; }
+        if (typeof value === 'object' && value !== null) { return 'container'; }
         return 'editable';
     }
 
