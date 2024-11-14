@@ -209,12 +209,12 @@ export class CatalogService {
         if (this.ibmCloudService) {
             return this.ibmCloudService;
         }
-    
+
         const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) {
             return undefined;
         }
-    
+
         this.ibmCloudService = new IBMCloudService(apiKey);
         return this.ibmCloudService;
     }
@@ -239,21 +239,29 @@ export class CatalogService {
 
         try {
 
+            // Check for flavor node first to add dependencies
+            if (this.isFlavorNode(parentNode)) {
+                this.logger.debug('Handling dependencies addition to flavor');
+                await this.handleFlavorDependenciesAddition(parentNode);
+                return;
+            }
+
             // Handle for dependencies array
             if (parentNode.jsonPath.endsWith('.dependencies')) {
                 await this.handleDependencyAddition(parentNode);
                 return;
             }
-            
+
             // Handle input_mapping additions
             if (parentNode.jsonPath.endsWith('.input_mapping')) {
                 await this.handleInputMappingAddition(parentNode);
                 return;
             }
 
-            // Handle flavor additions
-            if (this.isFlavorNode(parentNode)) {
-                await this.handleFlavorAddition(parentNode);
+            // Check for dependency flavors array first
+            if (this.isDependencyFlavorsArrayNode(parentNode)) {
+                this.logger.debug('Handling dependency flavors array addition');
+                await this.handleDependencyFlavorArrayAddition(parentNode);
                 return;
             }
 
@@ -346,69 +354,203 @@ export class CatalogService {
     }
 
     private isFlavorNode(node: CatalogTreeItem): boolean {
-        // Match pattern like $.products[0].flavors[0] but not deeper nested flavors
+        // Match pattern like $.products[0].flavors[0]
         return /\$\.products\[\d+\]\.flavors\[\d+\]$/.test(node.jsonPath);
     }
-    
-    private async handleFlavorAddition(flavorNode: CatalogTreeItem): Promise<void> {
-        // Get the current flavor object
-        const flavorObj = flavorNode.value as Record<string, any>;
-        
-        // Check what can be added
-        const availableAdditions: QuickPickItemEx<string>[] = [];
-        
-        // Check for dependencies
-        if (!flavorObj.hasOwnProperty('dependencies')) {
-            availableAdditions.push({
-                label: 'Dependencies',
-                description: 'Add dependencies array',
-                detail: 'Add a new dependencies section to this flavor',
-                value: 'dependencies'
-            });
-        }
-    
-        // If no available additions, show message
-        if (availableAdditions.length === 0) {
-            void vscode.window.showInformationMessage('No additional elements can be added to this flavor');
-            return;
-        }
-    
-        // Prompt user to select what to add
-        const selection = await PromptService.showQuickPick<string>({
-            title: 'Select Element to Add',
-            placeholder: 'Choose an element to add to the flavor',
-            items: availableAdditions
-        });
-    
-        if (!selection) return;
-    
-        // Handle the selection
-        switch (selection) {
-            case 'dependencies':
-                await this.addDependenciesToFlavor(flavorNode);
-                break;
+
+
+    private async handleFlavorDependenciesAddition(flavorNode: CatalogTreeItem): Promise<void> {
+        try {
+            // Check if dependencies already exist
+            const flavorValue = flavorNode.value as FlavorObject;
+            if (flavorValue.dependencies) {
+                void vscode.window.showInformationMessage('Dependencies block already exists in this flavor');
+                return;
+            }
+
+            // Add dependencies array and preserve existing version flag or set default
+            const updatedFlavor: FlavorObject = {
+                ...flavorValue,
+                dependencies: [],
+                // Only set to true if it doesn't already exist
+                dependency_version_2: flavorValue.hasOwnProperty('dependency_version_2')
+                    ? flavorValue.dependency_version_2
+                    : true
+            };
+
+            // Update the flavor
+            await this.updateJsonValue(flavorNode.jsonPath, updatedFlavor);
+            void vscode.window.showInformationMessage('Successfully added dependencies to flavor');
+        } catch (error) {
+            this.logger.error('Failed to add dependencies to flavor', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to add dependencies: ${message}`);
+            throw error;
         }
     }
-    
+
+    private isDependencyFlavorsArrayNode(node: CatalogTreeItem): boolean {
+        // Match both the flavors array itself and elements within it
+        const pattern = /\.dependencies\[\d+\]\.flavors(?:\[\d+\])?$/;
+        const matches = pattern.test(node.jsonPath);
+        this.logger.debug('Checking if node is dependency flavors array', {
+            path: node.jsonPath,
+            isDependencyFlavors: matches,
+            contextValue: node.contextValue
+        });
+        return matches && node.contextValue === 'array';
+    }
+
+    private async handleDependencyFlavorArrayAddition(parentNode: CatalogTreeItem): Promise<void> {
+        this.logger.debug('Starting dependency flavor array addition');
+
+        try {
+            const ibmCloudService = await this.getIBMCloudService();
+            if (!ibmCloudService) {
+                const result = await vscode.window.showWarningMessage(
+                    'IBM Cloud API key required to browse available flavors. Would you like to add one now?',
+                    'Yes', 'No'
+                );
+
+                if (result === 'Yes') {
+                    await vscode.commands.executeCommand('ibmCatalog.login');
+                    // Return early and let the user try again after login
+                    return;
+                }
+                return;
+            }
+
+            // Get dependency context
+            const dependencyNode = parentNode.getDependencyParent();
+            if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
+                throw new Error('Cannot find dependency context for flavor selection');
+            }
+
+            const depValue = dependencyNode.value as Record<string, any>;
+            const catalogId = depValue.catalog_id;
+            const offeringId = depValue.id;
+
+            this.logger.debug('Dependency context found', { catalogId, offeringId });
+
+            if (!catalogId || !offeringId) {
+                throw new Error('Missing catalog_id or offering_id for flavor selection');
+            }
+
+            // Fetch available flavors
+            const availableFlavors = await ibmCloudService.getAvailableFlavors(catalogId, offeringId);
+            this.logger.debug('Fetched available flavors', {
+                count: availableFlavors.length,
+                flavors: availableFlavors
+            });
+
+            if (!availableFlavors.length) {
+                void vscode.window.showWarningMessage('No flavors available for this offering.');
+                return;
+            }
+
+            // Get current flavors to filter out already selected ones
+            const currentFlavors = new Set(parentNode.value as string[]);
+            this.logger.debug('Current flavors', {
+                currentFlavors: Array.from(currentFlavors),
+                totalCount: currentFlavors.size
+            });
+
+            const newFlavorOptions = availableFlavors.filter(flavor => !currentFlavors.has(flavor));
+            this.logger.debug('Available new flavors', {
+                count: newFlavorOptions.length,
+                flavors: newFlavorOptions
+            });
+
+            if (!newFlavorOptions.length) {
+                const message = `All available flavors (${Array.from(currentFlavors).join(', ')}) are already selected for this offering.`;
+                void vscode.window.showInformationMessage(message);
+                return;
+            }
+            // Prepare flavor details for selection with better error handling
+            const flavorDetailsPromises = newFlavorOptions.map(async (flavorName) => {
+                try {
+                    const details = await ibmCloudService.getFlavorDetails(catalogId, offeringId, flavorName);
+                    return {
+                        name: flavorName,
+                        label: details?.label || flavorName,
+                        description: details?.description || 'No description available'
+                    };
+                } catch (error) {
+                    this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
+                    return {
+                        name: flavorName,
+                        label: flavorName,
+                        description: 'No description available'
+                    };
+                }
+            });
+
+            const flavorDetails = await Promise.all(flavorDetailsPromises);
+            this.logger.debug('Prepared flavor details for selection', { count: flavorDetails.length });
+
+            // Ensure we're running the quick pick in a safe context
+            await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+
+            // Show flavor selection dialog with explicit error handling
+            try {
+                const selectedFlavor = await PromptService.showQuickPick<string>({
+                    title: 'Select Flavor',
+                    placeholder: 'Choose a flavor to add',
+                    items: flavorDetails.map(flavor => ({
+                        label: flavor.label,
+                        description: `(${flavor.name})`,
+                        detail: flavor.description,
+                        value: flavor.name,
+                        picked: false
+                    })),
+                    matchOnDescription: true,
+                    matchOnDetail: true
+                });
+
+                this.logger.debug('Quick pick result', { selectedFlavor });
+
+                if (!selectedFlavor) {
+                    this.logger.debug('No flavor selected');
+                    return;
+                }
+
+                // Add the selected flavor
+                const updatedFlavors = [...currentFlavors, selectedFlavor];
+                await this.updateJsonValue(parentNode.jsonPath, updatedFlavors);
+
+                void vscode.window.showInformationMessage(`Successfully added flavor: ${selectedFlavor}`);
+            } catch (error) {
+                this.logger.error('Error showing quick pick or updating flavors', error);
+                throw error;
+            }
+
+        } catch (error) {
+            this.logger.error('Failed to add dependency flavor', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to add flavor: ${message}`);
+            throw error;
+        }
+    }
+
     private async addDependenciesToFlavor(flavorNode: CatalogTreeItem): Promise<void> {
         try {
             // Get current flavor object with correct type
             const currentValue = flavorNode.value as FlavorObject;
-            
+
             // Create updated flavor object
             const updatedValue: FlavorObject = {
                 ...currentValue,
                 dependencies: [], // Add empty dependencies array
             };
-    
+
             // Check if dependency_version_2 is missing
             if (!currentValue.hasOwnProperty('dependency_version_2')) {
                 updatedValue.dependency_version_2 = true;
             }
-    
+
             // Update the flavor
             await this.updateJsonValue(flavorNode.jsonPath, updatedValue);
-    
+
             void vscode.window.showInformationMessage('Successfully added dependencies to flavor');
         } catch (error) {
             this.logger.error('Failed to add dependencies to flavor', error);
@@ -425,24 +567,24 @@ export class CatalogService {
                 'IBM Cloud API key required to browse catalogs and offerings. Would you like to add one now?',
                 'Yes', 'No'
             );
-            
+
             if (result === 'Yes') {
                 await vscode.commands.executeCommand('ibmCatalog.login');
                 return this.handleDependencyAddition(parentNode);
             }
             return;
         }
-    
+
         try {
             // 1. Select Catalog
             const catalogId = await this.promptForCatalogId();
             if (!catalogId) return;
-    
+
             // 2. Select Offering
             const offeringDetails = await this.promptForOfferingWithDetails(catalogId);
             if (!offeringDetails) return;
-    
-           // 3. Create a temporary dependency node and version node for version selection
+
+            // 3. Create a temporary dependency node and version node for version selection
             const tempDependencyNode = new CatalogTreeItem(
                 this.context,
                 'dependency',
@@ -469,13 +611,13 @@ export class CatalogService {
             // 4. Get version using the promptForVersion method
             const versionConstraint = await this.promptForVersion(tempVersionNode);
             if (!versionConstraint) return;
-        
+
             // 5. Select Flavors with details
             const flavors = await ibmCloudService.getAvailableFlavors(
-                catalogId, 
+                catalogId,
                 offeringDetails.id
             );
-    
+
             // Fetch details for each flavor using OfferingFlavor interface
             const flavorDetails = await Promise.all(
                 flavors.map(async (flavorName) => {
@@ -500,7 +642,7 @@ export class CatalogService {
                     }
                 })
             );
-    
+
             const selectedFlavors = await PromptService.showQuickPick<string>({
                 title: 'Select Flavors',
                 placeholder: 'Choose one or more flavors (Space to select, Enter to confirm)',
@@ -522,12 +664,12 @@ export class CatalogService {
                     }
                 ]
             });
-    
+
             if (!selectedFlavors || selectedFlavors.length === 0) {
                 vscode.window.showWarningMessage('At least one flavor must be selected');
                 return;
             }
-    
+
             // 6. Prompt for optional flag
             const isOptional = await PromptService.showBooleanPick({
                 title: 'Is this dependency optional?',
@@ -538,9 +680,9 @@ export class CatalogService {
                     validationMessage: 'Optional dependencies can be excluded from deployment'
                 }
             });
-    
+
             if (isOptional === undefined) return;
-    
+
             // 7. Create the dependency object
             const newDependency = {
                 name: offeringDetails.name,
@@ -551,19 +693,19 @@ export class CatalogService {
                 optional: isOptional,
                 input_mapping: []
             };
-    
+
             // Add to the dependencies array
             const currentDependencies = (parentNode.value as any[]) || [];
             await this.updateJsonValue(
-                parentNode.jsonPath, 
+                parentNode.jsonPath,
                 [...currentDependencies, newDependency]
             );
-    
+
             // Show success message
             void vscode.window.showInformationMessage(
                 `Successfully added dependency: ${offeringDetails.name}`
             );
-    
+
         } catch (error) {
             this.logger.error('Failed to add dependency', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -571,43 +713,43 @@ export class CatalogService {
             throw error;
         }
     }
-    
+
     private async getAvailableVersions(catalogId: string, offeringId: string): Promise<string[]> {
         const logger = this.logger;
         const ibmCloudService = await this.getIBMCloudService();
         if (!ibmCloudService) {
             return [];
         }
-    
+
         try {
             const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
             const offering = offerings?.find(o => o.id === offeringId);
-            
+
             if (!offering?.kinds?.[0]?.versions) {
                 return [];
             }
-    
+
             const versions = offering.kinds[0].versions
                 .map(v => v.version)
                 .filter((v): v is string => !!v)
                 .sort((a, b) => -1 * this.compareSemVer(a, b)); // Sort descending
-    
+
             logger.debug('Available versions', { offeringId, versions });
             return versions;
-    
+
         } catch (error) {
             logger.error('Failed to fetch versions', error);
             return [];
         }
     }
-    
+
     private compareSemVer(a: string, b: string): number {
         const cleanA = a.replace(/^[v=\^~<>]*/, '');
         const cleanB = b.replace(/^[v=\^~<>]*/, '');
-        
+
         const partsA = cleanA.split('.').map(Number);
         const partsB = cleanB.split('.').map(Number);
-        
+
         for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
             const numA = partsA[i] || 0;
             const numB = partsB[i] || 0;
@@ -622,37 +764,37 @@ export class CatalogService {
         if (!value.trim()) {
             return 'Version constraint cannot be empty';
         }
-    
+
         // Valid operators and their regex pattern
         const operatorPattern = '(>=|<=|>|<|~|\\^|=|v)?';
-        
+
         // Version number pattern that allows:
         // - Optional 'v' prefix after operator
         // - Multiple digits in each segment
         // - Optional additional segments (like 1.2.3.4)
         const versionPattern = 'v?\\d+(\\.\\d+)*';
-        
+
         // Complete regex pattern
         const fullPattern = new RegExp(`^${operatorPattern}${versionPattern}$`);
-    
+
         if (!fullPattern.test(value)) {
             return 'Invalid version format. Examples: >=1.0.0, v8.14.0, ^2.0.0, >=v8.14.0';
         }
-    
+
         return null;
     }
-    
 
-    private async promptForOfferingWithDetails(catalogId: string): Promise<{ 
-        id: string; 
-        name: string; 
+
+    private async promptForOfferingWithDetails(catalogId: string): Promise<{
+        id: string;
+        name: string;
     } | undefined> {
         const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) return undefined;
-    
+
         const ibmCloudService = new IBMCloudService(apiKey);
         const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
-    
+
         const result = await PromptService.showQuickPick<{ id: string; name: string; }>({
             title: 'Select Offering',
             placeholder: 'Choose an offering for this dependency',
@@ -666,7 +808,7 @@ export class CatalogService {
                 }
             }))
         });
-    
+
         return result;
     }
 
@@ -1117,7 +1259,7 @@ export class CatalogService {
                 'IBM Cloud API key required to fetch available versions. Would you like to add one now?',
                 'Yes', 'No'
             );
-            
+
             if (result === 'Yes') {
                 await vscode.commands.executeCommand('ibmCatalog.login');
                 return this.promptForVersion(node, currentValue);
