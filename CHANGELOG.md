@@ -1,27 +1,13 @@
 # Changelog
 
-## [0.2.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.2.0) (2024-11-14)
+## [0.2.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.2.2) (2024-11-14)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.1.2...0.2.0)
-
-**Fixed bugs:**
-
-- Remove Special Icons from tree view [\#46](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/46)
-
-**Closed issues:**
-
-- Add flavors [\#57](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/57)
-- List available versions for the version constrains [\#56](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/56)
-- Add Dependencies block [\#55](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/55)
-- Add new dependency  [\#54](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/54)
-- Add Custom Icon For Special Elements [\#48](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/48)
-- Update Tooltips [\#47](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/47)
-- Guided promps for input mapping [\#39](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/39)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.0...0.2.2)
 
 **Merged pull requests:**
 
-- Enhance dependency management with guided prompts and version handling [\#59](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/59) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Refactor tooltip creation and add color settings for IDs in package.json [\#58](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/58) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Fix workflow and bump version to 0.2.2 [\#62](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/62) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Fix flavor element handling and add tests [\#61](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/61) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
