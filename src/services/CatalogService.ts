@@ -578,11 +578,11 @@ export class CatalogService {
         try {
             // 1. Select Catalog
             const catalogId = await this.promptForCatalogId();
-            if (!catalogId) return;
+            if (!catalogId) { return; }
 
             // 2. Select Offering
             const offeringDetails = await this.promptForOfferingWithDetails(catalogId);
-            if (!offeringDetails) return;
+            if (!offeringDetails) { return; }
 
             // 3. Create a temporary dependency node and version node for version selection
             const tempDependencyNode = new CatalogTreeItem(
@@ -610,7 +610,7 @@ export class CatalogService {
 
             // 4. Get version using the promptForVersion method
             const versionConstraint = await this.promptForVersion(tempVersionNode);
-            if (!versionConstraint) return;
+            if (!versionConstraint) { return; }
 
             // 5. Select Flavors with details
             const flavors = await ibmCloudService.getAvailableFlavors(
@@ -681,7 +681,7 @@ export class CatalogService {
                 }
             });
 
-            if (isOptional === undefined) return;
+            if (isOptional === undefined) { return; }
 
             // 7. Create the dependency object
             const newDependency = {
@@ -790,7 +790,7 @@ export class CatalogService {
         name: string;
     } | undefined> {
         const apiKey = await AuthService.getApiKey(this.context);
-        if (!apiKey) return undefined;
+        if (!apiKey) { return undefined; }
 
         const ibmCloudService = new IBMCloudService(apiKey);
         const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
@@ -975,9 +975,9 @@ export class CatalogService {
         }
 
         // Parse value to appropriate type
-        if (value.toLowerCase() === 'true') return true;
-        if (value.toLowerCase() === 'false') return false;
-        if (!isNaN(Number(value))) return Number(value);
+        if (value.toLowerCase() === 'true') { return true; }
+        if (value.toLowerCase() === 'false') { return false; }
+        if (!isNaN(Number(value))) { return Number(value); }
         return value;
     }
 
