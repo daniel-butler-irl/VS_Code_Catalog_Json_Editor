@@ -818,51 +818,105 @@ export class CatalogService {
      */
     private async handleInputMappingAddition(parentNode: CatalogTreeItem): Promise<void> {
         try {
-            // 1. Get mapping type
+            // 1. Get mapping type (now including version_input as an option)
             const mappingType = await this.promptForMappingType();
             if (!mappingType) {
                 return; // User cancelled
             }
 
-            // Create a temporary node for the mapping value
-            const tempMappingNode = new CatalogTreeItem(
-                this.context,
-                mappingType,
-                '',
-                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${mappingType}`,
-                vscode.TreeItemCollapsibleState.None,
-                'editable',
-                undefined,
-                parentNode
-            );
+            let sourceType: string | undefined;
+            let sourceValue: string | undefined;
+            let versionInput: string | undefined;
 
-            // 2. Get mapping value using existing prompt
-            const mappingValue = await this.promptForInputMapping(tempMappingNode);
-            if (mappingValue === undefined) {
-                return; // User cancelled
+            if (mappingType === 'version_input') {
+                // Starting with version_input flow
+                const tempVersionInputNode = new CatalogTreeItem(
+                    this.context,
+                    'version_input',
+                    '',
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'editable',
+                    undefined,
+                    parentNode
+                );
+
+                versionInput = await this.promptForInputMapping(tempVersionInputNode);
+                if (versionInput === undefined) {
+                    return;
+                }
+
+                // Now prompt for the source type
+                sourceType = await this.promptForMappingType({
+                    title: `Select source type for mapping to "${versionInput}"`,
+                    excludeTypes: ['version_input']
+                });
+                if (!sourceType) {
+                    return;
+                }
+
+                // Get the source value
+                const tempSourceNode = new CatalogTreeItem(
+                    this.context,
+                    sourceType,
+                    '',
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'editable',
+                    undefined,
+                    parentNode
+                );
+
+                sourceValue = await this.promptForInputMapping(tempSourceNode);
+                if (sourceValue === undefined) {
+                    return;
+                }
+
+            } else {
+                // Original flow - starting with source type
+                sourceType = mappingType;
+                const tempMappingNode = new CatalogTreeItem(
+                    this.context,
+                    sourceType,
+                    '',
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'editable',
+                    undefined,
+                    parentNode
+                );
+
+                sourceValue = await this.promptForInputMapping(tempMappingNode);
+                if (sourceValue === undefined) {
+                    return;
+                }
+
+                // Create temporary node for version_input
+                const tempVersionInputNode = new CatalogTreeItem(
+                    this.context,
+                    'version_input',
+                    '',
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'editable',
+                    undefined,
+                    parentNode
+                );
+
+                versionInput = await this.promptForInputMapping(tempVersionInputNode);
+                if (versionInput === undefined) {
+                    return;
+                }
             }
 
-            // Create a temporary node for version_input
-            const tempVersionInputNode = new CatalogTreeItem(
-                this.context,
-                'version_input',
-                '',
-                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
-                vscode.TreeItemCollapsibleState.None,
-                'editable',
-                undefined,
-                parentNode
-            );
-
-            // 3. Get version_input using existing prompt
-            const versionInput = await this.promptForInputMapping(tempVersionInputNode);
-            if (versionInput === undefined) {
-                return; // User cancelled
+            // Only create mapping if we have both source type and values
+            if (!sourceType || !sourceValue || !versionInput) {
+                return;
             }
 
-            // 4. Create and add the new mapping
+            // Create and add the new mapping
             const newMapping = {
-                [mappingType]: mappingValue,
+                [sourceType]: sourceValue,
                 "version_input": versionInput
             };
 
@@ -882,31 +936,49 @@ export class CatalogService {
      * Prompts the user to select a mapping type for input mapping addition.
      * @returns The selected mapping type, or undefined if cancelled.
      */
-    private async promptForMappingType(): Promise<string | undefined> {
-        this.logger.debug('Prompting for mapping type');
-        const items: QuickPickItemEx<string>[] = [
+    private async promptForMappingType(options: {
+        title?: string;
+        excludeTypes?: string[];
+    } = {}): Promise<string | undefined> {
+        this.logger.debug('Prompting for mapping type', options);
+
+        const baseItems: QuickPickItemEx<string>[] = [
+            {
+                label: "Version Input",
+                description: "Start by selecting the input to map into",
+                detail: "Choose a configuration input that will receive the mapped value",
+                value: "version_input",
+                iconPath: new vscode.ThemeIcon('arrow-right')
+            },
             {
                 label: "Dependency Input",
                 description: "Map an input from this dependency",
                 detail: "Creates a mapping with dependency_input field",
-                value: "dependency_input"
+                value: "dependency_input",
+                iconPath: new vscode.ThemeIcon('symbol-property')
             },
             {
                 label: "Dependency Output",
                 description: "Map an output from this dependency",
                 detail: "Creates a mapping with dependency_output field",
-                value: "dependency_output"
+                value: "dependency_output",
+                iconPath: new vscode.ThemeIcon('symbol-event')
             },
             {
                 label: "Value",
                 description: "Set a static value",
                 detail: "Creates a mapping with value field",
-                value: "value"
+                value: "value",
+                iconPath: new vscode.ThemeIcon('symbol-constant')
             }
         ];
 
+        const items = options.excludeTypes
+            ? baseItems.filter(item => !options.excludeTypes?.includes(item.value))
+            : baseItems;
+
         const result = await PromptService.showQuickPick<string>({
-            title: 'Select Input Mapping Type',
+            title: options.title || 'Select Input Mapping Type',
             placeholder: 'Choose the type of mapping to add',
             items: items,
             matchOnDescription: true,
@@ -915,7 +987,6 @@ export class CatalogService {
 
         return result;
     }
-
     /**
      * Prompts the user for a new value for a given node.
      * Handles different types of nodes and delegates to specific prompt methods.
