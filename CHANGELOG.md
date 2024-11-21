@@ -1,13 +1,16 @@
 # Changelog
 
-## [0.2.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.2.2) (2024-11-14)
+## [0.2.3](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.2.3) (2024-11-21)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.0...0.2.2)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.2...0.2.3)
+
+**Closed issues:**
+
+- Add the Version Input as a starting point for the Input mapping prompt [\#63](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/63)
 
 **Merged pull requests:**
 
-- Fix workflow and bump version to 0.2.2 [\#62](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/62) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Fix flavor element handling and add tests [\#61](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/61) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance input mapping flow with version\_input option and version bump to 0.2.3 [\#69](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/69) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
