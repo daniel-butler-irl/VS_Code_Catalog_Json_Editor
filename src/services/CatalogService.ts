@@ -10,7 +10,7 @@ import { FileSystemService } from './core/FileSystemService';
 import { InputMappingService } from './InputMappingService';
 import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
-import type { FlavorObject } from '../types/catalog';
+import type { Dependency, FlavorObject, SwappableDependency } from '../types/catalog';
 import { CatalogServiceMode, type CatalogServiceState, type ICatalogFileInfo, type MappingOption } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
@@ -359,28 +359,91 @@ export class CatalogService {
     }
 
 
+    /**
+ * Handles adding dependencies or swappable dependencies to a flavor.
+ * Prompts for type selection when neither exists.
+ * @param flavorNode The flavor node to add dependencies to
+ */
     private async handleFlavorDependenciesAddition(flavorNode: CatalogTreeItem): Promise<void> {
         try {
-            // Check if dependencies already exist
             const flavorValue = flavorNode.value as FlavorObject;
-            if (flavorValue.dependencies) {
-                void vscode.window.showInformationMessage('Dependencies block already exists in this flavor');
+
+            // Only check for existing blocks if we're at the flavor level
+            // This ensures we don't trigger for child nodes
+            if (flavorNode.jsonPath.match(/\$\.products\[\d+\]\.flavors\[\d+\]$/)) {
+                const hasDependencies = Boolean(flavorValue.dependencies);
+                const hasSwappableDependencies = Boolean(flavorValue.swappable_dependencies);
+
+                // If both exist, show message and return
+                if (hasDependencies && hasSwappableDependencies) {
+                    void vscode.window.showInformationMessage(
+                        'Both dependencies and swappable dependencies blocks already exist in this flavor'
+                    );
+                    return;
+                }
+
+                // If neither exists, prompt for type
+                if (!hasDependencies && !hasSwappableDependencies) {
+                    const selection = await vscode.window.showQuickPick(
+                        [
+                            {
+                                label: 'Regular Dependencies',
+                                description: 'Add a regular dependencies block',
+                                value: 'dependencies'
+                            },
+                            {
+                                label: 'Swappable Dependencies',
+                                description: 'Add a swappable dependencies block',
+                                value: 'swappable_dependencies'
+                            }
+                        ],
+                        {
+                            placeHolder: 'Select dependency type to add',
+                            title: 'Add Dependencies'
+                        }
+                    );
+
+                    if (!selection) {
+                        return;
+                    }
+
+                    const updatedFlavor: FlavorObject = {
+                        ...flavorValue,
+                        dependency_version_2: flavorValue.hasOwnProperty('dependency_version_2')
+                            ? flavorValue.dependency_version_2
+                            : true
+                    };
+
+                    if (selection.value === 'dependencies') {
+                        updatedFlavor.dependencies = [];
+                    } else {
+                        updatedFlavor.swappable_dependencies = [];
+                    }
+
+                    await this.updateJsonValue(flavorNode.jsonPath, updatedFlavor);
+                    void vscode.window.showInformationMessage(
+                        `Successfully added ${selection.value === 'dependencies' ? 'dependencies' : 'swappable dependencies'} to flavor`
+                    );
+                    return;
+                }
+
+                // If one exists, add the other
+                const updatedFlavor: FlavorObject = {
+                    ...flavorValue,
+                    [hasDependencies ? 'swappable_dependencies' : 'dependencies']: []
+                };
+
+                await this.updateJsonValue(flavorNode.jsonPath, updatedFlavor);
+                void vscode.window.showInformationMessage(
+                    `Successfully added ${hasDependencies ? 'swappable dependencies' : 'dependencies'} to flavor`
+                );
                 return;
             }
 
-            // Add dependencies array and preserve existing version flag or set default
-            const updatedFlavor: FlavorObject = {
-                ...flavorValue,
-                dependencies: [],
-                // Only set to true if it doesn't already exist
-                dependency_version_2: flavorValue.hasOwnProperty('dependency_version_2')
-                    ? flavorValue.dependency_version_2
-                    : true
-            };
+            // Handle actual dependency additions here
+            // This is where we'll handle adding to either dependencies or swappable_dependencies arrays
+            await this.handleDependencyAddition(flavorNode);
 
-            // Update the flavor
-            await this.updateJsonValue(flavorNode.jsonPath, updatedFlavor);
-            void vscode.window.showInformationMessage('Successfully added dependencies to flavor');
         } catch (error) {
             this.logger.error('Failed to add dependencies to flavor', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -401,6 +464,10 @@ export class CatalogService {
         return matches && node.contextValue === 'array';
     }
 
+    /**
+ * Handles adding a flavor to either a regular dependency or swappable dependency flavor array.
+ * @param parentNode The parent node representing the flavors array
+ */
     private async handleDependencyFlavorArrayAddition(parentNode: CatalogTreeItem): Promise<void> {
         this.logger.debug('Starting dependency flavor array addition');
 
@@ -414,23 +481,26 @@ export class CatalogService {
 
                 if (result === 'Yes') {
                     await vscode.commands.executeCommand('ibmCatalog.login');
-                    // Return early and let the user try again after login
                     return;
                 }
                 return;
             }
 
-            // Get dependency context
+            // Get dependency context - could be regular or within swappable
             const dependencyNode = parentNode.getDependencyParent();
             if (!dependencyNode?.value || typeof dependencyNode.value !== 'object') {
                 throw new Error('Cannot find dependency context for flavor selection');
             }
 
-            const depValue = dependencyNode.value as Record<string, any>;
+            const depValue = dependencyNode.value as Dependency;
             const catalogId = depValue.catalog_id;
             const offeringId = depValue.id;
 
-            this.logger.debug('Dependency context found', { catalogId, offeringId });
+            this.logger.debug('Dependency context found', {
+                catalogId,
+                offeringId,
+                isSwappable: parentNode.isInSwappableDependency()
+            });
 
             if (!catalogId || !offeringId) {
                 throw new Error('Missing catalog_id or offering_id for flavor selection');
@@ -466,32 +536,31 @@ export class CatalogService {
                 void vscode.window.showInformationMessage(message);
                 return;
             }
-            // Prepare flavor details for selection with better error handling
-            const flavorDetailsPromises = newFlavorOptions.map(async (flavorName) => {
-                try {
-                    const details = await ibmCloudService.getFlavorDetails(catalogId, offeringId, flavorName);
-                    return {
-                        name: flavorName,
-                        label: details?.label || flavorName,
-                        description: details?.description || 'No description available'
-                    };
-                } catch (error) {
-                    this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
-                    return {
-                        name: flavorName,
-                        label: flavorName,
-                        description: 'No description available'
-                    };
-                }
-            });
 
-            const flavorDetails = await Promise.all(flavorDetailsPromises);
-            this.logger.debug('Prepared flavor details for selection', { count: flavorDetails.length });
+            // Prepare flavor details for selection
+            const flavorDetails = await Promise.all(
+                newFlavorOptions.map(async (flavorName) => {
+                    try {
+                        const details = await ibmCloudService.getFlavorDetails(catalogId, offeringId, flavorName);
+                        return {
+                            name: flavorName,
+                            label: details?.label || flavorName,
+                            description: details?.description || 'No description available'
+                        };
+                    } catch (error) {
+                        this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
+                        return {
+                            name: flavorName,
+                            label: flavorName,
+                            description: 'No description available'
+                        };
+                    }
+                })
+            );
 
-            // Ensure we're running the quick pick in a safe context
+            // Ensure focus for quick pick
             await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
 
-            // Show flavor selection dialog with explicit error handling
             try {
                 const selectedFlavor = await PromptService.showQuickPick<string>({
                     title: 'Select Flavor',
@@ -518,6 +587,28 @@ export class CatalogService {
                 const updatedFlavors = [...currentFlavors, selectedFlavor];
                 await this.updateJsonValue(parentNode.jsonPath, updatedFlavors);
 
+                // If this is in a swappable dependency and it's the first flavor,
+                // ask if it should be the default
+                const swappableDependencyNode = parentNode.getSwappableDependencyParent();
+                if (swappableDependencyNode && currentFlavors.size === 0) {
+                    const swappableValue = swappableDependencyNode.value as SwappableDependency;
+                    if (!swappableValue.default_dependency) {
+                        const makeDefault = await vscode.window.showQuickPick(
+                            ['Yes', 'No'],
+                            {
+                                placeHolder: 'Set this as the default dependency?'
+                            }
+                        );
+
+                        if (makeDefault === 'Yes') {
+                            await this.updateJsonValue(
+                                `${swappableDependencyNode.jsonPath}.default_dependency`,
+                                depValue.name
+                            );
+                        }
+                    }
+                }
+
                 void vscode.window.showInformationMessage(`Successfully added flavor: ${selectedFlavor}`);
             } catch (error) {
                 this.logger.error('Error showing quick pick or updating flavors', error);
@@ -532,35 +623,132 @@ export class CatalogService {
         }
     }
 
-    private async addDependenciesToFlavor(flavorNode: CatalogTreeItem): Promise<void> {
+    /**
+   * Handles guided creation of a swappable dependency group.
+   * @param parentNode The parent node representing the swappable_dependencies array
+   */
+    private async handleSwappableDependencyAddition(parentNode: CatalogTreeItem): Promise<void> {
         try {
-            // Get current flavor object with correct type
-            const currentValue = flavorNode.value as FlavorObject;
+            // 1. First prompt for the swappable group name
+            const swappableName = await PromptService.showInputBox<string>({
+                title: 'Enter Swappable Dependency Group Name',
+                placeholder: 'Enter a unique identifier for this swappable group',
+                validate: (value) => {
+                    if (!value.trim()) {
+                        return 'Name cannot be empty';
+                    }
+                    // Check if name already exists in current swappable dependencies
+                    const currentDeps = parentNode.value as SwappableDependency[];
+                    if (currentDeps?.some(dep => dep.name === value.trim())) {
+                        return 'A swappable dependency group with this name already exists';
+                    }
+                    return null;
+                }
+            });
 
-            // Create updated flavor object
-            const updatedValue: FlavorObject = {
-                ...currentValue,
-                dependencies: [], // Add empty dependencies array
+            if (!swappableName) { return; }
+
+            // 2. Prompt for optional flag
+            const isOptional = await PromptService.showBooleanPick({
+                title: 'Is this swappable dependency group optional?',
+                placeholder: 'Select whether this group is required',
+                trueLabel: 'Optional',
+                falseLabel: 'Required',
+                decorator: {
+                    validationMessage: 'Optional groups can be excluded from deployment'
+                }
+            });
+
+            if (isOptional === undefined) { return; }
+
+            // 3. Create the swappable dependency structure
+            const newSwappableGroup: SwappableDependency = {
+                name: swappableName,
+                default_dependency: '',  // Will be set after adding first dependency
+                optional: isOptional,
+                dependencies: []
             };
 
-            // Check if dependency_version_2 is missing
-            if (!currentValue.hasOwnProperty('dependency_version_2')) {
-                updatedValue.dependency_version_2 = true;
+            // 4. Add the swappable group to the array
+            const currentGroups = (parentNode.value as SwappableDependency[]) || [];
+            await this.updateJsonValue(
+                parentNode.jsonPath,
+                [...currentGroups, newSwappableGroup]
+            );
+
+            // 5. Show success message and prompt to add first dependency
+            const addFirstDep = await vscode.window.showInformationMessage(
+                `Successfully created swappable dependency group: ${swappableName}. Would you like to add the first dependency now?`,
+                'Yes',
+                'No'
+            );
+
+            if (addFirstDep === 'Yes') {
+                // Get the path for the dependencies array of the newly added group
+                const newGroupIndex = currentGroups.length;
+                const dependenciesNode = new CatalogTreeItem(
+                    this.context,
+                    'dependencies',
+                    [],
+                    `${parentNode.jsonPath}[${newGroupIndex}].dependencies`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'array',
+                    undefined,
+                    parentNode
+                );
+
+                // Add the first dependency
+                await this.handleDependencyAddition(dependenciesNode);
             }
 
-            // Update the flavor
-            await this.updateJsonValue(flavorNode.jsonPath, updatedValue);
-
-            void vscode.window.showInformationMessage('Successfully added dependencies to flavor');
         } catch (error) {
-            this.logger.error('Failed to add dependencies to flavor', error);
+            this.logger.error('Failed to add swappable dependency group', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
-            void vscode.window.showErrorMessage(`Failed to add dependencies: ${message}`);
+            void vscode.window.showErrorMessage(`Failed to add swappable dependency group: ${message}`);
             throw error;
         }
     }
 
+    /**
+     * Determines whether to add a regular dependency or create a new swappable group
+     * @param parentNode The parent node where the addition should occur
+     */
     private async handleDependencyAddition(parentNode: CatalogTreeItem): Promise<void> {
+        this.logger.debug('Starting dependency addition', {
+            path: parentNode.jsonPath
+        });
+
+        // Check if we're dealing with a swappable_dependencies array directly
+        if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
+            this.logger.debug('Handling swappable group addition');
+            await this.handleSwappableDependencyGroupAddition(parentNode);
+            return;
+        }
+
+        // Check if we're inside a swappable dependency's dependencies array
+        // or in a regular dependencies array
+        const isSwappableDepsArray = parentNode.jsonPath.match(/\.swappable_dependencies\[\d+\]\.dependencies$/);
+        const isRegularDepsArray = parentNode.jsonPath.endsWith('.dependencies');
+
+        if (isSwappableDepsArray) {
+            this.logger.debug('Adding dependency to swappable group');
+            await this.handleSwappableDependencyAddition(parentNode);
+        } else if (isRegularDepsArray) {
+            this.logger.debug('Adding regular dependency');
+            await this.handleRegularDependencyAddition(parentNode);
+        } else {
+            this.logger.error('Invalid location for dependency addition', {
+                path: parentNode.jsonPath
+            });
+            void vscode.window.showErrorMessage('Cannot add dependency at this location');
+        }
+    }
+    /**
+     * Handles adding a new regular dependency to either a dependencies array 
+     * or a swappable dependency group's dependencies array.
+     * @param parentNode The parent node representing the dependencies array
+     */
+    private async handleRegularDependencyAddition(parentNode: CatalogTreeItem): Promise<void> {
         const ibmCloudService = await this.getIBMCloudService();
         if (!ibmCloudService) {
             const result = await vscode.window.showWarningMessage(
@@ -570,12 +758,22 @@ export class CatalogService {
 
             if (result === 'Yes') {
                 await vscode.commands.executeCommand('ibmCatalog.login');
-                return this.handleDependencyAddition(parentNode);
+                return this.handleRegularDependencyAddition(parentNode);
             }
             return;
         }
 
         try {
+            // Check if we're inside a swappable dependency for context
+            const swappableNode = parentNode.getSwappableDependencyParent();
+            const isInSwappable = Boolean(swappableNode);
+
+            this.logger.debug('Adding regular dependency', {
+                path: parentNode.jsonPath,
+                isInSwappable,
+                swappableName: isInSwappable ? (swappableNode?.value as SwappableDependency).name : undefined
+            });
+
             // 1. Select Catalog
             const catalogId = await this.promptForCatalogId();
             if (!catalogId) { return; }
@@ -584,41 +782,30 @@ export class CatalogService {
             const offeringDetails = await this.promptForOfferingWithDetails(catalogId);
             if (!offeringDetails) { return; }
 
-            // 3. Create a temporary dependency node and version node for version selection
-            const tempDependencyNode = new CatalogTreeItem(
-                this.context,
-                'dependency',
-                {
-                    catalog_id: catalogId,
-                    id: offeringDetails.id
-                },
-                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}]`,
-                vscode.TreeItemCollapsibleState.None,
-                'container'
+            // 3. Get version using promptForVersion
+            const versionConstraint = await this.promptForVersion(
+                new CatalogTreeItem(
+                    this.context,
+                    'version',
+                    '',
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'editable'
+                )
             );
-
-            const tempVersionNode = new CatalogTreeItem(
-                this.context,
-                'version',
-                '',  // current value
-                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version`,
-                vscode.TreeItemCollapsibleState.None,
-                'editable',
-                undefined,
-                tempDependencyNode  // Set the parent node
-            );
-
-            // 4. Get version using the promptForVersion method
-            const versionConstraint = await this.promptForVersion(tempVersionNode);
             if (!versionConstraint) { return; }
 
-            // 5. Select Flavors with details
+            // 4. Select Flavors
             const flavors = await ibmCloudService.getAvailableFlavors(
                 catalogId,
                 offeringDetails.id
             );
 
-            // Fetch details for each flavor using OfferingFlavor interface
+            if (!flavors.length) {
+                void vscode.window.showWarningMessage('No flavors available for this offering.');
+                return;
+            }
+
             const flavorDetails = await Promise.all(
                 flavors.map(async (flavorName) => {
                     try {
@@ -627,18 +814,18 @@ export class CatalogService {
                             offeringDetails.id,
                             flavorName
                         );
-                        return details || {
+                        return {
                             name: flavorName,
-                            label: flavorName,
-                            description: 'No description available'
-                        } as OfferingFlavor;
+                            label: details?.label || flavorName,
+                            description: details?.description || 'No description available'
+                        };
                     } catch (error) {
                         this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
                         return {
                             name: flavorName,
                             label: flavorName,
                             description: 'No description available'
-                        } as OfferingFlavor;
+                        };
                     }
                 })
             );
@@ -647,61 +834,88 @@ export class CatalogService {
                 title: 'Select Flavors',
                 placeholder: 'Choose one or more flavors (Space to select, Enter to confirm)',
                 items: flavorDetails.map(flavor => ({
-                    label: `${flavor.label || flavor.name}`,
+                    label: `${flavor.label}`,
                     description: `(${flavor.name})`,
-                    detail: flavor.description || flavor.label_i18n?.['en'] || 'No description available',
+                    detail: flavor.description,
                     value: flavor.name,
                     picked: false,
                     iconPath: new vscode.ThemeIcon('circle-outline')
                 })),
-                canPickMany: true,  // This will make the return type string[] even though each item has string value
+                canPickMany: true,
                 matchOnDescription: true,
-                matchOnDetail: true,
-                buttons: [
-                    {
-                        iconPath: new vscode.ThemeIcon('info'),
-                        tooltip: 'Space to select/deselect, Enter to confirm selection'
-                    }
-                ]
-            });
+                matchOnDetail: true
+            }) as unknown as string[];
 
-            if (!selectedFlavors || selectedFlavors.length === 0) {
-                vscode.window.showWarningMessage('At least one flavor must be selected');
+            if (!selectedFlavors?.length) {
+                void vscode.window.showWarningMessage('At least one flavor must be selected');
                 return;
             }
 
-            // 6. Prompt for optional flag
+            // 5. Prompt for optional flag
             const isOptional = await PromptService.showBooleanPick({
                 title: 'Is this dependency optional?',
                 placeholder: 'Select whether this dependency is required',
                 trueLabel: 'Optional',
-                falseLabel: 'Required',
-                decorator: {
-                    validationMessage: 'Optional dependencies can be excluded from deployment'
-                }
+                falseLabel: 'Required'
             });
 
             if (isOptional === undefined) { return; }
 
+            // 6. Prompt for on_by_default (only if optional is true)
+            let onByDefault = false;
+            if (isOptional) {
+                const onByDefaultResponse = await PromptService.showBooleanPick({
+                    title: 'Enable by default?',
+                    placeholder: 'Should this optional dependency be enabled by default?',
+                    trueLabel: 'Yes, enable by default',
+                    falseLabel: 'No, disabled by default'
+                });
+
+                if (onByDefaultResponse === undefined) { return; }
+                onByDefault = onByDefaultResponse;
+            }
+
             // 7. Create the dependency object
-            const newDependency = {
+            const newDependency: Dependency = {
                 name: offeringDetails.name,
                 id: offeringDetails.id,
                 version: versionConstraint,
                 flavors: selectedFlavors,
                 catalog_id: catalogId,
                 optional: isOptional,
+                on_by_default: onByDefault,
                 input_mapping: []
             };
 
-            // Add to the dependencies array
-            const currentDependencies = (parentNode.value as any[]) || [];
+            // 8. Add to the dependencies array
+            const currentDependencies = (parentNode.value as Dependency[]) || [];
             await this.updateJsonValue(
                 parentNode.jsonPath,
                 [...currentDependencies, newDependency]
             );
 
-            // Show success message
+            // 9. If this is in a swappable dependency and it's the first dependency,
+            // ask if it should be the default
+            if (isInSwappable && swappableNode && currentDependencies.length === 0) {
+                const swappableValue = swappableNode.value as SwappableDependency;
+                if (!swappableValue.default_dependency) {
+                    const makeDefault = await vscode.window.showQuickPick(
+                        ['Yes', 'No'],
+                        {
+                            title: 'Set as Default',
+                            placeHolder: 'Set this as the default dependency?'
+                        }
+                    );
+
+                    if (makeDefault === 'Yes') {
+                        await this.updateJsonValue(
+                            `${swappableNode.jsonPath}.default_dependency`,
+                            newDependency.name
+                        );
+                    }
+                }
+            }
+
             void vscode.window.showInformationMessage(
                 `Successfully added dependency: ${offeringDetails.name}`
             );
@@ -784,6 +998,37 @@ export class CatalogService {
         return null;
     }
 
+
+    /**
+ * Creates a new dependency object with default values.
+ * @returns A new Dependency object with default values
+ */
+    private createDefaultDependency(): Dependency {
+        return {
+            catalog_id: '',
+            id: '',
+            name: '',
+            version: '',
+            flavors: [],
+            optional: false,
+            on_by_default: false,  // New field defaulted to false
+            input_mapping: []
+        };
+    }
+
+    /**
+     * Creates a new swappable dependency group.
+     * @param name Name for the swappable dependency group
+     * @returns A new SwappableDependency object with default values
+     */
+    private createDefaultSwappableDependency(name: string): SwappableDependency {
+        return {
+            name,
+            default_dependency: '',
+            optional: false,
+            dependencies: []
+        };
+    }
 
     private async promptForOfferingWithDetails(catalogId: string): Promise<{
         id: string;

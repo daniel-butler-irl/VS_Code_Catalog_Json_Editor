@@ -25,12 +25,101 @@ export interface MappingOption {
     mappingType: 'input' | 'output';
 }
 
-export interface FlavorObject {
-    dependencies?: any[];
-    dependency_version_2?: boolean;
-    [key: string]: any; // Allow other properties
+/**
+ * Represents a standard dependency in the catalog
+ */
+export interface Dependency {
+    /**
+     * The ID of the catalog containing this dependency
+     */
+    catalog_id: string;
+
+    /**
+     * The unique identifier of this dependency
+     */
+    id: string;
+
+    /**
+     * Display name of the dependency
+     */
+    name: string;
+
+    /**
+     * Version constraint for this dependency
+     */
+    version: string;
+
+    /**
+     * List of available flavors for this dependency
+     */
+    flavors: string[];
+
+    /**
+     * Whether this dependency is optional
+     */
+    optional: boolean;
+
+    /**
+     * Whether this dependency is enabled by default
+     * @default true
+     */
+    on_by_default?: boolean;
+
+    /**
+     * Input mappings for this dependency
+     */
+    input_mapping: InputMapping[];
 }
 
+/**
+ * Represents a swappable dependency group that contains alternative dependencies
+ */
+export interface SwappableDependency {
+    /**
+     * Name identifier for this swappable dependency group
+     */
+    name: string;
+
+    /**
+     * The dependency that should be used by default
+     */
+    default_dependency: string;
+
+    /**
+     * Whether this swappable dependency group is optional
+     */
+    optional: boolean;
+
+    /**
+     * Collection of alternative dependencies that can be swapped
+     */
+    dependencies: Dependency[];
+}
+
+/**
+ * Represents a flavor in the catalog
+ */
+export interface FlavorObject {
+    /**
+     * Standard dependencies for this flavor
+     */
+    dependencies?: Dependency[];
+
+    /**
+     * Groups of swappable dependencies
+     */
+    swappable_dependencies?: SwappableDependency[];
+
+    /**
+     * Flag indicating dependency version 2 format
+     */
+    dependency_version_2?: boolean;
+
+    /**
+     * Additional flavor properties
+     */
+    [key: string]: any;
+}
 
 export interface ICatalogFileInfo {
     /**
