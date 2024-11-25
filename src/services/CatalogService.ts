@@ -252,6 +252,12 @@ export class CatalogService {
                 return;
             }
 
+            // Handle for swappable dependencies array
+            if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
+                await this.handleSwappableDependencyAddition(parentNode);
+                return;
+            }
+
             // Handle input_mapping additions
             if (parentNode.jsonPath.endsWith('.input_mapping')) {
                 await this.handleInputMappingAddition(parentNode);
@@ -360,10 +366,10 @@ export class CatalogService {
 
 
     /**
- * Handles adding dependencies or swappable dependencies to a flavor.
- * Prompts for type selection when neither exists.
- * @param flavorNode The flavor node to add dependencies to
- */
+    * Handles adding dependencies or swappable dependencies to a flavor.
+    * Prompts for type selection when neither exists.
+    * @param flavorNode The flavor node to add dependencies to
+    */
     private async handleFlavorDependenciesAddition(flavorNode: CatalogTreeItem): Promise<void> {
         try {
             const flavorValue = flavorNode.value as FlavorObject;
@@ -407,8 +413,10 @@ export class CatalogService {
                         return;
                     }
 
+                    // If one exists, add the other
                     const updatedFlavor: FlavorObject = {
                         ...flavorValue,
+                        [hasDependencies ? 'swappable_dependencies' : 'dependencies']: [],
                         dependency_version_2: flavorValue.hasOwnProperty('dependency_version_2')
                             ? flavorValue.dependency_version_2
                             : true
@@ -465,9 +473,9 @@ export class CatalogService {
     }
 
     /**
- * Handles adding a flavor to either a regular dependency or swappable dependency flavor array.
- * @param parentNode The parent node representing the flavors array
- */
+    * Handles adding a flavor to either a regular dependency or swappable dependency flavor array.
+    * @param parentNode The parent node representing the flavors array
+    */
     private async handleDependencyFlavorArrayAddition(parentNode: CatalogTreeItem): Promise<void> {
         this.logger.debug('Starting dependency flavor array addition');
 
@@ -717,24 +725,24 @@ export class CatalogService {
         this.logger.debug('Starting dependency addition', {
             path: parentNode.jsonPath
         });
-
+    
         // Check if we're dealing with a swappable_dependencies array directly
         if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
             this.logger.debug('Handling swappable group addition');
-            await this.handleSwappableDependencyGroupAddition(parentNode);
+            await this.handleSwappableDependencyAddition(parentNode);
             return;
         }
-
+    
         // Check if we're inside a swappable dependency's dependencies array
         // or in a regular dependencies array
-        const isSwappableDepsArray = parentNode.jsonPath.match(/\.swappable_dependencies\[\d+\]\.dependencies$/);
-        const isRegularDepsArray = parentNode.jsonPath.endsWith('.dependencies');
-
-        if (isSwappableDepsArray) {
-            this.logger.debug('Adding dependency to swappable group');
-            await this.handleSwappableDependencyAddition(parentNode);
-        } else if (isRegularDepsArray) {
-            this.logger.debug('Adding regular dependency');
+        const isInSwappableDep = /\.swappable_dependencies\[\d+\]\.dependencies$/.test(parentNode.jsonPath);
+        const isRegularDepsArray = parentNode.jsonPath.endsWith('.dependencies') && !isInSwappableDep;
+    
+        if (isInSwappableDep || isRegularDepsArray) {
+            this.logger.debug('Adding regular dependency', {
+                path: parentNode.jsonPath,
+                isInSwappableDep
+            });
             await this.handleRegularDependencyAddition(parentNode);
         } else {
             this.logger.error('Invalid location for dependency addition', {
@@ -743,6 +751,7 @@ export class CatalogService {
             void vscode.window.showErrorMessage('Cannot add dependency at this location');
         }
     }
+
     /**
      * Handles adding a new regular dependency to either a dependencies array 
      * or a swappable dependency group's dependencies array.
@@ -783,17 +792,35 @@ export class CatalogService {
             if (!offeringDetails) { return; }
 
             // 3. Get version using promptForVersion
-            const versionConstraint = await this.promptForVersion(
+            const tempVersionNode = new CatalogTreeItem(
+                this.context,
+                'version',
+                '',
+                `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version`,
+                vscode.TreeItemCollapsibleState.None,
+                'editable',
+                undefined,
                 new CatalogTreeItem(
                     this.context,
-                    'version',
-                    '',
-                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version`,
+                    'dependency',
+                    {
+                        catalog_id: catalogId,
+                        id: offeringDetails.id,
+                        name: offeringDetails.name
+                    },
+                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}]`,
                     vscode.TreeItemCollapsibleState.None,
-                    'editable'
+                    'container',
+                    undefined,
+                    parentNode
                 )
             );
-            if (!versionConstraint) { return; }
+
+            const versionConstraint = await this.promptForVersion(tempVersionNode);
+            if (!versionConstraint) { 
+                this.logger.debug('Version selection cancelled');
+                return; 
+            }
 
             // 4. Select Flavors
             const flavors = await ibmCloudService.getAvailableFlavors(
