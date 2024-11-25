@@ -156,6 +156,39 @@ export class CatalogTreeItem extends vscode.TreeItem {
     }
 
     /**
+    * Checks if this node represents a swappable dependencies array.
+    * @returns boolean True if this node is a swappable dependencies array
+    */
+    public isSwappableDependenciesArray(): boolean {
+        return this.jsonPath.endsWith('.swappable_dependencies');
+    }
+
+    /**
+     * Checks if this node is within a swappable dependency block.
+     * @returns boolean True if this node is within a swappable dependency structure
+     */
+    public isInSwappableDependency(): boolean {
+        return Boolean(this.jsonPath.match(/\.swappable_dependencies\[\d+\]/));
+    }
+
+    /**
+     * Gets the parent swappable dependency node if this item is within one.
+     * @returns CatalogTreeItem | undefined The parent swappable dependency node or undefined
+     */
+    public getSwappableDependencyParent(): CatalogTreeItem | undefined {
+        let current: CatalogTreeItem | undefined = this.parent;
+        const swappablePattern = /\.swappable_dependencies\[\d+\]$/;
+
+        while (current) {
+            if (swappablePattern.test(current.jsonPath)) {
+                return current;
+            }
+            current = current.parent;
+        }
+        return undefined;
+    }
+
+    /**
      * Validates a dependency flavor against its offering
      */
     private async validateDependencyFlavor(): Promise<void> {
@@ -462,16 +495,16 @@ export class CatalogTreeItem extends vscode.TreeItem {
      */
     private getValueTypeIcon(): vscode.ThemeIcon {
         // Special Icons for specific fields
-        if (this.label === 'catalog_id'){
+        if (this.label === 'catalog_id') {
             return new vscode.ThemeIcon('book', new vscode.ThemeColor('ibmCatalog.catalogIdColor'));
 
-        }else if (this.isOfferingIdInDependency()){
+        } else if (this.isOfferingIdInDependency()) {
             return new vscode.ThemeIcon('cloud', new vscode.ThemeColor('ibmCatalog.offeringIdColor'));
 
-        }else if (this.isDependencyFlavor()){
+        } else if (this.isDependencyFlavor()) {
             return new vscode.ThemeIcon('link', new vscode.ThemeColor('ibmCatalog.flavorColor'));
 
-        }else if (this.isVersionInDependency()){
+        } else if (this.isVersionInDependency()) {
             return new vscode.ThemeIcon('versions', new vscode.ThemeColor('ibmCatalog.versionColor'));
         }
 

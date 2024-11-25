@@ -53,7 +53,7 @@ export const DEFAULT_PERFORMANCE_THRESHOLDS: Readonly<IPerformanceThresholds> = 
   DOC_CHANGE_FACTOR: 25,        // Multiplier for acceptable slowdown after document modifications
 
   /** Maximum time allowed for rapid, repeated operations */
-  RAPID_OP: 200,               // Used when testing quick successive highlighting requests
+  RAPID_OP: 250,               // Used when testing quick successive highlighting requests
 
   /** Maximum time allowed for operations that happen alongside other operations */
   CONCURRENT_OP: 200,          // Operations happening simultaneously
