@@ -10,8 +10,10 @@ import { FileSystemService } from './core/FileSystemService';
 import { InputMappingService } from './InputMappingService';
 import { PromptService } from './core/PromptService';
 import type { Configuration, OfferingFlavor } from '../types/ibmCloud';
-import type { Dependency, FlavorObject, SwappableDependency } from '../types/catalog';
+import type { ConfigurationFieldProperty, ConfigurationFieldSelection, Dependency, FlavorObject, SwappableDependency } from '../types/catalog';
 import { CatalogServiceMode, type CatalogServiceState, type ICatalogFileInfo, type MappingOption } from '../types/catalog';
+import type { Configuration as IBMCloudConfiguration } from '../types/ibmCloud';
+import type { Configuration as CatalogConfiguration } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
 import { CachePrefetchService } from './core/CachePrefetchService';
@@ -327,13 +329,20 @@ export class CatalogService {
      */
     public async editElement(node: CatalogTreeItem): Promise<void> {
         await this.ensureInitialized();
-
+    
         try {
+
+             // Special handling for configuration arrays
+            if (node.label === 'configuration' && Array.isArray(node.value)) {
+                await this.handleConfigurationFieldsEdit(node);
+                return;
+            }
+            // Handle regular element editing
             const newValue = await this.promptForValue(node, node.value);
             if (newValue === undefined) {
                 return; // User cancelled
             }
-
+    
             await this.updateJsonValue(node.jsonPath, newValue);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -955,6 +964,77 @@ export class CatalogService {
         }
     }
 
+    private async handleConfigurationFieldsEdit(node: CatalogTreeItem): Promise<void> {
+        const currentConfig = node.value as CatalogConfiguration[];
+        this.logger.debug('Current configuration', { currentConfig });
+    
+        // Collect all unique field properties across all configurations
+        const fieldProperties = new Set<ConfigurationFieldProperty>();
+        currentConfig.forEach(config => {
+            Object.keys(config).forEach(key => {
+                if (key !== 'key' && config.hasOwnProperty(key)) {
+                    fieldProperties.add(key as ConfigurationFieldProperty);
+                }
+            });
+        });
+        this.logger.debug('Collected field properties', { fieldProperties: Array.from(fieldProperties) });
+    
+        // Create quick pick items for each field property
+        const items: QuickPickItemEx<ConfigurationFieldProperty>[] = Array.from(fieldProperties).map(prop => ({
+            label: prop,
+            description: this.getPropertyDescription(prop),
+            picked: false, // Default to unselected
+            value: prop
+        }));
+        this.logger.debug('Quick pick items', { items });
+    
+        const selectedProperties = await PromptService.showQuickPick<ConfigurationFieldProperty>({
+            title: 'Select Field Properties to Delete',
+            placeholder: 'Select properties to delete (key field cannot be removed)',
+            canPickMany: true,
+            items,
+            matchOnDescription: true
+        });
+        this.logger.debug('Selected properties to delete', { selectedProperties });
+    
+        if (!selectedProperties) {
+            this.logger.debug('No properties selected, exiting');
+            return; // User cancelled or no selection
+        }
+    
+        // Create new configuration array without the selected properties
+        const updatedConfig = currentConfig.map(config => {
+            const newConfig: Partial<CatalogConfiguration> = { ...config }; // Start with a copy of the config
+    
+            // Remove the selected properties
+            selectedProperties.forEach((prop: ConfigurationFieldProperty) => {
+                if (prop in newConfig) {
+                    delete newConfig[prop];
+                    this.logger.debug('Removed property from config', { key: config.key, prop });
+                }
+            });
+            this.logger.debug('New config for key', { key: config.key, newConfig });
+            return newConfig as CatalogConfiguration;
+        });
+        this.logger.debug('Updated configuration', { updatedConfig });
+    
+        await this.updateJsonValue(node.jsonPath, updatedConfig);
+    }
+    
+      
+    
+    private getPropertyDescription(property: ConfigurationFieldProperty): string {
+        const descriptions: Record<ConfigurationFieldProperty, string> = {
+            'type': 'Data type of the configuration field',
+            'default_value': 'Default value if not specified',
+            'description': 'Description of the configuration field',
+            'required': 'Whether the field is required',
+            'display_name': 'Display name for the field',
+            'custom_config': 'Custom configuration options'
+        };
+        return descriptions[property];
+    }
+      
     private async getAvailableVersions(catalogId: string, offeringId: string): Promise<string[]> {
         const logger = this.logger;
         const ibmCloudService = await this.getIBMCloudService();

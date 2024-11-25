@@ -176,3 +176,30 @@ export enum CatalogServiceMode {
     /** Full functionality with workspace and catalog file */
     Full = 'full'
 }
+
+
+/**
+ * 
+ */
+export interface ConfigurationFieldSelection {
+    key: string;
+    included: boolean;
+    required: boolean;
+    description?: string;
+    type?: string;
+    default_value?: any;
+  }
+
+  export type ConfigurationFieldProperty = keyof Omit<Configuration, 'key'>;
+
+
+  export interface Configuration {
+    key: string;
+    type?: any;
+    default_value?: any;
+    description?: string;
+    required?: boolean;
+    custom_config?: any;
+    display_name?: string;
+  }
+  
