@@ -1,16 +1,19 @@
 # Changelog
 
-## [0.2.3](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.2.3) (2024-11-21)
+## [0.3.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.0) (2024-11-26)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.2...0.2.3)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.3...0.3.0)
 
 **Closed issues:**
 
-- Add the Version Input as a starting point for the Input mapping prompt [\#63](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/63)
+- Swappable Deps support [\#73](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/73)
+- on\_by default added to dependencey set to false [\#72](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/72)
+- Tool: Strip descriptions, type and default values from flavor configurations [\#66](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/66)
 
 **Merged pull requests:**
 
-- Enhance input mapping flow with version\_input option and version bump to 0.2.3 [\#69](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/69) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Add configuration handling and field editing capabilities in CatalogService [\#75](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/75) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Add Swapable dependencies features [\#74](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/74) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
