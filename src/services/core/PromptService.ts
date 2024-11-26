@@ -106,6 +106,15 @@ export class PromptService {
         }
     }
 
+        // Overload for canPickMany = true
+public static async showQuickPick<T>(
+    options: QuickPickOptions<T> & { canPickMany: true }
+): Promise<T[] | undefined>;
+
+// Overload for canPickMany = false or undefined
+public static async showQuickPick<T>(
+    options: QuickPickOptions<T> & { canPickMany?: false | undefined }
+): Promise<T | undefined>;
     /**
      * Shows a quick pick with enhanced filtering and grouping capabilities
      * @param options Configuration options for the quick pick
@@ -113,17 +122,17 @@ export class PromptService {
      */
     public static async showQuickPick<T>(
         options: QuickPickOptions<T>
-    ): Promise<T | undefined> {
+    ): Promise<T | T[] | undefined> {
         this.logger.debug('Showing quick pick', {
             title: options.title,
             itemCount: options.items.length
         });
-
+    
         const quickPick = vscode.window.createQuickPick<QuickPickItemEx<T>>();
         const decorator = this.createDecorator(options.decorator);
-
+    
         try {
-            return await new Promise<T | undefined>((resolve) => {
+            return await new Promise<T | T[] | undefined>((resolve) => {
                 quickPick.title = options.title;
                 quickPick.placeholder = options.placeholder;
                 quickPick.items = this.prepareQuickPickItems(options.items);
@@ -131,29 +140,32 @@ export class PromptService {
                 quickPick.matchOnDetail = options.matchOnDetail ?? false;
                 quickPick.canSelectMany = options.canPickMany ?? false;
                 quickPick.buttons = [...(options.buttons ?? [])];
-
+    
                 if (decorator) {
                     void decorator.decorate(quickPick);
                 }
-
+    
                 if (options.activeItems?.length) {
                     quickPick.activeItems = options.activeItems
                         .map(item => this.findQuickPickItem(quickPick.items, item))
                         .filter((item): item is QuickPickItemEx<T> => item !== undefined);
                 }
-
+    
                 quickPick.onDidAccept(() => {
-                    const selection = quickPick.canSelectMany
-                        ? quickPick.selectedItems.map(item => item.value)
-                        : quickPick.selectedItems[0]?.value;
+                    let selection: T | T[] | undefined;
+                    if (quickPick.canSelectMany) {
+                        selection = quickPick.selectedItems.map(item => item.value);
+                    } else {
+                        selection = quickPick.selectedItems[0]?.value;
+                    }
                     quickPick.hide();
-                    resolve(selection as T);
+                    resolve(selection);
                 });
-
+    
                 quickPick.onDidHide(() => {
                     resolve(undefined);
                 });
-
+    
                 if (options.buttons?.length) {
                     quickPick.onDidTriggerButton(async (button) => {
                         const handler = (button as QuickInputButtons).handler;
@@ -166,13 +178,14 @@ export class PromptService {
                         }
                     });
                 }
-
+    
                 quickPick.show();
             });
         } finally {
             quickPick.dispose();
         }
     }
+        
 
     /**
      * Shows a boolean selection with customizable labels and icons

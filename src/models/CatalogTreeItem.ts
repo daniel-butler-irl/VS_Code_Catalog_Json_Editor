@@ -691,7 +691,8 @@ export class CatalogTreeItem extends vscode.TreeItem {
             this.label === 'catalog_id' ||
             this.isOfferingIdInDependency() ||
             this.isDependencyFlavor() ||
-            this.isInputMappingField();
+            this.isInputMappingField() ||
+            (this.label === 'configuration' && Array.isArray(this.value));
     }
 
     /**
