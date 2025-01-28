@@ -329,10 +329,10 @@ export class CatalogService {
      */
     public async editElement(node: CatalogTreeItem): Promise<void> {
         await this.ensureInitialized();
-    
+
         try {
 
-             // Special handling for configuration arrays
+            // Special handling for configuration arrays
             if (node.label === 'configuration' && Array.isArray(node.value)) {
                 await this.handleConfigurationFieldsEdit(node);
                 return;
@@ -342,7 +342,7 @@ export class CatalogService {
             if (newValue === undefined) {
                 return; // User cancelled
             }
-    
+
             await this.updateJsonValue(node.jsonPath, newValue);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -734,19 +734,19 @@ export class CatalogService {
         this.logger.debug('Starting dependency addition', {
             path: parentNode.jsonPath
         });
-    
+
         // Check if we're dealing with a swappable_dependencies array directly
         if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
             this.logger.debug('Handling swappable group addition');
             await this.handleSwappableDependencyAddition(parentNode);
             return;
         }
-    
+
         // Check if we're inside a swappable dependency's dependencies array
         // or in a regular dependencies array
         const isInSwappableDep = /\.swappable_dependencies\[\d+\]\.dependencies$/.test(parentNode.jsonPath);
         const isRegularDepsArray = parentNode.jsonPath.endsWith('.dependencies') && !isInSwappableDep;
-    
+
         if (isInSwappableDep || isRegularDepsArray) {
             this.logger.debug('Adding regular dependency', {
                 path: parentNode.jsonPath,
@@ -826,9 +826,9 @@ export class CatalogService {
             );
 
             const versionConstraint = await this.promptForVersion(tempVersionNode);
-            if (!versionConstraint) { 
+            if (!versionConstraint) {
                 this.logger.debug('Version selection cancelled');
-                return; 
+                return;
             }
 
             // 4. Select Flavors
@@ -967,7 +967,7 @@ export class CatalogService {
     private async handleConfigurationFieldsEdit(node: CatalogTreeItem): Promise<void> {
         const currentConfig = node.value as CatalogConfiguration[];
         this.logger.debug('Current configuration', { currentConfig });
-    
+
         // Collect all unique field properties across all configurations
         const fieldProperties = new Set<ConfigurationFieldProperty>();
         currentConfig.forEach(config => {
@@ -978,7 +978,7 @@ export class CatalogService {
             });
         });
         this.logger.debug('Collected field properties', { fieldProperties: Array.from(fieldProperties) });
-    
+
         // Create quick pick items for each field property
         const items: QuickPickItemEx<ConfigurationFieldProperty>[] = Array.from(fieldProperties).map(prop => ({
             label: prop,
@@ -987,7 +987,7 @@ export class CatalogService {
             value: prop
         }));
         this.logger.debug('Quick pick items', { items });
-    
+
         const selectedProperties = await PromptService.showQuickPick<ConfigurationFieldProperty>({
             title: 'Select Field Properties to Delete',
             placeholder: 'Select properties to delete (key field cannot be removed)',
@@ -996,16 +996,16 @@ export class CatalogService {
             matchOnDescription: true
         });
         this.logger.debug('Selected properties to delete', { selectedProperties });
-    
+
         if (!selectedProperties) {
             this.logger.debug('No properties selected, exiting');
             return; // User cancelled or no selection
         }
-    
+
         // Create new configuration array without the selected properties
         const updatedConfig = currentConfig.map(config => {
             const newConfig: Partial<CatalogConfiguration> = { ...config }; // Start with a copy of the config
-    
+
             // Remove the selected properties
             selectedProperties.forEach((prop: ConfigurationFieldProperty) => {
                 if (prop in newConfig) {
@@ -1017,12 +1017,12 @@ export class CatalogService {
             return newConfig as CatalogConfiguration;
         });
         this.logger.debug('Updated configuration', { updatedConfig });
-    
+
         await this.updateJsonValue(node.jsonPath, updatedConfig);
     }
-    
-      
-    
+
+
+
     private getPropertyDescription(property: ConfigurationFieldProperty): string {
         const descriptions: Record<ConfigurationFieldProperty, string> = {
             'type': 'Data type of the configuration field',
@@ -1034,7 +1034,7 @@ export class CatalogService {
         };
         return descriptions[property];
     }
-      
+
     private async getAvailableVersions(catalogId: string, offeringId: string): Promise<string[]> {
         const logger = this.logger;
         const ibmCloudService = await this.getIBMCloudService();
@@ -1701,30 +1701,51 @@ export class CatalogService {
             return this.promptForCustomVersionOnly(currentValue);
         }
 
-        // Set default version constraint
-        let versionConstraint = `>=${versions[0]}`;
+        // Set default version constraints
+        const latestVersion = versions[0];
+        const greaterThanConstraint = `>=${latestVersion}`;
+        const caretConstraint = `^${latestVersion}`;
+        const tildeConstraint = `~${latestVersion}`;
 
-        // Show version selection dialog
+        // Show version selection dialog with enhanced descriptions
         const selectedVersion = await PromptService.showQuickPick<string>({
             title: 'Select Version Constraint',
             placeholder: 'Choose a version constraint',
             items: [
                 {
-                    label: `Latest (${versionConstraint})`,
-                    value: versionConstraint,
-                    description: 'Always use the latest compatible version',
-                    detail: 'Automatically updates to the latest compatible version'
+                    label: `Latest Compatible (${caretConstraint})`,
+                    value: caretConstraint,
+                    description: 'Updates within major version (^)',
+                    detail: 'Example: ^1.2.3 allows updates to 1.x.x but not 2.0.0'
+                },
+                {
+                    label: `Patch Updates Only (${tildeConstraint})`,
+                    value: tildeConstraint,
+                    description: 'Updates patch version only (~)',
+                    detail: 'Example: ~1.2.3 allows updates to 1.2.x but not 1.3.0'
+                },
+                {
+                    label: `Greater Than or Equal (${greaterThanConstraint})`,
+                    value: greaterThanConstraint,
+                    description: 'Always use newer versions (>=)',
+                    detail: 'Example: >=1.2.3 allows updates to any newer version'
+                },
+                {
+                    label: 'Version Range',
+                    value: 'range',
+                    description: 'Specify a version range',
+                    detail: 'Examples: >=1.2.3 <2.0.0, 1.2.3 - 2.0.0'
                 },
                 {
                     label: 'Custom',
                     value: 'custom',
                     description: 'Enter a custom version constraint',
-                    detail: 'Specify a custom version range or constraint'
+                    detail: 'Supports: =, >, <, >=, <=, ~, ^, ranges (e.g., ^1.2.3, >=2.0.0 <3.0.0)'
                 },
                 ...versions.map(version => ({
                     label: `Exact: ${version}`,
                     value: version,
-                    description: 'Lock to this specific version',
+                    description: 'Lock to specific version (=)',
                     detail: `Sets a fixed version: ${version}`
                 }))
             ],
@@ -1737,25 +1758,115 @@ export class CatalogService {
         }
 
         if (selectedVersion === 'custom') {
-            return this.promptForCustomVersionOnly(currentValue || versionConstraint);
+            return this.promptForCustomVersionOnly(currentValue || caretConstraint);
+        }
+
+        if (selectedVersion === 'range') {
+            return this.promptForVersionRange(versions);
         }
 
         return selectedVersion;
     }
 
-    /**
-     * Prompts for a custom version constraint with validation.
-     * @param initialValue The initial version constraint value.
-     * @returns The entered version constraint or undefined if cancelled.
-     */
+    private async promptForVersionRange(availableVersions: string[]): Promise<string | undefined> {
+        // First, prompt for range type
+        const rangeType = await PromptService.showQuickPick<string>({
+            title: 'Select Range Type',
+            placeholder: 'Choose how to specify the range',
+            items: [
+                {
+                    label: 'Greater/Less Than Range',
+                    value: 'comparison',
+                    description: 'Use >= and < operators',
+                    detail: 'Example: >=1.2.3 <2.0.0'
+                },
+                {
+                    label: 'Hyphen Range',
+                    value: 'hyphen',
+                    description: 'Specify inclusive range with hyphen',
+                    detail: 'Example: 1.2.3 - 2.0.0'
+                }
+            ]
+        });
+
+        if (!rangeType) {
+            return undefined;
+        }
+
+        // Prompt for lower bound
+        const lowerBound = await PromptService.showQuickPick<string>({
+            title: 'Select Lower Bound',
+            placeholder: 'Choose the minimum version',
+            items: availableVersions.map(version => ({
+                label: version,
+                value: version,
+                description: 'Minimum version (inclusive)'
+            }))
+        });
+
+        if (!lowerBound) {
+            return undefined;
+        }
+
+        // Prompt for upper bound
+        const upperBound = await PromptService.showQuickPick<string>({
+            title: 'Select Upper Bound',
+            placeholder: 'Choose the maximum version',
+            items: availableVersions
+                .filter(v => this.compareSemVer(v, lowerBound) > 0)
+                .map(version => ({
+                    label: version,
+                    value: version,
+                    description: 'Maximum version'
+                }))
+        });
+
+        if (!upperBound) {
+            return undefined;
+        }
+
+        // Format the range based on type
+        if (rangeType === 'hyphen') {
+            return `${lowerBound} - ${upperBound}`;
+        } else {
+            return `>=${lowerBound} <${upperBound}`;
+        }
+    }
+
     private async promptForCustomVersionOnly(initialValue?: string): Promise<string | undefined> {
         return PromptService.showInputBox<string>({
             title: 'Enter Version Constraint',
-            placeholder: 'e.g., >=1.0.0, ^2.0.0, ~1.2.3',
+            placeholder: 'e.g., >=1.0.0, ^2.0.0, ~1.2.3, >=1.2.3 <2.0.0, 1.2.3 - 2.0.0',
             initialValue,
-            validate: (value) => this.validateVersionConstraint(value)
+            validate: (value) => {
+                if (!value.trim()) {
+                    return 'Version constraint cannot be empty';
+                }
+
+                // Enhanced validation regex to support all formats
+                const patterns = [
+                    // Basic version with optional v prefix
+                    /^v?\d+(\.\d+)*$/,
+                    // Operators with version
+                    /^([<>]=?|=)\s*v?\d+(\.\d+)*$/,
+                    // Caret and tilde ranges
+                    /^[~^]v?\d+(\.\d+)*$/,
+                    // Hyphen ranges
+                    /^v?\d+(\.\d+)*\s*-\s*v?\d+(\.\d+)*$/,
+                    // Complex ranges with spaces
+                    /^([<>]=?|=)\s*v?\d+(\.\d+)*(\s+([<>]=?|=)\s*v?\d+(\.\d+)*)*$/
+                ];
+
+                const isValid = patterns.some(pattern => pattern.test(value));
+                if (!isValid) {
+                    return 'Invalid version format. Examples: >=1.0.0, ^2.0.0, ~1.2.3, 1.2.3 - 2.0.0, >=1.2.3 <2.0.0';
+                }
+
+                return null;
+            }
         });
     }
+
     /**
      * Prompts the user to select a flavor, fetching available flavors if possible.
      * @param node The catalog tree item associated with the flavor.
