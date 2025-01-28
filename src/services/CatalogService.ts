@@ -240,6 +240,36 @@ export class CatalogService {
         await this.ensureInitialized();
 
         try {
+            // debug print the selected node with relevant properties only
+            this.logger.debug('Selected node', {
+                label: parentNode.label,
+                jsonPath: parentNode.jsonPath,
+                contextValue: parentNode.contextValue,
+                value: parentNode.value
+            });
+
+            // Check if this is a dependency object
+            if ((parentNode.contextValue === 'object' || parentNode.contextValue === 'container') &&
+                parentNode.jsonPath.match(/\.dependencies\[\d+\]$/)) {
+                const dependencyValue = parentNode.value as Required<Dependency>;
+                if (!dependencyValue.ignore_auto_referencing) {
+                    // Show prompt immediately instead of just creating the array
+                    await this.handleIgnoreAutoReferencingAddition(parentNode);
+                }
+                return;
+            }
+
+            // Handle clicking add on the ignore_auto_referencing array itself
+            if (parentNode.jsonPath.endsWith('.ignore_auto_referencing')) {
+                await this.handleIgnoreAutoReferencingAddition(parentNode.parent!);
+                return;
+            }
+
+            // Check if this is an input mapping object that needs reference_version
+            if (parentNode.jsonPath.includes('.input_mapping') && !parentNode.jsonPath.endsWith('.input_mapping')) {
+                await this.promptForMissingReferenceVersion(parentNode);
+                return;
+            }
 
             // Check for flavor node first to add dependencies
             if (this.isFlavorNode(parentNode)) {
@@ -509,7 +539,7 @@ export class CatalogService {
                 throw new Error('Cannot find dependency context for flavor selection');
             }
 
-            const depValue = dependencyNode.value as Dependency;
+            const depValue = dependencyNode.value as Required<Dependency>;
             const catalogId = depValue.catalog_id;
             const offeringId = depValue.id;
 
@@ -735,6 +765,29 @@ export class CatalogService {
             path: parentNode.jsonPath
         });
 
+        // If we're directly on a dependency object and the path ends with ignore_auto_referencing
+        if (parentNode.jsonPath.match(/\.dependencies\[\d+\]$/)) {
+            const dependencyValue = parentNode.value as Required<Dependency>;
+            if (!dependencyValue.ignore_auto_referencing) {
+                // Create the array with "*" as first element
+                await this.updateJsonValue(
+                    `${parentNode.jsonPath}.ignore_auto_referencing`,
+                    ["*"]
+                );
+                void vscode.window.showInformationMessage('Created ignore_auto_referencing array with "*" as initial value');
+            } else {
+                // If array exists, prompt to add more items
+                await this.handleIgnoreAutoReferencingAddition(parentNode);
+            }
+            return;
+        }
+
+        // If we're directly on the ignore_auto_referencing array
+        if (parentNode.jsonPath.endsWith('.ignore_auto_referencing')) {
+            await this.handleIgnoreAutoReferencingAddition(parentNode.parent!);
+            return;
+        }
+
         // Check if we're dealing with a swappable_dependencies array directly
         if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
             this.logger.debug('Handling swappable group addition');
@@ -758,6 +811,88 @@ export class CatalogService {
                 path: parentNode.jsonPath
             });
             void vscode.window.showErrorMessage('Cannot add dependency at this location');
+        }
+    }
+
+    /**
+     * Handles adding items to the ignore_auto_referencing array
+     * @param dependencyNode The dependency node containing the array
+     */
+    private async handleIgnoreAutoReferencingAddition(dependencyNode: CatalogTreeItem): Promise<void> {
+        try {
+            const dependencyValue = dependencyNode.value as Required<Dependency>;
+            const currentIgnoreList = dependencyValue.ignore_auto_referencing || [];
+
+            // Get available inputs from the dependency
+            const context = {
+                catalogId: dependencyValue.catalog_id,
+                offeringId: dependencyValue.id,
+                version: dependencyValue.version,
+                flavorName: dependencyValue.flavors[0]
+            };
+
+            let availableInputs: string[] = [];
+            const ibmCloudService = await this.getIBMCloudService();
+
+            if (ibmCloudService) {
+                const inputMappingService = new InputMappingService(ibmCloudService);
+                const options = await inputMappingService.fetchMappingOptions(context);
+                availableInputs = options
+                    .filter(opt => opt.mappingType === 'input')
+                    .map(opt => opt.value);
+            }
+
+            // Create quick pick items
+            const items: QuickPickItemEx<string>[] = [
+                {
+                    label: "Wildcard (*)",
+                    description: "Ignore all automatic referencing",
+                    value: "*",
+                    picked: currentIgnoreList.includes("*")
+                },
+                {
+                    label: "Available Inputs",
+                    kind: vscode.QuickPickItemKind.Separator
+                } as QuickPickItemEx<string>,
+                ...availableInputs.map(input => ({
+                    label: input,
+                    value: input,
+                    picked: currentIgnoreList.includes(input)
+                }))
+            ];
+
+            const result = await PromptService.showQuickPick<string>({
+                title: 'Select Inputs to Ignore Auto-Referencing',
+                placeholder: 'Select inputs to ignore (Space to select/deselect, Enter to confirm)',
+                items,
+                canPickMany: true,
+                matchOnDescription: true,
+                matchOnDetail: true
+            });
+
+            if (result && result.length > 0) {
+                // If "*" is selected, it should be the only item
+                const newIgnoreList = result.includes("*") ? ["*"] : result;
+
+                // Update the entire dependency object
+                await this.updateJsonValue(
+                    dependencyNode.jsonPath,
+                    {
+                        ...dependencyValue,
+                        ignore_auto_referencing: newIgnoreList
+                    }
+                );
+
+                void vscode.window.showInformationMessage(
+                    `Successfully updated ignore_auto_referencing list`
+                );
+            }
+
+        } catch (error) {
+            this.logger.error('Failed to handle ignore_auto_referencing addition', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to update ignore_auto_referencing: ${message}`);
+            throw error;
         }
     }
 
@@ -1118,8 +1253,9 @@ export class CatalogService {
             version: '',
             flavors: [],
             optional: false,
-            on_by_default: false,  // New field defaulted to false
-            input_mapping: []
+            on_by_default: false,
+            input_mapping: [],
+            ignore_auto_referencing: [] // Add this line
         };
     }
 
@@ -1179,6 +1315,7 @@ export class CatalogService {
             let sourceType: string | undefined;
             let sourceValue: string | undefined;
             let versionInput: string | undefined;
+            let referenceVersion: boolean | undefined;
 
             if (mappingType === 'version_input') {
                 // Starting with version_input flow
@@ -1261,6 +1398,21 @@ export class CatalogService {
                 }
             }
 
+            // Prompt for reference_version after we have both values
+            referenceVersion = await PromptService.showBooleanPick({
+                title: 'Select Reference Direction',
+                placeholder: 'Controls the direction of references between the architecture and its dependency',
+                trueLabel: 'Dependency references architecture (dependency_input → version_input)',
+                falseLabel: 'Architecture references dependency (version_input → dependency_input/output)',
+                decorator: {
+                    validationMessage: 'When true: The dependency references a value from the architecture input.\nWhen false: The architecture input references the dependency\'s input or output.'
+                }
+            });
+
+            if (referenceVersion === undefined) {
+                return;
+            }
+
             // Only create mapping if we have both source type and values
             if (!sourceType || !sourceValue || !versionInput) {
                 return;
@@ -1269,7 +1421,8 @@ export class CatalogService {
             // Create and add the new mapping
             const newMapping = {
                 [sourceType]: sourceValue,
-                "version_input": versionInput
+                "version_input": versionInput,
+                "reference_version": referenceVersion
             };
 
             const currentArray = (parentNode.value as any[]) || [];
@@ -1281,6 +1434,49 @@ export class CatalogService {
             this.logger.error('Failed to add input mapping', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
             void vscode.window.showErrorMessage(`Failed to add input mapping: ${message}`);
+        }
+    }
+
+    /**
+     * Prompts for reference_version if it's missing from an input mapping
+     * @param node The input mapping node
+     * @returns True if the user completed the prompt, false if cancelled
+     */
+    private async promptForMissingReferenceVersion(node: CatalogTreeItem): Promise<boolean> {
+        try {
+            const mappingValue = node.value as Record<string, any>;
+
+            // Only prompt if reference_version is missing and we have both a version_input and another mapping field
+            if (mappingValue.reference_version === undefined &&
+                mappingValue.version_input &&
+                (mappingValue.dependency_input || mappingValue.dependency_output || mappingValue.value)) {
+
+                const referenceVersion = await PromptService.showBooleanPick({
+                    title: 'Add Reference Direction',
+                    placeholder: 'Controls the direction of references between the architecture and its dependency',
+                    trueLabel: 'Dependency references architecture (dependency_input → version_input)',
+                    falseLabel: 'Architecture references dependency (version_input → dependency_input/output)',
+                    decorator: {
+                        validationMessage: 'When true: The dependency references a value from the architecture input.\nWhen false: The architecture input references the dependency\'s input or output.'
+                    }
+                });
+
+                if (referenceVersion === undefined) {
+                    return false;
+                }
+
+                // Update the mapping with the new reference_version field
+                await this.updateJsonValue(node.jsonPath, {
+                    ...mappingValue,
+                    reference_version: referenceVersion
+                });
+
+                return true;
+            }
+            return true;
+        } catch (error) {
+            this.logger.error('Failed to add reference_version', error);
+            return false;
         }
     }
 

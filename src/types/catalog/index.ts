@@ -69,6 +69,11 @@ export interface Dependency {
      * Input mappings for this dependency
      */
     input_mapping: InputMapping[];
+
+    /**
+     * List of inputs that should not be auto-referenced
+     */
+    ignore_auto_referencing?: string[];
 }
 
 /**
@@ -188,12 +193,12 @@ export interface ConfigurationFieldSelection {
     description?: string;
     type?: string;
     default_value?: any;
-  }
+}
 
-  export type ConfigurationFieldProperty = keyof Omit<Configuration, 'key'>;
+export type ConfigurationFieldProperty = keyof Omit<Configuration, 'key'>;
 
 
-  export interface Configuration {
+export interface Configuration {
     key: string;
     type?: any;
     default_value?: any;
@@ -201,5 +206,4 @@ export interface ConfigurationFieldSelection {
     required?: boolean;
     custom_config?: any;
     display_name?: string;
-  }
-  
+}
