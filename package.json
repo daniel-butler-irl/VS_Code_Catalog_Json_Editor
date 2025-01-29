@@ -31,7 +31,8 @@
       {
         "command": "ibmCatalog.clearCache",
         "title": "Clear Cache",
-        "category": "IBM Catalog"
+        "category": "IBM Catalog",
+        "icon": "$(trash)"
       },
       {
         "command": "ibmCatalog.showLogs",
@@ -110,8 +111,14 @@
           "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
           "group": "inline"
         }
+      ],
+      "view/title": [
+        {
+          "command": "ibmCatalog.clearCache",
+          "when": "view == ibmCatalogTree",
+          "group": "navigation"
+        }
       ]
-      
     },
     "colors": [
       {

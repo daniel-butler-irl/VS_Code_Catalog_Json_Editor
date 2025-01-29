@@ -69,6 +69,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Create tree provider even if no workspace (will show welcome view)
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
 
+        // Register the tree view with title buttons
+        const treeView = vscode.window.createTreeView('ibmCatalogTree', {
+            treeDataProvider: treeProvider,
+            showCollapseAll: true
+        });
+        treeProvider.setTreeView(treeView);
+
+        // Set tree view title
+        treeView.title = 'IBM Catalog';
+
         // Only create file watcher if we have a workspace
         let fileWatcher: CatalogFileSystemWatcher | undefined;
         if (catalogService.hasWorkspace()) {
@@ -103,12 +113,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         // Initialize catalog service
         await catalogService.initialize();
-
-        // Create tree view
-        const treeView = vscode.window.createTreeView('ibmCatalogTree', {
-            treeDataProvider: treeProvider,
-            showCollapseAll: true
-        });
 
         // Test tree view highlighting with detailed logging
         logger.debug('Scheduling tree view highlight test...');
@@ -214,6 +218,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
                 logger.show();
             }),
+            vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
+                const cacheService = CacheService.getInstance();
+                void cacheService.clearAll();
+                void schemaService.refreshSchema();
+                treeProvider.refresh();
+                vscode.window.showInformationMessage('IBM Catalog cache cleared');
+            }),
             vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
                 const catalogFilePath = catalogService.getCatalogFilePath();
                 if (catalogFilePath) {
@@ -234,12 +245,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         await vscode.commands.executeCommand('ibmCatalog.editElement', item);
                     }
                 }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
-                const cacheService = CacheService.getInstance();
-                cacheService.clearAll();
-                vscode.window.showInformationMessage('IBM Catalog cache cleared');
-                treeProvider.refresh(); // Refresh the tree view to reflect changes
             }),
             vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
                 try {
