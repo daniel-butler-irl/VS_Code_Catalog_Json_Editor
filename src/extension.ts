@@ -74,7 +74,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             treeDataProvider: treeProvider,
             showCollapseAll: true
         });
-        treeProvider.setTreeView(treeView);
+
+        // Track tree view selection changes - simplified for performance
+        let selectionDebounceTimer: NodeJS.Timeout | undefined;
+        let lastSelection: string | undefined;
+
+        treeView.onDidChangeSelection(async e => {
+            if (selectionDebounceTimer) {
+                clearTimeout(selectionDebounceTimer);
+            }
+
+            if (e.selection.length > 0) {
+                const selectedItem = e.selection[0];
+                // Skip if same item
+                if (lastSelection === selectedItem.jsonPath) {
+                    return;
+                }
+                lastSelection = selectedItem.jsonPath;
+
+                // Queue the reveal operation
+                selectionDebounceTimer = setTimeout(() => {
+                    // Use setImmediate to yield to the event loop
+                    setImmediate(async () => {
+                        await treeView.reveal(selectedItem, {
+                            select: true,
+                            focus: false,
+                            expand: true
+                        });
+                    });
+                }, 150);
+            }
+        });
 
         // Set tree view title
         treeView.title = 'IBM Catalog';
@@ -212,6 +242,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Pass the treeView to the treeProvider
         treeProvider.setTreeView(treeView);
 
+        // Pass the treeView to the highlight service
+        highlightService.setTreeView(treeView);
+
         // Register commands
         context.subscriptions.push(
             vscode.commands.registerCommand('ibmCatalog.refresh', () => treeProvider.refresh()),
@@ -266,20 +299,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 await updateStatusBar();
                 treeProvider.refresh();
             }),
-            vscode.commands.registerCommand('ibmCatalog.selectElement', async (selectedItem: CatalogTreeItem) => {
-                logger.debug('selectElement command called');
-                logger.debug('Selected item:', selectedItem.label);
-
+            vscode.commands.registerCommand('ibmCatalog.selectElement', async (item: CatalogTreeItem) => {
                 const catalogFilePath = catalogService.getCatalogFilePath();
-                if (catalogFilePath) {
-                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
-                    const editor = await vscode.window.showTextDocument(document, { preview: false });
-                    logger.debug('Calling highlightJsonPath with path:', selectedItem.jsonPath);
-                    await highlightService.highlightJsonPath(selectedItem.jsonPath, editor);
-                } else {
-                    logger.error('Catalog file path is undefined.');
-                    vscode.window.showErrorMessage('Catalog file not found.');
-                }
+                if (!catalogFilePath) { return; }
+
+                // Queue document operations
+                const document = await vscode.workspace.openTextDocument(catalogFilePath);
+                const editor = await vscode.window.showTextDocument(document, {
+                    preview: false,
+                    preserveFocus: true
+                });
+
+                // Use setImmediate for highlight operations
+                setImmediate(async () => {
+                    highlightService.clearHighlight();
+                    await highlightService.highlightJsonPath(item.jsonPath, editor);
+
+                    const range = highlightService.getCurrentHighlightRange();
+                    if (range) {
+                        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                    }
+                });
             }),
             vscode.commands.registerCommand('ibmCatalog.logout', async () => {
                 await AuthService.clearApiKey(context);
@@ -299,29 +339,58 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }),
             // Register the custom tree item click command
             vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
-            highlightService,
             treeView,
             ...(fileWatcher ? [fileWatcher] : []),
-            vscode.commands.registerCommand('ibmCatalogTree.revealJsonPath', async (jsonPath: string) => {
-                try {
-                    logger.debug('Attempting to reveal JSON path in tree:', jsonPath);
+            vscode.commands.registerCommand('ibmCatalogTree.revealJsonPath', async (jsonPath: string, options?: { select?: boolean; focus?: boolean }) => {
+                // Skip if same path
+                if (lastSelection === jsonPath) {
+                    return;
+                }
+                lastSelection = jsonPath;
 
-                    // Find the tree item with this path
-                    const item = await treeProvider.findTreeItemByPath(jsonPath);
-                    if (item) {
-                        logger.debug('Found tree item to reveal:', item.label);
-                        // Reveal and select the item
-                        await treeView.reveal(item, {
-                            select: true,
-                            focus: true,
-                            expand: true
+                // Use setImmediate to yield to the event loop for the search operation
+                const items = await new Promise<CatalogTreeItem[]>(resolve => {
+                    setImmediate(async () => {
+                        const result = await treeProvider.findItemsByJsonPath(jsonPath);
+                        resolve(result);
+                    });
+                });
+
+                if (items.length > 0) {
+                    const targetItem = items[0];
+
+                    // Queue parent expansion
+                    const parent = targetItem.parent;
+                    if (parent) {
+                        await new Promise<void>(resolve => {
+                            setImmediate(async () => {
+                                await treeView.reveal(parent, {
+                                    select: false,
+                                    focus: false,
+                                    expand: true
+                                });
+                                resolve();
+                            });
                         });
-                        logger.debug('Successfully revealed tree item');
-                    } else {
-                        logger.debug('No tree item found for path:', jsonPath);
                     }
-                } catch (error) {
-                    logger.error('Failed to reveal JSON path in tree', error);
+
+                    // Queue item reveal
+                    await new Promise<void>(resolve => {
+                        setImmediate(async () => {
+                            await treeView.reveal(targetItem, {
+                                select: true,
+                                focus: options?.focus ?? false,
+                                expand: true
+                            });
+                            resolve();
+                        });
+                    });
+
+                    // Queue highlight update
+                    setImmediate(() => {
+                        targetItem.setHighlighted(true);
+                        setTimeout(() => targetItem.setHighlighted(false), 1000);
+                    });
                 }
             })
         );
