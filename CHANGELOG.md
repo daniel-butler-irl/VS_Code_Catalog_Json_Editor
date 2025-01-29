@@ -1,19 +1,19 @@
 # Changelog
 
-## [0.3.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.0) (2024-11-26)
+## [0.3.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.1) (2025-01-29)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.2.3...0.3.0)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.0...0.3.1)
 
 **Closed issues:**
 
-- Swappable Deps support [\#73](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/73)
-- on\_by default added to dependencey set to false [\#72](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/72)
-- Tool: Strip descriptions, type and default values from flavor configurations [\#66](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/66)
+- Add Reverse Highlight [\#80](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/80)
+- Improve Version Constraints [\#78](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/78)
 
 **Merged pull requests:**
 
-- Add configuration handling and field editing capabilities in CatalogService [\#75](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/75) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Add Swapable dependencies features [\#74](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/74) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance tree view navigation and editor highlighting [\#81](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/81) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- feat: Add ignore\_auto\_referencing support for dependency input mappings [\#79](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/79) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance version constraint selection with advanced options and validation [\#77](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/77) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
