@@ -110,6 +110,52 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             showCollapseAll: true
         });
 
+        // Test tree view highlighting with detailed logging
+        logger.debug('Scheduling tree view highlight test...');
+        setTimeout(async () => {
+            try {
+                logger.debug('Starting tree view highlight test');
+
+                // Get all items from the root
+                logger.debug('Fetching root items...');
+                const rootItems = await treeProvider.getChildren();
+                logger.debug(`Found ${rootItems.length} root items`);
+
+                if (rootItems.length > 0) {
+                    logger.debug(`First root item label: ${rootItems[0].label}`);
+
+                    // Get the first item's children
+                    logger.debug('Fetching children of first root item...');
+                    const children = await treeProvider.getChildren(rootItems[0]);
+                    logger.debug(`Found ${children.length} children`);
+
+                    if (children.length > 0) {
+                        // Select a child item
+                        const itemToHighlight = children[0];
+                        logger.debug('Attempting to highlight item:', {
+                            label: itemToHighlight.label,
+                            path: itemToHighlight.jsonPath,
+                            type: itemToHighlight.contextValue
+                        });
+
+                        logger.debug('Calling treeView.reveal...');
+                        await treeView.reveal(itemToHighlight, {
+                            select: true,
+                            focus: true,
+                            expand: 2  // Expand parent and the item itself
+                        });
+                        logger.debug('Tree view reveal completed');
+                    } else {
+                        logger.debug('No children found for first root item');
+                    }
+                } else {
+                    logger.debug('No root items found in tree');
+                }
+            } catch (error) {
+                logger.error('Failed to test tree view highlighting:', error);
+            }
+        }, 20000); // Wait 20 seconds after activation to test
+
         // Use custom command for tree item clicks
         let lastClickTime: number | null = null;
         let lastClickedItemId: string | null = null;
@@ -250,9 +296,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
             highlightService,
             treeView,
-            ...(fileWatcher ? [fileWatcher] : [])
+            ...(fileWatcher ? [fileWatcher] : []),
+            vscode.commands.registerCommand('ibmCatalogTree.revealJsonPath', async (jsonPath: string) => {
+                try {
+                    logger.debug('Attempting to reveal JSON path in tree:', jsonPath);
+
+                    // Find the tree item with this path
+                    const item = await treeProvider.findTreeItemByPath(jsonPath);
+                    if (item) {
+                        logger.debug('Found tree item to reveal:', item.label);
+                        // Reveal and select the item
+                        await treeView.reveal(item, {
+                            select: true,
+                            focus: true,
+                            expand: true
+                        });
+                        logger.debug('Successfully revealed tree item');
+                    } else {
+                        logger.debug('No tree item found for path:', jsonPath);
+                    }
+                } catch (error) {
+                    logger.error('Failed to reveal JSON path in tree', error);
+                }
+            })
         );
 
+        // Connect the tree view to the highlight service for reverse highlighting
+        highlightService.setTreeView(treeView);
 
         // Function to get the root path
         function getRootPath(): string | undefined {

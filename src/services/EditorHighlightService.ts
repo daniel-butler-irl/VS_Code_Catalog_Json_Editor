@@ -33,6 +33,9 @@ export class EditorHighlightService implements vscode.Disposable {
     private symbolProvider: vscode.Disposable;
     private readonly debounceDelay: number;
     private cleanupInterval: ReturnType<typeof setInterval>;
+    private lineToPathCache = new Map<string, Map<number, string>>();
+    private selectionListener?: vscode.Disposable;
+    private treeView?: vscode.TreeView<any>;
 
     constructor(debounceDelay = 50) {
         this.debounceDelay = debounceDelay;
@@ -59,17 +62,24 @@ export class EditorHighlightService implements vscode.Disposable {
 
         // Listen for document changes
         vscode.workspace.onDidChangeTextDocument(this.handleDocumentChange, this);
+
+        // Add selection change listener
+        this.selectionListener = vscode.window.onDidChangeTextEditorSelection(
+            this.handleSelectionChange.bind(this)
+        );
     }
 
     private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
         const uri = event.document.uri.toString();
         this.parsedDocuments.delete(uri);
         this.documentVersions.delete(uri);
+        // Clear the line cache for the changed document
+        this.lineToPathCache.delete(uri);
     }
 
     private async provideDocumentSymbols(document: vscode.TextDocument): Promise<vscode.DocumentSymbol[]> {
         const root = await this.getParsedDocument(document);
-        if (!root) return [];
+        if (!root) { return []; }
 
         const symbols: vscode.DocumentSymbol[] = [];
         this.buildSymbolTree(document, root, symbols);
@@ -82,12 +92,12 @@ export class EditorHighlightService implements vscode.Disposable {
         symbols: vscode.DocumentSymbol[],
         parent?: { property: string }
     ): void {
-        if (!node.children) return;
+        if (!node.children) { return; }
 
         for (const child of node.children) {
             if (child.type === 'property' && child.children) {
                 const [propertyNode, valueNode] = child.children;
-                if (!propertyNode || !valueNode) continue;
+                if (!propertyNode || !valueNode) { continue; }
 
                 const name = propertyNode.value;
                 const range = new vscode.Range(
@@ -182,7 +192,7 @@ export class EditorHighlightService implements vscode.Disposable {
         try {
             const document = activeEditor.document;
             const root = await this.getParsedDocument(document);
-            if (!root) return;
+            if (!root) { return; }
 
             const pathSegments = this.parseJsonPath(jsonPath);
             if (!pathSegments) {
@@ -281,5 +291,136 @@ export class EditorHighlightService implements vscode.Disposable {
             clearTimeout(this.pendingHighlight.timeout);
             this.pendingHighlight.resolve();
         }
+
+        this.selectionListener?.dispose();
+        this.lineToPathCache.clear();
+    }
+
+    /**
+     * Sets the tree view to enable reverse highlighting
+     */
+    public setTreeView(treeView: vscode.TreeView<any>): void {
+        this.treeView = treeView;
+    }
+
+    /**
+     * Handles selection changes in the editor
+     */
+    private async handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): Promise<void> {
+        if (!this.treeView || event.selections.length === 0) {
+            return;
+        }
+
+        const editor = event.textEditor;
+        if (!editor || editor.document.languageId !== 'json') {
+            return;
+        }
+
+        try {
+            // Always clear the previous highlight first
+            this.clearHighlight();
+
+            const position = event.selections[0].active;
+            this.logger.debug('Selection changed to position:', {
+                line: position.line,
+                character: position.character
+            });
+
+            const jsonPath = await this.findJsonPathAtPosition(editor.document, position);
+
+            if (jsonPath) {
+                this.logger.debug('Found JSON path at position:', jsonPath);
+                // Find and reveal the corresponding tree item
+                await vscode.commands.executeCommand('ibmCatalogTree.revealJsonPath', jsonPath);
+            } else {
+                this.logger.debug('No JSON path found at position');
+            }
+        } catch (error) {
+            this.logger.error('Error handling selection change', error);
+        }
+    }
+
+    /**
+     * Finds the JSON path at a given position in the document
+     */
+    private async findJsonPathAtPosition(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<string | undefined> {
+        const root = await this.getParsedDocument(document);
+        if (!root) {
+            return undefined;
+        }
+
+        // Try to get from cache first
+        const docUri = document.uri.toString();
+        const lineCache = this.lineToPathCache.get(docUri);
+        if (lineCache?.has(position.line)) {
+            return lineCache.get(position.line);
+        }
+
+        // If not in cache, traverse the tree to find the path
+        return this.findPathInNode(root, document, position);
+    }
+
+    /**
+     * Recursively finds the JSON path in a node at a given position
+     */
+    private findPathInNode(
+        node: Node,
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        currentPath: (string | number)[] = []
+    ): string | undefined {
+        const nodeStartPos = document.positionAt(node.offset);
+        const nodeEndPos = document.positionAt(node.offset + node.length);
+
+        // Check if position is within node's range
+        if (position.line < nodeStartPos.line || position.line > nodeEndPos.line) {
+            return undefined;
+        }
+
+        if (node.type === 'property' && node.children && node.children.length > 0) {
+            const [nameNode, valueNode] = node.children;
+            if (nameNode && valueNode) {
+                const propertyPath = [...currentPath, nameNode.value];
+                return this.findPathInNode(valueNode, document, position, propertyPath);
+            }
+        }
+
+        if (node.type === 'array' && node.children) {
+            for (let i = 0; i < node.children.length; i++) {
+                const child = node.children[i];
+                const childPath = this.findPathInNode(child, document, position, [...currentPath, i]);
+                if (childPath) {
+                    return childPath;
+                }
+            }
+        }
+
+        if (node.type === 'object' && node.children) {
+            for (const child of node.children) {
+                const childPath = this.findPathInNode(child, document, position, currentPath);
+                if (childPath) {
+                    return childPath;
+                }
+            }
+        }
+
+        // If we found the node containing the position
+        if (position.line >= nodeStartPos.line && position.line <= nodeEndPos.line) {
+            // Cache the result
+            const docUri = document.uri.toString();
+            if (!this.lineToPathCache.has(docUri)) {
+                this.lineToPathCache.set(docUri, new Map());
+            }
+            const path = '$' + currentPath.map(segment =>
+                typeof segment === 'number' ? `[${segment}]` : `.${segment}`
+            ).join('');
+            this.lineToPathCache.get(docUri)?.set(position.line, path);
+            return path;
+        }
+
+        return undefined;
     }
 }

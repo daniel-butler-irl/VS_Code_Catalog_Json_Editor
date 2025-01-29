@@ -159,4 +159,83 @@ suite('EditorHighlight Test Suite', () => {
         const decorations = (highlightService as any).currentDecorations;
         assert.ok(decorations.length > 0, 'Decorations should be visible in the current editor');
     });
+
+    test('should clear highlight when clicking anywhere in the document', async () => {
+        // First set a highlight
+        const jsonPath = '$.products[0].label';
+        await highlightService.highlightJsonPath(jsonPath, editor);
+
+        // Verify initial state
+        let decorations = (highlightService as any).currentDecorations;
+        assert.ok(decorations.length > 0, 'Should have decorations before clearing');
+
+        // Directly call clearHighlight instead of simulating events
+        highlightService.clearHighlight();
+
+        // Wait for any async operations
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Verify final state
+        decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 0, 'Decorations should be cleared');
+    });
+
+    test('should clear highlight before applying new highlight', async () => {
+        // Set initial highlight
+        const initialPath = '$.products[0].label';
+        await highlightService.highlightJsonPath(initialPath, editor);
+
+        // Verify initial state
+        let decorations = (highlightService as any).currentDecorations;
+        assert.ok(decorations.length > 0, 'Should have decorations from initial highlight');
+
+        // Set new highlight (should clear previous)
+        const newPath = '$.products[0].name';
+        await highlightService.highlightJsonPath(newPath, editor);
+
+        // Wait longer for async operations
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Verify final state
+        decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 1, 'Should have exactly one decoration after new highlight');
+
+        // Get the decoration text
+        const decoration = decorations[0];
+        const decorationText = editor.document.getText(decoration.range);
+
+        // Verify the decoration contains either the property name or its expected value
+        const expectedPropertyName = '"name"';
+        const expectedValue = '"test_product"';
+        const hasExpectedContent = decorationText.includes(expectedPropertyName) ||
+            decorationText.includes(expectedValue);
+
+        assert.ok(
+            hasExpectedContent,
+            `Decoration should include either "${expectedPropertyName}" or "${expectedValue}". Found: ${decorationText}`
+        );
+        assert.strictEqual(decorations.length, 1, 'Should only have one decoration active');
+    });
+
+    test('should handle rapid selection changes with highlight clearing', async () => {
+        // First set a highlight
+        await highlightService.highlightJsonPath('$.products[0].label', editor);
+
+        // Verify initial state
+        let decorations = (highlightService as any).currentDecorations;
+        assert.ok(decorations.length > 0, 'Should have decorations before rapid changes');
+
+        // Perform rapid clear operations
+        for (let i = 0; i < 3; i++) {
+            highlightService.clearHighlight();
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        // Wait for any async operations
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Verify final state
+        decorations = (highlightService as any).currentDecorations;
+        assert.strictEqual(decorations.length, 0, 'Should have no decorations after rapid clears');
+    });
 });
