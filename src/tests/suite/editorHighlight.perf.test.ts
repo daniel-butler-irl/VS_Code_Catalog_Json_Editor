@@ -269,4 +269,78 @@ suite('EditorHighlight Performance Test Suite', () => {
       `Maximum switch and highlight time ${maxTime.toFixed(2)}ms exceeds threshold`
     );
   });
+
+  test('performance - rapid highlight clearing', async () => {
+    const path = '$.products[0].label';
+
+    // First set a highlight
+    await highlightService.highlightJsonPath(path, largeEditor);
+
+    const times: number[] = [];
+
+    // Measure multiple rapid clear operations
+    for (let i = 0; i < 10; i++) {
+      const executionTime = await measurePerformance(async () => {
+        highlightService.clearHighlight();
+      }, `clear highlight ${i}`);
+      times.push(executionTime);
+    }
+
+    const averageTime = times.reduce((a, b) => a + b) / times.length;
+    assert.ok(
+      averageTime < PERF_THRESHOLDS.RAPID_OP,
+      `Average clear time ${averageTime.toFixed(2)}ms exceeds the ${PERF_THRESHOLDS.RAPID_OP}ms threshold`
+    );
+  });
+
+  test('performance - highlight clearing during rapid selection changes', async () => {
+    const positions = Array.from({ length: 20 }, (_, i) => new vscode.Position(i * 10, 0));
+    const times: number[] = [];
+
+    for (const position of positions) {
+      const executionTime = await measurePerformance(async () => {
+        largeEditor.selection = new vscode.Selection(position, position);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }, `selection change at line ${position.line}`);
+      times.push(executionTime);
+    }
+
+    const averageTime = times.reduce((a, b) => a + b) / times.length;
+    assert.ok(
+      averageTime < PERF_THRESHOLDS.RAPID_OP,
+      `Average selection change time ${averageTime.toFixed(2)}ms exceeds threshold`
+    );
+  });
+
+  test('performance - alternating highlights and clears', async () => {
+    const paths = [
+      '$.products[0].label',
+      '$.products[100].flavors[0].name',
+      '$.products[500].dependencies[0].catalog_id'
+    ];
+
+    const times: number[] = [];
+
+    for (const path of paths) {
+      // Measure highlight time
+      const highlightTime = await measurePerformance(async () => {
+        await highlightService.highlightJsonPath(path, largeEditor);
+      }, `highlight ${path}`);
+      times.push(highlightTime);
+
+      // Measure clear time
+      const clearTime = await measurePerformance(async () => {
+        highlightService.clearHighlight();
+      }, `clear after ${path}`);
+      times.push(clearTime);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    const averageTime = times.reduce((a, b) => a + b) / times.length;
+    assert.ok(
+      averageTime < PERF_THRESHOLDS.STANDARD_OP,
+      `Average operation time ${averageTime.toFixed(2)}ms exceeds threshold`
+    );
+  });
 });

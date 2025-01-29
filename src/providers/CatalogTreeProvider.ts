@@ -182,6 +182,28 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
 
         const items: CatalogTreeItem[] = [];
 
+        if (Array.isArray(value)) {
+            // Handle array items
+            value.forEach((val, index) => {
+                const path = `${parentPath}[${index}]`;
+                const schemaMetadata = this.getSchemaMetadata(path);
+
+                const item = new CatalogTreeItem(
+                    this.context,
+                    `[${index}]`, // Consistent array index format
+                    val,
+                    path,
+                    this.getCollapsibleState(val, this.expandedNodes.has(path)),
+                    this.getContextValue(val),
+                    schemaMetadata,
+                    parentItem
+                );
+                items.push(item);
+            });
+            return items;
+        }
+
+        // Handle object properties
         for (const [key, val] of Object.entries(value)) {
             const path = this.buildJsonPath(parentPath, key);
             const schemaMetadata = this.getSchemaMetadata(path);
@@ -330,5 +352,88 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         }
         this.clearCaches();
         this._onDidChangeTreeData.dispose();
+    }
+
+    /**
+     * Finds a tree item by its JSON path
+     * @param jsonPath The JSON path to search for
+     * @returns The found tree item or undefined
+     */
+    public async findTreeItemByPath(jsonPath: string): Promise<CatalogTreeItem | undefined> {
+        this.logger.debug('Finding tree item for path:', jsonPath);
+
+        // Parse the path into segments
+        const segments = jsonPath.split(/\.|\[|\]/).filter(s => s && s !== '$');
+        this.logger.debug('Path segments:', segments);
+
+        // Start from root and traverse
+        let currentItems = await this.getChildren();
+        this.logger.debug(`Found ${currentItems.length} root items`);
+
+        let currentItem: CatalogTreeItem | undefined;
+
+        for (const segment of segments) {
+            // For array indices, convert to number
+            const isArrayIndex = !isNaN(Number(segment));
+            const searchValue = isArrayIndex ? Number(segment) : segment;
+
+            this.logger.debug('Searching for segment:', {
+                segment,
+                isArrayIndex,
+                searchValue,
+                availableLabels: currentItems.map(item => item.label)
+            });
+
+            // Find matching item in current level
+            currentItem = currentItems.find(item => {
+                if (isArrayIndex) {
+                    // Try different array index formats
+                    return (
+                        item.label === `[${searchValue}]` || // Format: [0]
+                        item.label === searchValue.toString() || // Format: 0
+                        item.jsonPath.endsWith(`[${searchValue}]`) // Check path ending
+                    );
+                }
+                return item.label === searchValue;
+            });
+
+            if (!currentItem) {
+                this.logger.debug('No matching item found for segment:', segment);
+                return undefined;
+            }
+
+            this.logger.debug('Found matching item:', {
+                label: currentItem.label,
+                path: currentItem.jsonPath,
+                type: currentItem.contextValue
+            });
+
+            // Get children for next iteration
+            currentItems = await this.getChildren(currentItem);
+            this.logger.debug(`Found ${currentItems.length} children for next iteration`);
+        }
+
+        if (currentItem) {
+            this.logger.debug('Successfully found item for path', {
+                label: currentItem.label,
+                path: currentItem.jsonPath
+            });
+        }
+
+        return currentItem;
+    }
+
+    /**
+     * Gets the parent of a tree item
+     * Required for the reveal functionality to work
+     */
+    public getParent(element: CatalogTreeItem): vscode.ProviderResult<CatalogTreeItem> {
+        this.logger.debug('Getting parent for item:', {
+            label: element.label,
+            path: element.jsonPath
+        });
+
+        // The parent is already tracked in the CatalogTreeItem
+        return element.parent;
     }
 }
