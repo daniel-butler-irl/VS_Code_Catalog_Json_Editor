@@ -1,19 +1,17 @@
 # Changelog
 
-## [0.3.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.1) (2025-01-29)
+## [0.3.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.2) (2025-01-29)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.0...0.3.1)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.1...0.3.2)
 
 **Closed issues:**
 
-- Add Reverse Highlight [\#80](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/80)
-- Improve Version Constraints [\#78](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/78)
+- Add Clear Cache Icon on Panel [\#82](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/82)
 
 **Merged pull requests:**
 
-- Enhance tree view navigation and editor highlighting [\#81](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/81) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- feat: Add ignore\_auto\_referencing support for dependency input mappings [\#79](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/79) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Enhance version constraint selection with advanced options and validation [\#77](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/77) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- feat: Improve tree view navigation and performance [\#84](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/84) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- feat: Add clear cache functionality to IBM Catalog tree view [\#83](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/83) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
