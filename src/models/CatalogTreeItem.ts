@@ -18,6 +18,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private readonly context: vscode.ExtensionContext;
     private readonly logger: LoggingService;
     private isUpdatingTooltip: boolean = false;
+    private isHighlighted = false;
 
     // Queue management properties
     private static validationQueue: Set<CatalogTreeItem> = new Set();
@@ -27,6 +28,12 @@ export class CatalogTreeItem extends vscode.TreeItem {
 
     public readonly parent?: CatalogTreeItem;
     public readonly catalogId?: string;
+
+    private static readonly defaultIconPath = new vscode.ThemeIcon('symbol-property');
+    private static readonly highlightDecoration = {
+        light: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+        dark: new vscode.ThemeColor('editor.findMatchHighlightBackground')
+    };
 
     constructor(
         context: vscode.ExtensionContext,
@@ -800,6 +807,21 @@ export class CatalogTreeItem extends vscode.TreeItem {
      */
     public getRootNode(): CatalogTreeItem | undefined {
         return this.getRoot();
+    }
+
+    public setHighlighted(highlighted: boolean): void {
+        this.isHighlighted = highlighted;
+        if (highlighted) {
+            this.description = '⟸'; // Add an arrow to indicate selection
+            this.iconPath = new vscode.ThemeIcon('arrow-right');
+        } else {
+            this.description = '';
+            this.iconPath = this.getDefaultIcon();
+        }
+    }
+
+    private getDefaultIcon(): vscode.ThemeIcon | undefined {
+        return CatalogTreeItem.defaultIconPath;
     }
 
 }

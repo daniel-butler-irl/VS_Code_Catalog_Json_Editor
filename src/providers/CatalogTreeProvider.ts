@@ -436,4 +436,25 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         // The parent is already tracked in the CatalogTreeItem
         return element.parent;
     }
+
+    /**
+     * Finds tree items by their JSON path
+     */
+    public async findItemsByJsonPath(jsonPath: string): Promise<CatalogTreeItem[]> {
+        const items: CatalogTreeItem[] = [];
+        const rootItems = await this.getChildren();
+
+        const findInItems = async (currentItems: CatalogTreeItem[]): Promise<void> => {
+            for (const item of currentItems) {
+                if (item.jsonPath === jsonPath) {
+                    items.push(item);
+                }
+                const children = await this.getChildren(item);
+                await findInItems(children);
+            }
+        };
+
+        await findInItems(rootItems);
+        return items;
+    }
 }

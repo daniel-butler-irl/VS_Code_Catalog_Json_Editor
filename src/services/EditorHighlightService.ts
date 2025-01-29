@@ -11,6 +11,7 @@ import { LoggingService } from './core/LoggingService';
 export class EditorHighlightService implements vscode.Disposable {
     private static readonly MAX_CACHE_SIZE = 100; // Prevent memory leaks
     private static readonly CACHE_CLEANUP_INTERVAL = 1000 * 60 * 5; // 5 minutes
+    private static readonly HIGHLIGHT_DELAY = 1000; // 1 second delay before highlighting
 
     private documentVersions = new Map<string, number>();
     private parsedDocuments = new Map<string, {
@@ -20,6 +21,7 @@ export class EditorHighlightService implements vscode.Disposable {
     }>();
     private decorationType: vscode.TextEditorDecorationType;
     private currentDecorations: vscode.DecorationOptions[] = [];
+    private currentHighlightRange?: vscode.Range;
     public readonly logger = LoggingService.getInstance();
     private readonly parseOptions: ParseOptions = {
         disallowComments: false,
@@ -36,8 +38,10 @@ export class EditorHighlightService implements vscode.Disposable {
     private lineToPathCache = new Map<string, Map<number, string>>();
     private selectionListener?: vscode.Disposable;
     private treeView?: vscode.TreeView<any>;
+    private lastHighlightedLine?: number;
+    private lastHighlightTime = 0;
 
-    constructor(debounceDelay = 50) {
+    constructor(debounceDelay = 1000) {
         this.debounceDelay = debounceDelay;
         this.logger.debug('Initializing EditorHighlightService');
 
@@ -213,12 +217,23 @@ export class EditorHighlightService implements vscode.Disposable {
                 };
 
                 this.currentDecorations = [decoration];
+                this.currentHighlightRange = range;
                 activeEditor.setDecorations(this.decorationType, this.currentDecorations);
 
+                // Reveal range without taking focus
                 activeEditor.revealRange(
                     range,
                     vscode.TextEditorRevealType.InCenterIfOutsideViewport
                 );
+
+                // Ensure editor keeps focus
+                if (this.treeView?.visible) {
+                    void vscode.window.showTextDocument(activeEditor.document, {
+                        viewColumn: activeEditor.viewColumn,
+                        preserveFocus: true,
+                        selection: activeEditor.selection
+                    });
+                }
             } else {
                 this.logger.debug('Node not found for path', jsonPath);
                 this.clearHighlight();
@@ -277,6 +292,11 @@ export class EditorHighlightService implements vscode.Disposable {
             activeEditor.setDecorations(this.decorationType, []);
         }
         this.currentDecorations = [];
+        this.currentHighlightRange = undefined;
+    }
+
+    public getCurrentHighlightRange(): vscode.Range | undefined {
+        return this.currentHighlightRange;
     }
 
     public dispose(): void {
@@ -307,36 +327,38 @@ export class EditorHighlightService implements vscode.Disposable {
      * Handles selection changes in the editor
      */
     private async handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): Promise<void> {
-        if (!this.treeView || event.selections.length === 0) {
-            return;
-        }
-
         const editor = event.textEditor;
         if (!editor || editor.document.languageId !== 'json') {
             return;
         }
 
-        try {
-            // Always clear the previous highlight first
-            this.clearHighlight();
+        const currentLine = event.selections[0].active.line;
+        const currentTime = Date.now();
 
-            const position = event.selections[0].active;
-            this.logger.debug('Selection changed to position:', {
-                line: position.line,
-                character: position.character
-            });
+        // Skip if same line or not enough time has passed
+        if (currentLine === this.lastHighlightedLine &&
+            currentTime - this.lastHighlightTime < EditorHighlightService.HIGHLIGHT_DELAY) {
+            return;
+        }
 
-            const jsonPath = await this.findJsonPathAtPosition(editor.document, position);
+        this.lastHighlightedLine = currentLine;
+        this.lastHighlightTime = currentTime;
 
-            if (jsonPath) {
-                this.logger.debug('Found JSON path at position:', jsonPath);
-                // Find and reveal the corresponding tree item
-                await vscode.commands.executeCommand('ibmCatalogTree.revealJsonPath', jsonPath);
-            } else {
-                this.logger.debug('No JSON path found at position');
+        const document = editor.document;
+        const position = event.selections[0].active;
+        const jsonPath = await this.findJsonPathAtPosition(document, position);
+
+        if (jsonPath) {
+            await this.highlightJsonPath(jsonPath, editor);
+            // Reveal in tree without taking focus
+            if (this.treeView) {
+                void vscode.commands.executeCommand('ibmCatalogTree.revealJsonPath', jsonPath, {
+                    select: true,
+                    focus: false
+                });
             }
-        } catch (error) {
-            this.logger.error('Error handling selection change', error);
+        } else {
+            this.clearHighlight();
         }
     }
 
