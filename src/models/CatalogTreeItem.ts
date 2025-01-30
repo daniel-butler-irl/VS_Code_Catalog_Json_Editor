@@ -576,10 +576,154 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
 
         if (typeof this.value === 'object' && this.value !== null) {
+            // Show descriptive names for various object types
+            if (this.isDependencyParent()) {
+                const values = this.value as Record<string, unknown>;
+                const name = values.name;
+                if (name) {
+                    return String(name);
+                }
+            }
+
+            // Check if this is an input mapping object
+            if (this.isInputMappingParent()) {
+                return this.getInputMappingDescription();
+            }
+
+            // Check if this is an IAM permission object
+            if (this.isIamPermissionParent()) {
+                const values = this.value as Record<string, unknown>;
+                const serviceName = values.service_name;
+                if (serviceName) {
+                    return String(serviceName);
+                }
+            }
+
+            // Check if this is a configuration object
+            if (this.isConfigurationParent()) {
+                const values = this.value as Record<string, unknown>;
+                const key = values.key;
+                if (key) {
+                    return String(key);
+                }
+            }
+
+            // Check if this is a feature object
+            if (this.isFeatureParent()) {
+                const values = this.value as Record<string, unknown>;
+                const title = values.title;
+                if (title) {
+                    return String(title);
+                }
+            }
+
+            // Check if this is a product object
+            if (this.isProductParent()) {
+                const values = this.value as Record<string, unknown>;
+                const label = values.label;
+                if (label) {
+                    return String(label);
+                }
+            }
+
+            // Check if this is a flavor object
+            if (this.isFlavorParent()) {
+                const values = this.value as Record<string, unknown>;
+                const label = values.label;
+                if (label) {
+                    return String(label);
+                }
+            }
+
             return `Object{${Object.keys(this.value).length}}`;
         }
 
         return '';
+    }
+
+    /**
+     * Gets a description for an input mapping showing the direction of the mapping
+     */
+    private getInputMappingDescription(): string {
+        if (!this.value || typeof this.value !== 'object') {
+            return '';
+        }
+
+        const values = this.value as Record<string, unknown>;
+        const referenceVersion = values.reference_version === true;
+
+        // Determine source and destination based on the fields present
+        let source = '';
+        let destination = '';
+
+        if ('dependency_input' in values) {
+            source = referenceVersion ? 'version_input' : 'dependency_input';
+            destination = referenceVersion ? 'dependency_input' : 'version_input';
+        } else if ('dependency_output' in values) {
+            source = referenceVersion ? 'version_input' : 'dependency_output';
+            destination = referenceVersion ? 'dependency_output' : 'version_input';
+        } else if ('value' in values) {
+            source = referenceVersion ? 'version_input' : 'value';
+            destination = referenceVersion ? 'value' : 'version_input';
+        }
+
+        return source && destination ? `${source} → ${destination}` : '';
+    }
+
+    /**
+     * Checks if this item is an input mapping parent node
+     */
+    private isInputMappingParent(): boolean {
+        const pattern = /\.input_mapping\[\d+\]$/;
+        return pattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is a dependency parent node
+     */
+    private isDependencyParent(): boolean {
+        const dependencyPattern = /\.dependencies\[\d+\]$/;
+        return dependencyPattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is an IAM permission parent node
+     */
+    private isIamPermissionParent(): boolean {
+        const pattern = /\.iam_permissions\[\d+\]$/;
+        return pattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is a configuration parent node
+     */
+    private isConfigurationParent(): boolean {
+        const pattern = /\.configuration\[\d+\]$/;
+        return pattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is a feature parent node
+     */
+    private isFeatureParent(): boolean {
+        const pattern = /\.features\[\d+\]$/;
+        return pattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is a product parent node
+     */
+    private isProductParent(): boolean {
+        const pattern = /\.products\[\d+\]$/;
+        return pattern.test(this.jsonPath);
+    }
+
+    /**
+     * Checks if this item is a flavor parent node
+     */
+    private isFlavorParent(): boolean {
+        const pattern = /\.flavors\[\d+\]$/;
+        return pattern.test(this.jsonPath);
     }
 
     /**
