@@ -1451,25 +1451,57 @@ export class CatalogService {
                 mappingValue.version_input &&
                 (mappingValue.dependency_input || mappingValue.dependency_output || mappingValue.value)) {
 
-                const referenceVersion = await PromptService.showBooleanPick({
-                    title: 'Add Reference Direction',
-                    placeholder: 'Controls the direction of references between the architecture and its dependency',
-                    trueLabel: 'Dependency references architecture (dependency_input → version_input)',
-                    falseLabel: 'Architecture references dependency (version_input → dependency_input/output)',
-                    decorator: {
-                        validationMessage: 'When true: The dependency references a value from the architecture input.\nWhen false: The architecture input references the dependency\'s input or output.'
+                const items: QuickPickItemEx<boolean | undefined>[] = [
+                    {
+                        label: "Use default (false)",
+                        description: "Map dependency to parent (dependency_input → version_input)",
+                        detail: "Maps an input from the dependency into the parent architecture (default behavior)",
+                        value: undefined,
+                        iconPath: new vscode.ThemeIcon('arrow-right')
+                    },
+                    {
+                        label: "Map parent to dependency (true)",
+                        description: "Parent references dependency (version_input → dependency_input)",
+                        detail: "Maps the parent architecture's input into the dependency input (reference_version: true)",
+                        value: true,
+                        iconPath: new vscode.ThemeIcon('arrow-left')
+                    },
+                    {
+                        label: "Map dependency to parent (false)",
+                        description: "Map dependency to parent (dependency_input → version_input)",
+                        detail: "Maps an input from the dependency into the parent architecture (reference_version: false)",
+                        value: false,
+                        iconPath: new vscode.ThemeIcon('arrow-right')
                     }
+                ];
+
+                const result = await PromptService.showQuickPick<boolean | undefined>({
+                    title: 'Reference Direction',
+                    placeholder: 'Controls the direction of references between the architecture and its dependency',
+                    items: items,
+                    matchOnDescription: true,
+                    matchOnDetail: true
                 });
 
-                if (referenceVersion === undefined) {
-                    return false;
+                if (result === undefined) {
+                    return false; // User cancelled
                 }
 
-                // Update the mapping with the new reference_version field
-                await this.updateJsonValue(node.jsonPath, {
-                    ...mappingValue,
-                    reference_version: referenceVersion
-                });
+                // Only update if user chose to explicitly set the value
+                if (result !== undefined) {
+                    // If setting to true (version_input → dependency_input), ensure no dependency_output is present
+                    if (result === true && mappingValue.dependency_output) {
+                        void vscode.window.showErrorMessage(
+                            'Cannot use dependency_output when mapping parent input to dependency. Please use dependency_input instead.'
+                        );
+                        return false;
+                    }
+
+                    await this.updateJsonValue(node.jsonPath, {
+                        ...mappingValue,
+                        reference_version: result
+                    });
+                }
 
                 return true;
             }
