@@ -35,6 +35,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "ibmCatalog.collapseAll",
+        "title": "Collapse All",
+        "category": "IBM Catalog",
+        "icon": "$(collapse-all)"
+      },
+      {
         "command": "ibmCatalog.showLogs",
         "title": "Show IBM Catalog Logs",
         "category": "IBM Catalog"
@@ -115,6 +121,11 @@
       "view/title": [
         {
           "command": "ibmCatalog.clearCache",
+          "when": "view == ibmCatalogTree",
+          "group": "navigation"
+        },
+        {
+          "command": "ibmCatalog.collapseAll",
           "when": "view == ibmCatalogTree",
           "group": "navigation"
         }

@@ -127,6 +127,16 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             this.expandedNodes.delete(e.element.jsonPath);
             this.queueStateUpdate();
         });
+
+        // Handle visibility changes
+        this.treeView.onDidChangeVisibility(() => {
+            if (this.treeView?.visible) {
+                // When tree becomes visible, restore expanded state
+                this.uiStateService.getTreeState().expandedNodes.forEach(node => {
+                    this.expandedNodes.set(node, true);
+                });
+            }
+        });
     }
 
     //
@@ -161,6 +171,29 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private clearCaches(): void {
         this.memoizedPaths.clear();
         this.memoizedSchemaMetadata.clear();
+    }
+
+    /**
+     * Collapses all nodes in the tree view.
+     */
+    public collapseAll(): void {
+        // Clear expanded nodes state
+        this.expandedNodes.clear();
+
+        // Force immediate state update
+        if (this.batchStateUpdateTimer) {
+            clearTimeout(this.batchStateUpdateTimer);
+            this.batchStateUpdateTimer = null;
+        }
+
+        void this.uiStateService.updateTreeState({
+            expandedNodes: []
+        });
+
+        // Use VS Code's native collapse functionality
+        if (this.treeView) {
+            void vscode.commands.executeCommand('list.collapseAll');
+        }
     }
 
     //
