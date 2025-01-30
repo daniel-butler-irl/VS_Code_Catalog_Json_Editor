@@ -1,17 +1,18 @@
 # Changelog
 
-## [0.3.3](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.3) (2025-01-30)
+## [0.4.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.4.0) (2025-01-30)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.2...0.3.3)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.3...0.4.0)
 
 **Fixed bugs:**
 
-- reference\_version is set incorrectly [\#92](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/92)
-- Handle When File Is Not Saved [\#44](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/44)
+- Ensure new line at end of file on save [\#87](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/87)
+- Use double click to trigger tree highlight [\#86](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/86)
 
 **Merged pull requests:**
 
-- fix: reference direction selection in mapping configuration [\#91](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/91) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance double-click and selection highlighting in editor [\#94](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/94) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Refactor reference direction selection and tree view behavior [\#93](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/93) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
