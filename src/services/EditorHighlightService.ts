@@ -220,13 +220,13 @@ export class EditorHighlightService implements vscode.Disposable {
                 this.currentHighlightRange = range;
                 activeEditor.setDecorations(this.decorationType, this.currentDecorations);
 
-                // Reveal range without taking focus
+                // Reveal range without taking focus and keep in center
                 activeEditor.revealRange(
                     range,
                     vscode.TextEditorRevealType.InCenterIfOutsideViewport
                 );
 
-                // Ensure editor keeps focus
+                // Show document but always preserve focus
                 if (this.treeView?.visible) {
                     void vscode.window.showTextDocument(activeEditor.document, {
                         viewColumn: activeEditor.viewColumn,
@@ -239,7 +239,7 @@ export class EditorHighlightService implements vscode.Disposable {
                 this.clearHighlight();
             }
         } catch (error) {
-            this.logger.error('Failed to highlight JSON path:', error);
+            this.logger.error('Error performing highlight:', error);
             this.clearHighlight();
         }
     }
