@@ -5,6 +5,8 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import { LoggingService } from './LoggingService';
 import type { ICatalogFileInfo } from '../../types/catalog';
+import type { CatalogTreeProvider } from '../../providers/CatalogTreeProvider';
+import type { CatalogTreeItem } from '../../models/CatalogTreeItem';
 
 export class FileSystemService {
     private static instance: FileSystemService;
@@ -17,6 +19,9 @@ export class FileSystemService {
     private currentCatalogFile?: ICatalogFileInfo;
     private catalogData: unknown = {};
     private initialized = false;
+    private lastSelectedPath?: string;
+    private treeView?: vscode.TreeView<CatalogTreeItem>;
+    private treeDataProvider?: CatalogTreeProvider;
 
     private constructor(private readonly context: vscode.ExtensionContext) {
         this.logger.debug('Initializing FileSystemService');
@@ -24,6 +29,7 @@ export class FileSystemService {
         vscode.window.onDidChangeActiveTextEditor(() => {
             void this.checkAndUpdateRoot();
         });
+
         this.logger.debug('FileSystemService initialized');
     }
 
@@ -32,6 +38,20 @@ export class FileSystemService {
             FileSystemService.instance = new FileSystemService(context);
         }
         return FileSystemService.instance;
+    }
+
+    public setTreeProvider(provider: CatalogTreeProvider): void {
+        this.treeDataProvider = provider;
+        this.treeView = vscode.window.createTreeView<CatalogTreeItem>('ibmCatalogTree', {
+            treeDataProvider: provider
+        });
+
+        // Track tree view selection changes
+        this.treeView.onDidChangeSelection(e => {
+            if (e.selection[0]) {
+                this.lastSelectedPath = e.selection[0].jsonPath;
+            }
+        });
     }
 
     /**
@@ -225,10 +245,27 @@ export class FileSystemService {
 
         await fs.writeFile(
             this.currentCatalogFile.uri.fsPath,
-            JSON.stringify(this.catalogData, null, 2),
+            JSON.stringify(this.catalogData, null, 2) + '\n',
             'utf8'
         );
+
+        // Store the current selection path before firing the event
+        const currentPath = this.lastSelectedPath;
         this._onDidChangeContent.fire();
+
+        // Restore selection after a short delay to ensure tree view has updated
+        if (currentPath && this.treeView && this.treeDataProvider) {
+            setTimeout(async () => {
+                try {
+                    const item = await this.treeDataProvider!.findTreeItemByPath(currentPath);
+                    if (item) {
+                        await this.treeView!.reveal(item, { select: true, focus: true });
+                    }
+                } catch (error) {
+                    this.logger.error('Failed to restore selection', error);
+                }
+            }, 100);
+        }
     }
 
     private parseJsonPath(jsonPath: string): (string | number)[] {
@@ -255,10 +292,12 @@ export class FileSystemService {
         }
         return false;
     }
+
     /**
     * Dispose of the event emitter
     */
     public dispose(): void {
         this._onDidChangeContent.dispose();
+        this.treeView?.dispose();
     }
 }
