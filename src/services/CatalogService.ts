@@ -1306,6 +1306,17 @@ export class CatalogService {
      */
     private async handleInputMappingAddition(parentNode: CatalogTreeItem): Promise<void> {
         try {
+            // Get existing mappings to filter out already mapped destinations
+            const currentMappings = (parentNode.value as any[]) || [];
+            const existingVersionInputs = new Set(
+                currentMappings.map((mapping: any) => mapping.version_input)
+            );
+            const existingDependencyInputs = new Set(
+                currentMappings
+                    .filter((mapping: any) => mapping.value !== undefined)
+                    .map((mapping: any) => mapping.dependency_input)
+            );
+
             // 1. Get mapping type (now including version_input as an option)
             const mappingType = await this.promptForMappingType();
             if (!mappingType) {
@@ -1316,6 +1327,88 @@ export class CatalogService {
             let sourceValue: string | undefined;
             let versionInput: string | undefined;
             let referenceVersion: boolean | undefined;
+            // Initialize newMapping early since we might need to add to it during the flow
+            const newMapping: Record<string, string | boolean | undefined> = {};
+
+            // Only prompt for direction if using version_input or dependency_input as source type
+            // and not when using them as targets for value mapping
+            if ((mappingType === 'version_input' || mappingType === 'dependency_input') && sourceType !== 'value') {
+                // Prompt for reference_version first to determine mapping direction
+                const items: QuickPickItemEx<boolean | undefined>[] = [
+                    {
+                        label: "Use default (false)",
+                        description: "Dependency up to parent (↑)",
+                        detail: "Maps an input from the dependency up into the parent architecture (default behavior)",
+                        value: undefined,
+                        iconPath: new vscode.ThemeIcon('arrow-up')
+                    },
+                    {
+                        label: "Parent down to dependency (true)",
+                        description: "Parent down to dependency (↓)",
+                        detail: "Maps the parent architecture's input down into the dependency input (reference_version: true)",
+                        value: true,
+                        iconPath: new vscode.ThemeIcon('arrow-down')
+                    },
+                    {
+                        label: "Dependency up to parent (false)",
+                        description: "Dependency up to parent (↑)",
+                        detail: "Maps an input from the dependency up into the parent architecture (reference_version: false)",
+                        value: false,
+                        iconPath: new vscode.ThemeIcon('arrow-up')
+                    }
+                ];
+
+                const directionResult = await PromptService.showQuickPick<boolean | undefined>({
+                    title: 'Reference Direction',
+                    placeholder: 'Controls the direction of references between the architecture and its dependency',
+                    items: items,
+                    matchOnDescription: true,
+                    matchOnDetail: true
+                });
+
+                // Check if user cancelled (no selection made)
+                if (directionResult === null) {
+                    return;
+                }
+
+                referenceVersion = directionResult;
+            }
+
+            const promptForVersionInput = async (node: CatalogTreeItem): Promise<string | undefined> => {
+                const result = await this.promptForInputMapping(node, existingVersionInputs);
+                if (result === undefined) {
+                    return undefined;
+                }
+                // If this is an edit of an existing mapping, allow the current value
+                const currentIndex = Number(node.jsonPath.match(/\[(\d+)\]/)?.[1]);
+                if (!isNaN(currentIndex) && currentMappings[currentIndex]?.version_input === result) {
+                    return result;
+                }
+                // Otherwise check if it's already mapped
+                if (existingVersionInputs.has(result)) {
+                    void vscode.window.showErrorMessage(`The destination "${result}" is already mapped. Each destination can only be mapped once.`);
+                    return undefined;
+                }
+                return result;
+            };
+
+            const promptForDependencyInput = async (node: CatalogTreeItem): Promise<string | undefined> => {
+                const result = await this.promptForInputMapping(node, existingDependencyInputs);
+                if (result === undefined) {
+                    return undefined;
+                }
+                // If this is an edit of an existing mapping, allow the current value
+                const currentIndex = Number(node.jsonPath.match(/\[(\d+)\]/)?.[1]);
+                if (!isNaN(currentIndex) && currentMappings[currentIndex]?.dependency_input === result) {
+                    return result;
+                }
+                // Otherwise check if it's already mapped
+                if (existingDependencyInputs.has(result)) {
+                    void vscode.window.showErrorMessage(`The destination "${result}" is already mapped with a static value. Each destination can only be mapped once.`);
+                    return undefined;
+                }
+                return result;
+            };
 
             if (mappingType === 'version_input') {
                 // Starting with version_input flow
@@ -1330,130 +1423,168 @@ export class CatalogService {
                     parentNode
                 );
 
-                versionInput = await this.promptForInputMapping(tempVersionInputNode);
+                versionInput = await promptForVersionInput(tempVersionInputNode);
                 if (versionInput === undefined) {
                     return;
                 }
 
-                // Now prompt for the source type
+                // Now prompt for the source type, excluding version_input and dependency_output if mapping down
+                const excludeTypes = ['version_input'];
+                if (referenceVersion === true) {
+                    excludeTypes.push('dependency_output');
+                }
+
                 sourceType = await this.promptForMappingType({
                     title: `Select source type for mapping to "${versionInput}"`,
-                    excludeTypes: ['version_input']
+                    excludeTypes
                 });
                 if (!sourceType) {
                     return;
                 }
 
-                // Get the source value
-                const tempSourceNode = new CatalogTreeItem(
-                    this.context,
-                    sourceType,
-                    '',
-                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'editable',
-                    undefined,
-                    parentNode
-                );
+                // Get the source value based on type
+                if (sourceType === 'value') {
+                    sourceValue = await this.promptForAnyValue();
+                } else {
+                    const tempSourceNode = new CatalogTreeItem(
+                        this.context,
+                        sourceType,
+                        '',
+                        `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'editable',
+                        undefined,
+                        parentNode
+                    );
 
-                sourceValue = await this.promptForInputMapping(tempSourceNode);
+                    sourceValue = await this.promptForInputMapping(tempSourceNode);
+                }
                 if (sourceValue === undefined) {
                     return;
                 }
 
             } else {
                 // Original flow - starting with source type
+                // If mapping down, don't allow dependency_output
+                if (referenceVersion === true && mappingType === 'dependency_output') {
+                    void vscode.window.showErrorMessage(
+                        'Cannot use dependency_output when mapping parent input to dependency. Please use dependency_input instead.'
+                    );
+                    return;
+                }
+
                 sourceType = mappingType;
-                const tempMappingNode = new CatalogTreeItem(
-                    this.context,
-                    sourceType,
-                    '',
-                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'editable',
-                    undefined,
-                    parentNode
-                );
 
-                sourceValue = await this.promptForInputMapping(tempMappingNode);
-                if (sourceValue === undefined) {
-                    return;
+                // For value type, first prompt for where to map it (version_input or dependency_input)
+                if (mappingType === 'value') {
+                    const targetType = await this.promptForMappingType({
+                        title: 'Select where to map the value',
+                        excludeTypes: ['value', 'dependency_output']
+                    });
+                    if (!targetType) {
+                        return;
+                    }
+                    // Create temporary node for the target
+                    const tempTargetNode = new CatalogTreeItem(
+                        this.context,
+                        targetType,
+                        '',
+                        `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${targetType}`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'editable',
+                        undefined,
+                        parentNode
+                    );
+
+                    // Use appropriate prompt based on target type
+                    const mappingTarget = targetType === 'version_input'
+                        ? await promptForVersionInput(tempTargetNode)
+                        : await promptForDependencyInput(tempTargetNode);
+
+                    if (mappingTarget === undefined) {
+                        return;
+                    }
+
+                    // Get the static value to use
+                    const staticValue = await this.promptForAnyValue();
+                    if (staticValue === undefined) {
+                        return;
+                    }
+
+                    // Set up the mapping based on target type
+                    if (targetType === 'version_input') {
+                        sourceType = 'value';
+                        sourceValue = staticValue;
+                        versionInput = mappingTarget;
+                    } else { // dependency_input
+                        sourceType = 'dependency_input';
+                        sourceValue = mappingTarget;
+                        newMapping.value = staticValue;
+                    }
+                } else {
+                    const tempMappingNode = new CatalogTreeItem(
+                        this.context,
+                        sourceType,
+                        '',
+                        `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].${sourceType}`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'editable',
+                        undefined,
+                        parentNode
+                    );
+
+                    sourceValue = await this.promptForInputMapping(tempMappingNode);
+                    if (sourceValue === undefined) {
+                        return;
+                    }
+
+                    // Create temporary node for version_input
+                    const tempVersionInputNode = new CatalogTreeItem(
+                        this.context,
+                        'version_input',
+                        '',
+                        `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'editable',
+                        undefined,
+                        parentNode
+                    );
+
+                    versionInput = await promptForVersionInput(tempVersionInputNode);
+                    if (versionInput === undefined) {
+                        return;
+                    }
                 }
-
-                // Create temporary node for version_input
-                const tempVersionInputNode = new CatalogTreeItem(
-                    this.context,
-                    'version_input',
-                    '',
-                    `${parentNode.jsonPath}[${(parentNode.value as any[]).length}].version_input`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'editable',
-                    undefined,
-                    parentNode
-                );
-
-                versionInput = await this.promptForInputMapping(tempVersionInputNode);
-                if (versionInput === undefined) {
-                    return;
-                }
-            }
-
-            // Prompt for reference_version after we have both values
-            const items: QuickPickItemEx<boolean | undefined>[] = [
-                {
-                    label: "Use default (false)",
-                    description: "Dependency up to parent (↑)",
-                    detail: "Maps an input from the dependency up into the parent architecture (default behavior)",
-                    value: undefined,
-                    iconPath: new vscode.ThemeIcon('arrow-up')
-                },
-                {
-                    label: "Parent down to dependency (true)",
-                    description: "Parent down to dependency (↓)",
-                    detail: "Maps the parent architecture's input down into the dependency input (reference_version: true)",
-                    value: true,
-                    iconPath: new vscode.ThemeIcon('arrow-down')
-                },
-                {
-                    label: "Dependency up to parent (false)",
-                    description: "Dependency up to parent (↑)",
-                    detail: "Maps an input from the dependency up into the parent architecture (reference_version: false)",
-                    value: false,
-                    iconPath: new vscode.ThemeIcon('arrow-up')
-                }
-            ];
-
-            referenceVersion = await PromptService.showQuickPick<boolean | undefined>({
-                title: 'Reference Direction',
-                placeholder: 'Controls the direction of references between the architecture and its dependency',
-                items: items,
-                matchOnDescription: true,
-                matchOnDetail: true
-            });
-
-            if (referenceVersion === undefined) {
-                return;
-            }
-
-            // If setting to true (version_input → dependency_input), ensure no dependency_output is present
-            if (referenceVersion === true && sourceType === 'dependency_output') {
-                void vscode.window.showErrorMessage(
-                    'Cannot use dependency_output when mapping parent input to dependency. Please use dependency_input instead.'
-                );
-                return;
             }
 
             // Only create mapping if we have both source type and values
-            if (!sourceType || !sourceValue || !versionInput) {
+            if (!sourceType || !sourceValue) {
                 return;
             }
 
-            // Create and add the new mapping
-            const newMapping = {
-                [sourceType]: sourceValue,
-                "version_input": versionInput,
-                "reference_version": referenceVersion
-            };
+            // Add the basic mapping properties
+            if (sourceType === 'value') {
+                // For value type mappings
+                newMapping.value = sourceValue;
+                if (versionInput !== undefined) {
+                    newMapping.version_input = versionInput;
+                }
+            } else {
+                // For all other mapping types
+                newMapping[sourceType] = sourceValue;
+                if (versionInput !== undefined) {
+                    newMapping.version_input = versionInput;
+                }
+                // If we have a static value to add (from value mapping to dependency_input)
+                if (newMapping.value !== undefined) {
+                    delete newMapping.version_input;
+                }
+            }
+
+            // Only include reference_version if using version_input or dependency_input
+            if ((mappingType === 'version_input' || mappingType === 'dependency_input') && !newMapping.value) {
+                newMapping.reference_version = referenceVersion;
+            }
 
             const currentArray = (parentNode.value as any[]) || [];
             await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newMapping]);
@@ -2318,7 +2449,21 @@ export class CatalogService {
                 return undefined;
             }
 
-            const configGroups = this.groupConfigurationItems(configurations, node);
+            // Get existing mappings to filter out already mapped destinations
+            const existingMappings = Array.isArray(depValue.input_mapping) ? depValue.input_mapping : [];
+            const existingDestinations = new Set(existingMappings.map(mapping => mapping.version_input));
+
+            // Filter out configurations that are already mapped
+            const availableConfigurations = configurations.filter(config =>
+                !existingDestinations.has(config.key) || config.key === currentValue
+            );
+
+            if (!availableConfigurations.length) {
+                vscode.window.showWarningMessage('All available configuration keys are already mapped.');
+                return undefined;
+            }
+
+            const configGroups = this.groupConfigurationItems(availableConfigurations, node);
             const items: QuickPickItemEx<string>[] = [];
 
             if (configGroups.required.length > 0) {
