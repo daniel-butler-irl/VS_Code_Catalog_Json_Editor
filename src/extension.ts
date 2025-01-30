@@ -12,6 +12,7 @@ import { AuthService } from './services/AuthService';
 import { LoggingService, LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
 import { UIStateService } from './services/core/UIStateService';
+import { FileSystemService } from './services/core/FileSystemService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
@@ -74,6 +75,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             treeDataProvider: treeProvider,
             showCollapseAll: true
         });
+
+        // Connect the tree provider to the FileSystemService
+        const fileSystemService = FileSystemService.getInstance(context);
+        fileSystemService.setTreeProvider(treeProvider);
 
         // Track tree view selection changes - simplified for performance
         let selectionDebounceTimer: NodeJS.Timeout | undefined;

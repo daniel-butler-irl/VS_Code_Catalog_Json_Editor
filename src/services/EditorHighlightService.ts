@@ -12,6 +12,8 @@ export class EditorHighlightService implements vscode.Disposable {
     private static readonly MAX_CACHE_SIZE = 100; // Prevent memory leaks
     private static readonly CACHE_CLEANUP_INTERVAL = 1000 * 60 * 5; // 5 minutes
     private static readonly HIGHLIGHT_DELAY = 1000; // 1 second delay before highlighting
+    private static readonly DOUBLE_CLICK_THRESHOLD = 500; // 500ms threshold for double-click
+    private static readonly CLICK_DEBOUNCE = 100; // 100ms debounce for click events
 
     private documentVersions = new Map<string, number>();
     private parsedDocuments = new Map<string, {
@@ -40,6 +42,7 @@ export class EditorHighlightService implements vscode.Disposable {
     private treeView?: vscode.TreeView<any>;
     private lastHighlightedLine?: number;
     private lastHighlightTime = 0;
+    private lastClickTime = 0;
 
     constructor(debounceDelay = 1000) {
         this.debounceDelay = debounceDelay;
@@ -332,33 +335,49 @@ export class EditorHighlightService implements vscode.Disposable {
             return;
         }
 
-        const currentLine = event.selections[0].active.line;
         const currentTime = Date.now();
+        const currentLine = event.selections[0].active.line;
+        const timeSinceLastClick = currentTime - this.lastClickTime;
 
-        // Skip if same line or not enough time has passed
-        if (currentLine === this.lastHighlightedLine &&
-            currentTime - this.lastHighlightTime < EditorHighlightService.HIGHLIGHT_DELAY) {
+        // Ignore events that are too close together (debounce)
+        if (timeSinceLastClick < EditorHighlightService.CLICK_DEBOUNCE) {
             return;
         }
 
-        this.lastHighlightedLine = currentLine;
-        this.lastHighlightTime = currentTime;
+        // Check if this is a word selection (which happens on double-click)
+        const isWordSelection = event.selections[0].start.line === event.selections[0].end.line &&
+            !event.selections[0].isEmpty &&
+            timeSinceLastClick <= EditorHighlightService.DOUBLE_CLICK_THRESHOLD;
 
-        const document = editor.document;
-        const position = event.selections[0].active;
-        const jsonPath = await this.findJsonPathAtPosition(document, position);
+        // If it's not a word selection, check if it's a drag selection
+        if (!event.selections[0].isEmpty && !isWordSelection) {
+            return;
+        }
 
-        if (jsonPath) {
-            await this.highlightJsonPath(jsonPath, editor);
-            // Reveal in tree without taking focus
-            if (this.treeView) {
-                void vscode.commands.executeCommand('ibmCatalogTree.revealJsonPath', jsonPath, {
-                    select: true,
-                    focus: false
-                });
+        // Check for double-click (either through word selection or rapid clicks)
+        if (isWordSelection || timeSinceLastClick <= EditorHighlightService.DOUBLE_CLICK_THRESHOLD) {
+            this.logger.debug('Double-click detected on line ' + currentLine);
+
+            const document = editor.document;
+            const position = event.selections[0].active;
+            const jsonPath = await this.findJsonPathAtPosition(document, position);
+
+            if (jsonPath) {
+                this.logger.debug(`Highlighting path: ${jsonPath}`);
+                await this.highlightJsonPath(jsonPath, editor);
+                // Reveal in tree without taking focus
+                if (this.treeView) {
+                    void vscode.commands.executeCommand('ibmCatalogTree.revealJsonPath', jsonPath, {
+                        select: true,
+                        focus: false
+                    });
+                }
             }
+
+            // Reset click time after handling double-click
+            this.lastClickTime = 0;
         } else {
-            this.clearHighlight();
+            this.lastClickTime = currentTime;
         }
     }
 
