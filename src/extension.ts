@@ -144,52 +144,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Initialize catalog service
         await catalogService.initialize();
 
-        // Test tree view highlighting with detailed logging
-        logger.debug('Scheduling tree view highlight test...');
-        setTimeout(async () => {
-            try {
-                logger.debug('Starting tree view highlight test');
-
-                // Get all items from the root
-                logger.debug('Fetching root items...');
-                const rootItems = await treeProvider.getChildren();
-                logger.debug(`Found ${rootItems.length} root items`);
-
-                if (rootItems.length > 0) {
-                    logger.debug(`First root item label: ${rootItems[0].label}`);
-
-                    // Get the first item's children
-                    logger.debug('Fetching children of first root item...');
-                    const children = await treeProvider.getChildren(rootItems[0]);
-                    logger.debug(`Found ${children.length} children`);
-
-                    if (children.length > 0) {
-                        // Select a child item
-                        const itemToHighlight = children[0];
-                        logger.debug('Attempting to highlight item:', {
-                            label: itemToHighlight.label,
-                            path: itemToHighlight.jsonPath,
-                            type: itemToHighlight.contextValue
-                        });
-
-                        logger.debug('Calling treeView.reveal...');
-                        await treeView.reveal(itemToHighlight, {
-                            select: true,
-                            focus: true,
-                            expand: 2  // Expand parent and the item itself
-                        });
-                        logger.debug('Tree view reveal completed');
-                    } else {
-                        logger.debug('No children found for first root item');
-                    }
-                } else {
-                    logger.debug('No root items found in tree');
-                }
-            } catch (error) {
-                logger.error('Failed to test tree view highlighting:', error);
-            }
-        }, 20000); // Wait 20 seconds after activation to test
-
         // Use custom command for tree item clicks
         let lastClickTime: number | null = null;
         let lastClickedItemId: string | null = null;
@@ -374,11 +328,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         });
                     }
 
-                    // Queue item reveal
+                    // Queue item reveal - always default to not taking focus
                     await new Promise<void>(resolve => {
                         setImmediate(async () => {
                             await treeView.reveal(targetItem, {
-                                select: true,
+                                select: options?.select ?? true,
                                 focus: options?.focus ?? false,
                                 expand: true
                             });
@@ -386,7 +340,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         });
                     });
 
-                    // Queue highlight update
+                    // Queue highlight update without taking focus
                     setImmediate(() => {
                         targetItem.setHighlighted(true);
                         setTimeout(() => targetItem.setHighlighted(false), 1000);
