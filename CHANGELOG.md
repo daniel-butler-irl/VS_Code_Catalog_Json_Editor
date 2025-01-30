@@ -1,17 +1,17 @@
 # Changelog
 
-## [0.3.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.2) (2025-01-29)
+## [0.3.3](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.3.3) (2025-01-30)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.1...0.3.2)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.2...0.3.3)
 
-**Closed issues:**
+**Fixed bugs:**
 
-- Add Clear Cache Icon on Panel [\#82](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/82)
+- reference\_version is set incorrectly [\#92](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/92)
+- Handle When File Is Not Saved [\#44](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/44)
 
 **Merged pull requests:**
 
-- feat: Improve tree view navigation and performance [\#84](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/84) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- feat: Add clear cache functionality to IBM Catalog tree view [\#83](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/83) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- fix: reference direction selection in mapping configuration [\#91](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/91) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
