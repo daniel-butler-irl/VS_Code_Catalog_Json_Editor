@@ -1,18 +1,26 @@
 # Changelog
 
-## [0.4.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.4.0) (2025-01-30)
+## [0.5.0](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.5.0) (2025-01-31)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.3.3...0.4.0)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.4.0...0.5.0)
 
 **Fixed bugs:**
 
-- Ensure new line at end of file on save [\#87](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/87)
-- Use double click to trigger tree highlight [\#86](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/86)
+- fix collapse button [\#97](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/97)
+- Input prompt static value no choice for mapping [\#89](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/89)
+
+**Closed issues:**
+
+- Reset the dependency if Catalog or ID changes [\#99](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/99)
+- For dependencies list the dep name/label instead of the object details [\#85](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/85)
+- When adding items in the prompt filter out items that already exist in the json [\#76](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/issues/76)
 
 **Merged pull requests:**
 
-- Enhance double-click and selection highlighting in editor [\#94](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/94) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Refactor reference direction selection and tree view behavior [\#93](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/93) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance dependency flavor selection and optimize CatalogService logging [\#100](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/100) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Add Collapse All functionality to IBM Catalog Tree View [\#98](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/98) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Improve label generation for complex objects in CatalogTreeItem [\#96](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/96) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance input mapping with advanced filtering and mapping flows [\#95](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/95) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
