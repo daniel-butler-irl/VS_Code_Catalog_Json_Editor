@@ -525,8 +525,7 @@ export class CatalogService {
     private async handleDependencyFlavorArrayAddition(parentNode: CatalogTreeItem): Promise<void> {
         this.logger.debug('Starting dependency flavor array addition', {
             parentNodePath: parentNode.jsonPath,
-            parentNodeValue: parentNode.value,
-            parentNodeContextValue: parentNode.contextValue
+            parentNodeValue: parentNode.value
         });
 
         try {
@@ -556,10 +555,7 @@ export class CatalogService {
 
             this.logger.debug('Dependency context found', {
                 catalogId,
-                offeringId,
-                isSwappable: parentNode.isInSwappableDependency(),
-                dependencyNodePath: dependencyNode.jsonPath,
-                dependencyValue: depValue
+                offeringId
             });
 
             if (!catalogId || !offeringId) {
@@ -569,8 +565,7 @@ export class CatalogService {
             // Fetch available flavors
             const flavors = await ibmCloudService.getAvailableFlavors(catalogId, offeringId);
             this.logger.debug('Fetched available flavors', {
-                count: flavors.length,
-                flavors: flavors
+                count: flavors.length
             });
 
             if (!flavors.length) {
@@ -581,24 +576,12 @@ export class CatalogService {
             // Get current flavors from the dependency
             const currentFlavors = parentNode.value as string[] || [];
 
-            this.logger.debug('Current flavors from parent node', {
-                currentFlavors,
-                parentNodeValue: parentNode.value,
-                dependencyFlavors: depValue.flavors
-            });
-
             // Prepare flavor details for selection
             const items: QuickPickItemEx<string>[] = [];
 
             // Add available flavors with details
             for (const flavorName of flavors) {
                 const isPicked = currentFlavors.includes(flavorName);
-                this.logger.debug(`Processing flavor ${flavorName}`, {
-                    flavorName,
-                    isPicked,
-                    currentFlavors,
-                    includes: currentFlavors.includes(flavorName)
-                });
 
                 try {
                     const details = await ibmCloudService.getFlavorDetails(
@@ -630,14 +613,6 @@ export class CatalogService {
                 }
             }
 
-            this.logger.debug('Prepared quick pick items', {
-                items: items.map(item => ({
-                    label: item.label,
-                    value: item.value,
-                    picked: item.picked
-                }))
-            });
-
             // Ensure focus for quick pick
             await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
 
@@ -665,12 +640,6 @@ export class CatalogService {
                     quickPick.dispose();
                 });
                 quickPick.show();
-            });
-
-            this.logger.debug('Quick pick result', {
-                result,
-                originalCurrentFlavors: currentFlavors,
-                itemsPicked: items.filter(i => i.picked).map(i => i.value)
             });
 
             if (result) {
@@ -1290,8 +1259,7 @@ export class CatalogService {
 
     private async promptForValue(node: CatalogTreeItem, currentValue?: unknown): Promise<unknown> {
         this.logger.debug('Prompting for value', {
-            node: node.jsonPath,
-            currentValue
+            node: node.jsonPath
         });
 
         // Check if this is a flavor selection
