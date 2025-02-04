@@ -188,9 +188,68 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 const path = `${parentPath}[${index}]`;
                 const schemaMetadata = this.getSchemaMetadata(path);
 
+                // Get a descriptive label for the array item if possible
+                let displayLabel = '';
+                if (typeof val === 'object' && val !== null) {
+                    // Special handling for input_mapping items
+                    if (parentPath.endsWith('input_mapping')) {
+                        const mapping = val as Record<string, unknown>;
+                        const referenceVersion = mapping.reference_version === true;
+
+                        // Determine source and destination with their values
+                        let source = '';
+                        let destination = '';
+                        let sourceValue = '';
+                        let destValue = '';
+
+                        if ('dependency_input' in mapping) {
+                            source = referenceVersion ? 'version_input' : 'dependency_input';
+                            destination = referenceVersion ? 'dependency_input' : 'version_input';
+                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_input);
+                            destValue = String(referenceVersion ? mapping.dependency_input : mapping.version_input);
+                        } else if ('dependency_output' in mapping) {
+                            source = referenceVersion ? 'version_input' : 'dependency_output';
+                            destination = referenceVersion ? 'dependency_output' : 'version_input';
+                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_output);
+                            destValue = String(referenceVersion ? mapping.dependency_output : mapping.version_input);
+                        } else if ('value' in mapping) {
+                            source = referenceVersion ? 'version_input' : 'value';
+                            destination = referenceVersion ? 'value' : 'version_input';
+                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.value);
+                            destValue = String(referenceVersion ? mapping.value : mapping.version_input);
+                        }
+
+                        if (source && destination) {
+                            displayLabel = `${source} → ${destination}`;
+                            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
+                            const cleanValue = (value: string) => {
+                                const match = value.match(/\((.*?)\)/);
+                                return match ? match[1] : value;
+                            };
+                            // Store just the clean values for the description
+                            val._displayValues = `${cleanValue(sourceValue)} → ${cleanValue(destValue)}`;
+                        }
+                    } else {
+                        // Try to find a descriptive field for non-input_mapping items
+                        const descriptiveFields = ['name', 'label', 'title', 'key', 'id'];
+                        for (const field of descriptiveFields) {
+                            if (field in val && typeof val[field] === 'string') {
+                                displayLabel = val[field];
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // If no descriptive label found, use a generic one based on the parent's name
+                if (!displayLabel) {
+                    const parentName = parentPath.split('.').pop()?.replace(/\[\d+\]$/, '') || 'item';
+                    displayLabel = `${parentName} ${index + 1}`;
+                }
+
                 const item = new CatalogTreeItem(
                     this.context,
-                    `[${index}]`, // Consistent array index format
+                    displayLabel,
                     val,
                     path,
                     this.getCollapsibleState(val, this.expandedNodes.has(path)),
@@ -198,6 +257,13 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                     schemaMetadata,
                     parentItem
                 );
+
+                // Set the description for input mapping items
+                if (typeof val === 'object' && val !== null && '_displayValues' in val) {
+                    item.description = val._displayValues;
+                    delete val._displayValues; // Clean up temporary property
+                }
+
                 items.push(item);
             });
             return items;

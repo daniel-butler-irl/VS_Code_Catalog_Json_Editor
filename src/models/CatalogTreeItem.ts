@@ -47,7 +47,9 @@ export class CatalogTreeItem extends vscode.TreeItem {
         catalogId?: string,
         initialStatus: ValidationStatus = ValidationStatus.Unknown
     ) {
-        super(label, collapsibleState);
+        // Remove array indices from all display labels
+        const displayLabel = label.replace(/\[\d+\]/g, '');
+        super(displayLabel, collapsibleState);
 
         this.context = context;
         this.logger = LoggingService.getInstance();
@@ -419,7 +421,105 @@ export class CatalogTreeItem extends vscode.TreeItem {
             parts.push(`Description: ${this._schemaMetadata.description}`);
         }
 
+        // Add detailed input mapping information if this is an input mapping
+        if (this.value && typeof this.value === 'object' && this.jsonPath.includes('input_mapping')) {
+            const values = this.value as Record<string, unknown>;
+            const mappingDetails = this.getInputMappingDetails(values);
+            if (mappingDetails) {
+                parts.push('Mapping Details:');
+                parts.push(...mappingDetails);
+            }
+        }
+
         return parts.join('\n');
+    }
+
+    /**
+     * Gets detailed information about an input mapping
+     */
+    private getInputMappingDetails(values: Record<string, unknown>): string[] | undefined {
+        const details: string[] = [];
+        const referenceVersion = values.reference_version === true;
+
+        // Add mapping direction
+        const direction = this.getInputMappingDescription();
+        if (direction) {
+            details.push(`Direction: ${direction}`);
+        }
+
+        // Add specific values
+        if ('dependency_input' in values) {
+            details.push(`Dependency Input: ${values.dependency_input}`);
+            details.push(`Version Input: ${values.version_input}`);
+            if (referenceVersion) {
+                details.push('Reference Version: true (Parent → Dependency)');
+            }
+        } else if ('dependency_output' in values) {
+            details.push(`Dependency Output: ${values.dependency_output}`);
+            details.push(`Version Input: ${values.version_input}`);
+            if (referenceVersion) {
+                details.push('Reference Version: true (Parent → Dependency)');
+            }
+        } else if ('value' in values) {
+            details.push(`Static Value: ${values.value}`);
+            if ('version_input' in values) {
+                details.push(`Version Input: ${values.version_input}`);
+            } else if ('dependency_input' in values) {
+                details.push(`Dependency Input: ${values.dependency_input}`);
+            }
+        }
+
+        return details.length > 0 ? details : undefined;
+    }
+
+    /**
+     * Gets a description for an input mapping showing the direction of the mapping
+     */
+    private getInputMappingDescription(): string {
+        if (!this.value || typeof this.value !== 'object') {
+            return '';
+        }
+
+        const values = this.value as Record<string, unknown>;
+        const referenceVersion = values.reference_version === true;
+
+        // Determine source and destination based on the fields present
+        let source = '';
+        let destination = '';
+        let sourceValue = '';
+        let destinationValue = '';
+
+        if ('dependency_input' in values) {
+            source = referenceVersion ? 'version_input' : 'dependency_input';
+            destination = referenceVersion ? 'dependency_input' : 'version_input';
+            sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
+            destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
+        } else if ('dependency_output' in values) {
+            source = referenceVersion ? 'version_input' : 'dependency_output';
+            destination = referenceVersion ? 'dependency_output' : 'version_input';
+            sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
+            destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+        } else if ('value' in values) {
+            source = referenceVersion ? 'version_input' : 'value';
+            destination = referenceVersion ? 'value' : 'version_input';
+            sourceValue = String(referenceVersion ? values.version_input : values.value);
+            destinationValue = String(referenceVersion ? values.value : values.version_input);
+        }
+
+        // Include the actual values in the description for collapsed view
+        if (source && destination) {
+            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
+            const cleanValue = (value: string) => {
+                const match = value.match(/\((.*?)\)/);
+                return match ? match[1] : value;
+            };
+
+            const cleanSourceValue = cleanValue(sourceValue);
+            const cleanDestValue = cleanValue(destinationValue);
+            return `${cleanSourceValue} → ${cleanDestValue}`;
+        }
+
+        return '';
     }
 
     /**
@@ -576,98 +676,89 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
 
         if (typeof this.value === 'object' && this.value !== null) {
+            let description = '';
+
             // Show descriptive names for various object types
             if (this.isDependencyParent()) {
                 const values = this.value as Record<string, unknown>;
                 const name = values.name;
                 if (name) {
-                    return String(name);
+                    description = String(name);
                 }
             }
-
             // Check if this is an input mapping object
-            if (this.isInputMappingParent()) {
-                return this.getInputMappingDescription();
-            }
+            else if (this.isInputMappingParent()) {
+                const values = this.value as Record<string, unknown>;
+                const referenceVersion = values.reference_version === true;
 
+                // Determine source and destination based on the fields present
+                let sourceValue = '';
+                let destinationValue = '';
+
+                if ('dependency_input' in values) {
+                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
+                    destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
+                } else if ('dependency_output' in values) {
+                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
+                    destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+                } else if ('value' in values) {
+                    sourceValue = String(referenceVersion ? values.version_input : values.value);
+                    destinationValue = String(referenceVersion ? values.value : values.version_input);
+                }
+
+                if (sourceValue && destinationValue) {
+                    description = `${sourceValue} → ${destinationValue}`;
+                }
+            }
             // Check if this is an IAM permission object
-            if (this.isIamPermissionParent()) {
+            else if (this.isIamPermissionParent()) {
                 const values = this.value as Record<string, unknown>;
                 const serviceName = values.service_name;
                 if (serviceName) {
-                    return String(serviceName);
+                    description = String(serviceName);
                 }
             }
-
             // Check if this is a configuration object
-            if (this.isConfigurationParent()) {
+            else if (this.isConfigurationParent()) {
                 const values = this.value as Record<string, unknown>;
                 const key = values.key;
                 if (key) {
-                    return String(key);
+                    description = String(key);
                 }
             }
-
             // Check if this is a feature object
-            if (this.isFeatureParent()) {
+            else if (this.isFeatureParent()) {
                 const values = this.value as Record<string, unknown>;
                 const title = values.title;
                 if (title) {
-                    return String(title);
+                    description = String(title);
                 }
             }
-
             // Check if this is a product object
-            if (this.isProductParent()) {
+            else if (this.isProductParent()) {
                 const values = this.value as Record<string, unknown>;
                 const label = values.label;
                 if (label) {
-                    return String(label);
+                    description = String(label);
                 }
             }
-
             // Check if this is a flavor object
-            if (this.isFlavorParent()) {
+            else if (this.isFlavorParent()) {
                 const values = this.value as Record<string, unknown>;
                 const label = values.label;
                 if (label) {
-                    return String(label);
+                    description = String(label);
                 }
             }
+            else {
+                description = `Object{${Object.keys(this.value).length}}`;
+            }
 
-            return `Object{${Object.keys(this.value).length}}`;
+            // Remove any array indices from the description
+            return description.replace(/\[\d+\]/g, '');
         }
 
         return '';
-    }
-
-    /**
-     * Gets a description for an input mapping showing the direction of the mapping
-     */
-    private getInputMappingDescription(): string {
-        if (!this.value || typeof this.value !== 'object') {
-            return '';
-        }
-
-        const values = this.value as Record<string, unknown>;
-        const referenceVersion = values.reference_version === true;
-
-        // Determine source and destination based on the fields present
-        let source = '';
-        let destination = '';
-
-        if ('dependency_input' in values) {
-            source = referenceVersion ? 'version_input' : 'dependency_input';
-            destination = referenceVersion ? 'dependency_input' : 'version_input';
-        } else if ('dependency_output' in values) {
-            source = referenceVersion ? 'version_input' : 'dependency_output';
-            destination = referenceVersion ? 'dependency_output' : 'version_input';
-        } else if ('value' in values) {
-            source = referenceVersion ? 'version_input' : 'value';
-            destination = referenceVersion ? 'value' : 'version_input';
-        }
-
-        return source && destination ? `${source} → ${destination}` : '';
     }
 
     /**
