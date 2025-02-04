@@ -1,13 +1,12 @@
 # Changelog
 
-## [0.5.1](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.5.1) (2025-02-04)
+## [0.5.2](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/tree/0.5.2) (2025-02-04)
 
-[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.5.0...0.5.1)
+[Full Changelog](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/compare/0.5.1...0.5.2)
 
 **Merged pull requests:**
 
-- Revert "Add Collapse All functionality to IBM Catalog Tree View" [\#102](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/102) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
-- Revert "Enhance dependency flavor selection and optimize CatalogService logging" [\#101](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/101) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
+- Enhance catalog tree item display and version bump to 0.5.2 [\#103](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/pull/103) ([daniel-butler-irl](https://github.com/daniel-butler-irl))
 
 
 
