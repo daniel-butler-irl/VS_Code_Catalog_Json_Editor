@@ -217,13 +217,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 treeProvider.refresh();
                 vscode.window.showInformationMessage('IBM Catalog cache cleared');
             }),
-            vscode.commands.registerCommand('ibmCatalog.collapseAll', async () => {
-                // Ensure tree view has focus
-                await treeView.reveal(treeView.selection[0], { focus: true });
-
-                // Collapse all nodes
-                treeProvider.collapseAll();
-            }),
             vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
                 const catalogFilePath = catalogService.getCatalogFilePath();
                 if (catalogFilePath) {
