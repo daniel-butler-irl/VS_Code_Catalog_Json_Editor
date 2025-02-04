@@ -43,8 +43,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         this.uiStateService = UIStateService.getInstance(context);
 
         // Initialize expanded nodes from persistent storage
-        const savedState = this.uiStateService.getTreeState();
-        savedState.expandedNodes.forEach(node => {
+        this.uiStateService.getTreeState().expandedNodes.forEach(node => {
             this.expandedNodes.set(node, true);
         });
 
@@ -132,13 +131,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         // Handle visibility changes
         this.treeView.onDidChangeVisibility(() => {
             if (this.treeView?.visible) {
-                // When tree becomes visible, restore expanded state and refresh
-                const savedState = this.uiStateService.getTreeState();
-                this.expandedNodes.clear();
-                savedState.expandedNodes.forEach(node => {
+                // When tree becomes visible, restore expanded state
+                this.uiStateService.getTreeState().expandedNodes.forEach(node => {
                     this.expandedNodes.set(node, true);
                 });
-                this.refresh();
             }
         });
     }
