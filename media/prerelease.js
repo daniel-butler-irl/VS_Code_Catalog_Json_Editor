@@ -3,6 +3,7 @@
 (function() {
     // @ts-ignore
     const vscode = acquireVsCodeApi();
+    const state = vscode.getState() || { selectedCatalogId: '' };
 
     let currentBranch = '';
     let lastReleases = [];
@@ -13,12 +14,10 @@
     // DOM Elements
     const errorContainer = /** @type {HTMLElement} */ (document.getElementById('errorContainer'));
     const mainContent = /** @type {HTMLElement} */ (document.getElementById('mainContent'));
-    const setupBtn = /** @type {HTMLButtonElement} */ (document.getElementById('setupBtn'));
     const postfixInput = /** @type {HTMLInputElement} */ (document.getElementById('postfix'));
     const versionInput = /** @type {HTMLInputElement} */ (document.getElementById('version'));
     const publishCheckbox = /** @type {HTMLInputElement} */ (document.getElementById('publishToCatalog'));
     const createBtn = /** @type {HTMLButtonElement} */ (document.getElementById('createBtn'));
-    const releasesDiv = document.getElementById('releases');
     const catalogDetailsDiv = document.getElementById('catalogDetails');
     const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
 
@@ -26,20 +25,36 @@
     document.addEventListener('DOMContentLoaded', () => {
         vscode.postMessage({ command: 'getBranchName' });
         vscode.postMessage({ command: 'refresh' });
+        
+        // Restore selected catalog
+        if (catalogSelect && state.selectedCatalogId) {
+            catalogSelect.value = state.selectedCatalogId;
+            vscode.postMessage({ 
+                command: 'selectCatalog',
+                catalogId: state.selectedCatalogId
+            });
+        }
     });
 
     createBtn?.addEventListener('click', handleCreateClick);
-    setupBtn?.addEventListener('click', () => {
-        vscode.postMessage({ command: 'setup' });
-    });
 
     catalogSelect?.addEventListener('change', () => {
         const selectedCatalogId = catalogSelect.value;
+        // Save selection to state
+        vscode.setState({ ...state, selectedCatalogId });
+        
         if (selectedCatalogId) {
+            if (catalogDetailsDiv) {
+                catalogDetailsDiv.innerHTML = '<p class="loading">Loading catalog details...</p>';
+            }
             vscode.postMessage({ 
                 command: 'selectCatalog',
                 catalogId: selectedCatalogId
             });
+        } else {
+            if (catalogDetailsDiv) {
+                catalogDetailsDiv.innerHTML = '<p class="empty-state">Please select a catalog above to view its details</p>';
+            }
         }
     });
 
@@ -117,27 +132,13 @@
      */
     function updateReleases(releases) {
         lastReleases = releases;
-        if (!releasesDiv) {return;}
-
-        if (releases.length) {
-            releasesDiv.innerHTML = releases.map(release => `
-                <div class="release-item">
-                    <strong>${release.tag_name}</strong>
-                    <span>${release.name || ''}</span>
-                    <small>${new Date(release.created_at).toLocaleDateString()}</small>
-                </div>
-            `).join('');
-            showError(); // Clear any errors
-        } else {
-            releasesDiv.innerHTML = '<p class="empty-state">No recent pre-releases found</p>';
-        }
-
         suggestNextVersion();
+        updateCatalogDetails(catalogDetails);
     }
 
     /**
      * Updates the catalog details in the UI
-     * @param {{ catalogId: string, offeringId: string, name: string, label: string, versions: string[] }} details
+     * @param {{ catalogId: string, offeringId: string, name: string, label: string, versions: string[], offeringNotFound?: boolean }} details
      */
     function updateCatalogDetails(details) {
         catalogDetails = details;
@@ -148,79 +149,112 @@
             return;
         }
 
-        if (details.catalogId || details.offeringId) {
+        // Handle case where offering is not found in catalog
+        if (details.offeringNotFound) {
             catalogDetailsDiv.innerHTML = `
-                <div class="catalog-info">
-                    <p><strong>Catalog ID:</strong> ${details.catalogId || 'Not set'}</p>
-                    <p><strong>Offering ID:</strong> ${details.offeringId || 'Not set'}</p>
-                    <p><strong>Name:</strong> ${details.name || 'Not set'}</p>
-                    <p><strong>Label:</strong> ${details.label || 'Not set'}</p>
-                    <div class="versions">
-                        <strong>Recent Versions:</strong>
-                        ${details.versions.length ? 
-                            `<ul>${details.versions.slice(0, 5).map(v => `<li>${v}</li>`).join('')}</ul>` :
-                            '<p>No versions found</p>'
-                        }
-                    </div>
+                <div class="catalog-info error">
+                    <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
+                    <p>Publishing to this catalog will not be available.</p>
                 </div>
             `;
-        } else {
-            catalogDetailsDiv.innerHTML = '<p class="empty-state">No catalog details available</p>';
+            if (publishCheckbox) {
+                publishCheckbox.checked = false;
+                publishCheckbox.disabled = true;
+            }
+            return;
         }
-    }
 
-    /**
-     * Suggests the next version number based on existing releases
-     */
-    function suggestNextVersion() {
-        if (!versionInput || !lastReleases.length) {return;}
-
-        // Find the latest version from releases
-        const versions = lastReleases
-            .map(r => r.tag_name.replace(/^v/, '').split('-')[0]) // Remove 'v' prefix and postfix
-            .filter(v => /^\d+\.\d+\.\d+$/.test(v)); // Only consider valid semver
-
-        if (versions.length) {
-            const latest = versions.sort((a, b) => {
-                const [aMajor, aMinor, aPatch] = a.split('.').map(Number);
-                const [bMajor, bMinor, bPatch] = b.split('.').map(Number);
-                
-                if (aMajor !== bMajor) {return bMajor - aMajor;}
-                if (aMinor !== bMinor) {return bMinor - aMinor;}
-                return bPatch - aPatch;
-            })[0];
-
-            // Increment patch version
-            const [major, minor, patch] = latest.split('.').map(Number);
-            versionInput.value = `${major}.${minor}.${patch + 1}`;
+        if (publishCheckbox) {
+            publishCheckbox.disabled = false;
         }
-    }
 
-    /**
-     * Updates the GitHub tag preview
-     */
-    function updateTagPreview() {
-        const version = versionInput?.value || '';
-        const postfix = postfixInput?.value || '';
-        const tagPreviewDiv = document.getElementById('tagPreview');
+        const proposedVersion = versionInput?.value;
+        const proposedPostfix = postfixInput?.value;
+        const githubReleases = lastReleases.map(r => ({
+            version: r.tag_name.replace(/^v/, '').split('-')[0],
+            tag: r.tag_name,
+            date: new Date(r.created_at).toLocaleDateString()
+        }));
+        const catalogVersions = details.versions || [];
+        const isVersionInvalid = proposedVersion && catalogVersions.includes(proposedVersion);
 
-        if (!tagPreviewDiv) {
-            // Create tag preview element if it doesn't exist
-            const formGroup = versionInput?.closest('.form-group');
-            if (formGroup) {
-                const previewDiv = document.createElement('div');
-                previewDiv.id = 'tagPreview';
-                previewDiv.className = 'tag-preview';
-                formGroup.appendChild(previewDiv);
+        if (createBtn) {
+            createBtn.disabled = isVersionInvalid;
+            if (isVersionInvalid) {
+                showError(`Version ${proposedVersion} already exists in the catalog`);
+            } else {
+                showError();
             }
         }
 
-        const tagPreview = document.getElementById('tagPreview');
-        if (tagPreview && version && postfix) {
-            tagPreview.textContent = `GitHub Tag: v${version}-${postfix}`;
-            tagPreview.style.display = 'block';
-        } else if (tagPreview) {
-            tagPreview.style.display = 'none';
+        const content = `
+            <div class="terminal-section">
+                <div class="next-version">
+                    <div>Next Versions</div>
+                    <div>GitHub: ${proposedVersion && proposedPostfix ? `v${proposedVersion}-${proposedPostfix}` : 'Not set'}</div>
+                    <div>Catalog: ${proposedVersion || 'Not set'}</div>
+                </div>
+
+                <hr class="separator-line">
+
+                <div class="catalog-quick-info">
+                    <div>Name: ${details.name || 'Not set'}</div>
+                    <div>Offering ID: ${details.offeringId || 'Not set'}</div>
+                    <div>Label: ${details.label || 'Not set'}</div>
+                </div>
+
+                <hr class="separator-line">
+
+                <table class="version-table">
+                    <thead>
+                        <tr>
+                            <th>GitHub Releases</th>
+                            <th>Catalog Releases</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${Array.from({ length: Math.max(githubReleases.length, catalogVersions.length) }, (_, i) => `
+                            <tr>
+                                <td>${githubReleases[i] ? `
+                                    <div class="version-tag">${githubReleases[i].tag}</div>
+                                    <div class="version-date">${githubReleases[i].date}</div>
+                                ` : '—'}</td>
+                                <td>${catalogVersions[i] || '—'}</td>
+                            </tr>
+                        `).join('')}
+                        ${!githubReleases.length && !catalogVersions.length ? `
+                            <tr>
+                                <td colspan="2" class="empty-state">No versions available</td>
+                            </tr>
+                        ` : ''}
+                    </tbody>
+                </table>
+
+                <hr class="separator-line">
+
+                <div class="release-options">
+                    <label>
+                        <input type="checkbox" id="releaseGithub" checked>
+                        Release GitHub
+                    </label>
+                    <label>
+                        <input type="checkbox" id="releaseCatalog" ${isVersionInvalid ? 'disabled' : 'checked'}>
+                        Release Catalog
+                    </label>
+                </div>
+
+                <button id="createBtn" class="release-button" ${isVersionInvalid ? 'disabled' : ''}>
+                    Release Now
+                </button>
+            </div>
+        `;
+
+        catalogDetailsDiv.innerHTML = content;
+
+        // Re-attach event listeners
+        const releaseButton = catalogDetailsDiv.querySelector('.release-button');
+        if (releaseButton) {
+            releaseButton.addEventListener('click', handleCreateClick);
         }
     }
 
@@ -249,23 +283,61 @@
         } else {
             showError('No private catalogs available');
         }
+
+        // Restore selected catalog
+        if (state.selectedCatalogId) {
+            catalogSelect.value = state.selectedCatalogId;
+        }
+    }
+
+    /**
+     * Suggests the next version number based on existing releases
+     */
+    function suggestNextVersion() {
+        if (!versionInput || !lastReleases.length) {return;}
+
+        // Find the latest version from releases
+        const versions = lastReleases
+            .map(r => r.tag_name.replace(/^v/, '').split('-')[0]) // Remove 'v' prefix and postfix
+            .filter(v => /^\d+\.\d+\.\d+$/.test(v)); // Only consider valid semver
+
+        if (versions.length) {
+            const latest = versions.sort((a, b) => {
+                const [aMajor, aMinor, aPatch] = a.split('.').map(Number);
+                const [bMajor, bMinor, bPatch] = b.split('.').map(Number);
+                
+                if (aMajor !== bMajor) {return bMajor - aMajor;}
+                if (aMinor !== bMinor) {return bMinor - aMinor;}
+                return bPatch - aPatch;
+            })[0];
+
+            // Increment patch version
+            const [major, minor, patch] = latest.split('.').map(Number);
+            versionInput.value = `${major}.${minor}.${patch + 1}`;
+            updateTagPreview();
+        }
+    }
+
+    /**
+     * Updates the GitHub tag preview and catalog version preview
+     */
+    function updateTagPreview() {
+        const version = versionInput?.value || '';
+        const postfix = postfixInput?.value || '';
+
+        // Update the next versions in the catalog details
+        updateCatalogDetails(catalogDetails);
     }
 
     async function handleCreateClick() {
         if (!postfixInput?.value || !versionInput?.value) {
-            vscode.postMessage({
-                command: 'showError',
-                message: 'Please fill in all required fields'
-            });
+            showError('Please fill in all required fields');
             return;
         }
 
         // Validate version format
         if (!/^\d+\.\d+\.\d+$/.test(versionInput.value)) {
-            vscode.postMessage({
-                command: 'showError',
-                message: 'Invalid version format. Please use semantic versioning (e.g., 1.0.0)'
-            });
+            showError('Invalid version format. Please use semantic versioning (e.g., 1.0.0)');
             return;
         }
 

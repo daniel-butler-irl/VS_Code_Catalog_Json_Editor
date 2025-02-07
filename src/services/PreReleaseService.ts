@@ -28,6 +28,7 @@ interface CatalogDetails {
   name: string;
   label: string;
   versions: string[];
+  offeringNotFound?: boolean;
 }
 
 export class PreReleaseService {
@@ -310,7 +311,7 @@ export class PreReleaseService {
 
       // Get offerings and find the matching one
       this.logger.debug('Getting offerings for catalog', { catalogId });
-      const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id);
+      const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id, true);
       this.logger.debug('Retrieved offerings', {
         count: offerings.length,
         offerings: offerings.map(o => ({ id: o.id, name: o.name }))
@@ -319,7 +320,15 @@ export class PreReleaseService {
       const offering = offerings.find(o => o.name === offeringName);
 
       if (!offering) {
-        throw new Error(`Could not find offering with name "${offeringName}" in the selected catalog`);
+        // Return a special response for missing offering case
+        return {
+          catalogId: selectedCatalog.id,
+          offeringId: '',
+          name: offeringName,
+          label: selectedCatalog.label,
+          versions: [],
+          offeringNotFound: true
+        };
       }
 
       this.logger.debug('Found matching offering', {
@@ -329,16 +338,46 @@ export class PreReleaseService {
 
       // Get available flavors to force a fresh API call for versions
       this.logger.debug('Getting flavors to refresh versions');
-      await ibmCloudService.getAvailableFlavors(selectedCatalog.id, offering.id);
+      await ibmCloudService.getAvailableFlavors(selectedCatalog.id, offering.id, true);
 
       // Get all versions from the offering
+      this.logger.debug('Getting versions from offering', {
+        offeringId: offering.id,
+        kinds: offering.kinds?.length || 0,
+        firstKindVersions: offering.kinds?.[0]?.versions?.length || 0,
+        rawOffering: offering
+      });
+
+      const allVersions = offering.kinds?.[0]?.versions || [];
+      this.logger.debug('Raw versions from offering', {
+        allVersions: allVersions.map(v => ({
+          version: v.version,
+          created: v.created,
+          updated: v.updated
+        }))
+      });
+
       const versions = offering.kinds?.[0]?.versions
         ?.map(v => v.version)
-        .filter((v): v is string => !!v)
-        .sort((a, b) => -1 * this.compareSemVer(a, b)) // Sort descending
+        .filter((v): v is string => {
+          const isValid = !!v;
+          if (!isValid) {
+            this.logger.debug('Filtered out invalid version', { version: v });
+          }
+          return isValid;
+        })
+        .sort((a, b) => {
+          const result = -1 * this.compareSemVer(a, b);
+          this.logger.debug('Version comparison', { a, b, result });
+          return result;
+        }) // Sort descending
         .slice(0, 5) || []; // Get latest 5 versions
 
-      this.logger.debug('Retrieved versions', { versions });
+      this.logger.debug('Processed versions', {
+        totalVersions: allVersions.length,
+        filteredVersions: versions.length,
+        versions
+      });
 
       return {
         catalogId: selectedCatalog.id,

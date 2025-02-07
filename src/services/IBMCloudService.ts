@@ -274,6 +274,7 @@ export class IBMCloudService {
     /**
      * Fetches all offerings for a catalog and caches the result.
      * @param catalogId - ID of the catalog.
+     * @param skipCache - If true, bypass the cache and force a fresh API call.
      * @returns Promise<OfferingItem[]> - Array of offerings.
      */
     @deduplicateRequest({
@@ -283,12 +284,12 @@ export class IBMCloudService {
             LoggingService.getInstance().debug('Duplicate offerings request detected', { key });
         },
     })
-    public async getOfferingsForCatalog(catalogId: string): Promise<OfferingItem[]> {
+    public async getOfferingsForCatalog(catalogId: string, skipCache = false): Promise<OfferingItem[]> {
         const cacheKey = DynamicCacheKeys.OFFERINGS(catalogId);
         const logger = this.logger;
 
         const cachedOfferings = this.cacheService.get<OfferingItem[]>(cacheKey);
-        if (Array.isArray(cachedOfferings)) {
+        if (!skipCache && Array.isArray(cachedOfferings)) {
             logger.debug(`Using cached offerings for catalog ID: ${catalogId}`, { count: cachedOfferings.length });
             return cachedOfferings;
         }
@@ -541,24 +542,17 @@ export class IBMCloudService {
     }
 
     /**
-     * Fetches all available flavors for a given offering.
-     * @param catalogId - Catalog ID.
-     * @param offeringId - Offering ID.
-     * @returns Promise<string[]> - Array of unique flavor names.
+     * Gets available flavors for an offering
+     * @param catalogId The catalog identifier
+     * @param offeringId The offering identifier
+     * @param skipCache If true, bypass the cache and force a fresh API call
+     * @returns Promise<string[]> Array of flavor names
      */
-    @deduplicateRequest({
-        keyGenerator: (catalogId: string, offeringId: string) => `flavors:${catalogId}:${offeringId}`,
-        timeoutMs: 60000,
-        onDuplicate: (key) => {
-            LoggingService.getInstance().debug('Duplicate flavors request detected', { key });
-        },
-    })
-    public async getAvailableFlavors(catalogId: string, offeringId: string): Promise<string[]> {
+    public async getAvailableFlavors(catalogId: string, offeringId: string, skipCache = false): Promise<string[]> {
         const cacheKey = DynamicCacheKeys.FLAVORS(catalogId, offeringId);
-        this.logger.debug(`Fetching available flavors for offering ${offeringId} in catalog ${catalogId}`);
-
         const cachedFlavors = this.cacheService.get<string[]>(cacheKey);
-        if (cachedFlavors) {
+
+        if (!skipCache && Array.isArray(cachedFlavors)) {
             this.logger.debug('Using cached flavors', { count: cachedFlavors.length });
             return cachedFlavors;
         }

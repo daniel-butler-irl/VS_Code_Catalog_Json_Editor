@@ -49,7 +49,29 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       ]
     };
 
-    webviewView.webview.html = await this.getWebviewContent();
+    const styleUri = webviewView.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.css')
+    );
+    const scriptUri = webviewView.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.js')
+    );
+
+    this.logger.debug('Loading webview resources', {
+      styleUri: styleUri.toString(),
+      scriptUri: scriptUri.toString()
+    });
+
+    // Set initial HTML
+    webviewView.webview.html = this.getWebviewContent(styleUri, scriptUri);
+
+    // Handle theme changes
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeActiveColorTheme(() => {
+        if (this.view) {
+          this.view.webview.html = this.getWebviewContent(styleUri, scriptUri);
+        }
+      })
+    );
 
     webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
       try {
@@ -173,14 +195,15 @@ Publish to Catalog: ${data.publishToCatalog ? 'Yes' : 'No'}`;
     }
   }
 
-  private getWebviewContent(): string {
+  private getWebviewContent(styleUri: vscode.Uri, scriptUri: vscode.Uri): string {
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view?.webview.cspSource} 'unsafe-inline'; script-src ${this.view?.webview.cspSource};">
         <title>Create Pre-release</title>
-        <link rel="stylesheet" href="${this.getMediaUri('prerelease.css')}">
+        <link rel="stylesheet" type="text/css" href="${styleUri}">
     </head>
     <body>
         <div class="container">
@@ -192,50 +215,78 @@ Publish to Catalog: ${data.publishToCatalog ? 'Yes' : 'No'}`;
             </div>
 
             <div id="mainContent">
-                <div class="section">
-                    <h2>Create Pre-release</h2>
-                    <div class="form-group">
-                        <label for="version">Version</label>
-                        <input type="text" id="version" placeholder="1.0.0" required>
-                        <small>Use semantic versioning (e.g., 1.0.0)</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="postfix">Postfix</label>
-                        <input type="text" id="postfix" placeholder="branch-beta" required>
-                        <small>Will be appended to version number (e.g., v1.0.0-branch-beta)</small>
+                <div class="section compact">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="version">Version</label>
+                            <input type="text" id="version" placeholder="1.0.0" required>
+                            <small>Use semantic versioning</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="postfix">Postfix</label>
+                            <input type="text" id="postfix" placeholder="branch-beta" required>
+                            <small>Added to version (e.g., -beta, -preview)</small>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="catalogSelect">Target Catalog</label>
                         <select id="catalogSelect" required>
                             <option value="">Select a catalog...</option>
                         </select>
-                        <small>Select the catalog to deploy to</small>
                     </div>
-                    <div class="form-group">
-                        <div class="checkbox-container">
-                            <input type="checkbox" id="publishToCatalog">
-                            <label for="publishToCatalog">Publish to IBM Cloud Catalog</label>
+                </div>
+
+                <div id="catalogDetails">
+                    <div class="terminal-section">
+                        <div class="next-version">
+                            <div>Next Versions</div>
+                            <div>GitHub: Not set</div>
+                            <div>Catalog: Not set</div>
                         </div>
-                    </div>
-                    <button id="createBtn" class="primary-button">Create Pre-release</button>
-                </div>
 
-                <div class="section">
-                    <h2>Recent Pre-releases</h2>
-                    <div id="releases">
-                        <p class="loading">Loading releases...</p>
-                    </div>
-                </div>
+                        <hr class="separator-line">
 
-                <div class="section">
-                    <h2>Catalog Details</h2>
-                    <div id="catalogDetails">
-                        <p class="loading">Loading catalog details...</p>
+                        <div class="catalog-quick-info">
+                            <div>Name: Not set</div>
+                            <div>Offering ID: Not set</div>
+                            <div>Label: Not set</div>
+                        </div>
+
+                        <hr class="separator-line">
+
+                        <table class="version-table">
+                            <thead>
+                                <tr>
+                                    <th>GitHub Releases</th>
+                                    <th>Catalog Releases</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="2" class="empty-state">No versions available</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <hr class="separator-line">
+
+                        <div class="release-options">
+                            <label>
+                                <input type="checkbox" id="releaseGithub" checked>
+                                Release GitHub
+                            </label>
+                            <label>
+                                <input type="checkbox" id="publishToCatalog" checked>
+                                Release Catalog
+                            </label>
+                        </div>
+
+                        <button id="createBtn" class="release-button">Release Now</button>
                     </div>
                 </div>
             </div>
         </div>
-        <script src="${this.getMediaUri('prerelease.js')}"></script>
+        <script src="${scriptUri}"></script>
     </body>
     </html>`;
   }

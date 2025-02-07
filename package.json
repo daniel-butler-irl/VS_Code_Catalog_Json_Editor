@@ -13,6 +13,11 @@
     "vscode": "^1.87.0"
   },
   "main": "./dist/extension.js",
+  "files": [
+    "dist",
+    "media",
+    "schemas"
+  ],
   "activationEvents": [
     "workspaceContains:**/ibm_catalog.json",
     "onCommand:ibmCatalog.openPreReleasePanel",
