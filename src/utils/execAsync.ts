@@ -11,4 +11,6 @@ export type ExecError = ExecException & {
   stderr: string;
 };
 
-export const execAsync = promisify(exec) as (command: string) => Promise<ExecResult>;
+export const execAsync = (command: string, cwd?: string) => {
+  return promisify(exec)(command, { cwd });
+};

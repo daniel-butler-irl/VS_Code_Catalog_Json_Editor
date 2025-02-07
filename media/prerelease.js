@@ -7,6 +7,7 @@
     let currentBranch = '';
     let lastReleases = [];
     let catalogDetails = null;
+    let availableCatalogs = [];
     let hasErrors = false;
 
     // DOM Elements
@@ -19,6 +20,7 @@
     const createBtn = /** @type {HTMLButtonElement} */ (document.getElementById('createBtn'));
     const releasesDiv = document.getElementById('releases');
     const catalogDetailsDiv = document.getElementById('catalogDetails');
+    const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
 
     // Event Listeners
     document.addEventListener('DOMContentLoaded', () => {
@@ -31,6 +33,20 @@
         vscode.postMessage({ command: 'setup' });
     });
 
+    catalogSelect?.addEventListener('change', () => {
+        const selectedCatalogId = catalogSelect.value;
+        if (selectedCatalogId) {
+            vscode.postMessage({ 
+                command: 'selectCatalog',
+                catalogId: selectedCatalogId
+            });
+        }
+    });
+
+    // Add input event listeners for tag preview
+    postfixInput?.addEventListener('input', updateTagPreview);
+    versionInput?.addEventListener('input', updateTagPreview);
+
     // Handle messages from the extension
     window.addEventListener('message', event => {
         const message = event.data;
@@ -38,14 +54,21 @@
         switch (message.command) {
             case 'updateData':
                 updateReleases(message.releases);
-                updateCatalogDetails(message.catalogDetails);
+                updateAvailableCatalogs(message.catalogs);
+                if (message.catalogDetails) {
+                    updateCatalogDetails(message.catalogDetails);
+                }
                 suggestNextVersion();
+                updateTagPreview();
                 break;
             case 'updateBranchName':
                 updateBranchName(message.branch, message.error);
                 break;
             case 'showError':
                 showError(message.error || 'An error occurred');
+                break;
+            case 'updateCatalogDetails':
+                updateCatalogDetails(message.catalogDetails);
                 break;
         }
     });
@@ -120,6 +143,11 @@
         catalogDetails = details;
         if (!catalogDetailsDiv) {return;}
 
+        if (!catalogSelect?.value) {
+            catalogDetailsDiv.innerHTML = '<p class="empty-state">Please select a catalog above to view its details</p>';
+            return;
+        }
+
         if (details.catalogId || details.offeringId) {
             catalogDetailsDiv.innerHTML = `
                 <div class="catalog-info">
@@ -165,6 +193,61 @@
             // Increment patch version
             const [major, minor, patch] = latest.split('.').map(Number);
             versionInput.value = `${major}.${minor}.${patch + 1}`;
+        }
+    }
+
+    /**
+     * Updates the GitHub tag preview
+     */
+    function updateTagPreview() {
+        const version = versionInput?.value || '';
+        const postfix = postfixInput?.value || '';
+        const tagPreviewDiv = document.getElementById('tagPreview');
+
+        if (!tagPreviewDiv) {
+            // Create tag preview element if it doesn't exist
+            const formGroup = versionInput?.closest('.form-group');
+            if (formGroup) {
+                const previewDiv = document.createElement('div');
+                previewDiv.id = 'tagPreview';
+                previewDiv.className = 'tag-preview';
+                formGroup.appendChild(previewDiv);
+            }
+        }
+
+        const tagPreview = document.getElementById('tagPreview');
+        if (tagPreview && version && postfix) {
+            tagPreview.textContent = `GitHub Tag: v${version}-${postfix}`;
+            tagPreview.style.display = 'block';
+        } else if (tagPreview) {
+            tagPreview.style.display = 'none';
+        }
+    }
+
+    /**
+     * Updates the available catalogs dropdown
+     * @param {Array<{id: string, label: string, shortDescription?: string}>} catalogs
+     */
+    function updateAvailableCatalogs(catalogs) {
+        availableCatalogs = catalogs;
+        if (!catalogSelect) {return;}
+
+        // Clear existing options
+        catalogSelect.innerHTML = '<option value="">Select a catalog...</option>';
+
+        if (catalogs.length) {
+            catalogs.forEach(catalog => {
+                const option = document.createElement('option');
+                option.value = catalog.id;
+                option.textContent = catalog.label;
+                if (catalog.shortDescription) {
+                    option.title = catalog.shortDescription;
+                }
+                catalogSelect.appendChild(option);
+            });
+            showError(); // Clear any errors
+        } else {
+            showError('No private catalogs available');
         }
     }
 

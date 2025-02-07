@@ -5,6 +5,8 @@ import { execAsync } from '../utils/execAsync';
 import * as semver from 'semver';
 import { Octokit } from '@octokit/rest';
 import type { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods';
+import * as path from 'path';
+import { AuthService } from './AuthService';
 
 interface PreReleaseDetails {
   version: string;
@@ -34,10 +36,16 @@ export class PreReleaseService {
   private ibmCloudService: IBMCloudService | undefined;
   private context: vscode.ExtensionContext;
   private octokit: Octokit | undefined;
+  private workspaceRoot: string | undefined;
 
   private constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.logger.debug('Initializing PreReleaseService', { service: 'PreReleaseService' });
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      this.workspaceRoot = workspaceFolders[0].uri.fsPath;
+      this.logger.debug('Workspace root set to', { path: this.workspaceRoot });
+    }
     void this.initializeGitHub();
   }
 
@@ -49,12 +57,20 @@ export class PreReleaseService {
         this.octokit = new Octokit({
           auth: session.accessToken
         });
-        this.logger.debug('GitHub authentication initialized', { status: 'success' });
+        this.logger.debug('GitHub authentication initialized', {
+          status: 'success',
+          scopes: session.scopes
+        });
       } else {
-        this.logger.warn('No GitHub session found', { status: 'warning' });
+        this.logger.warn('No GitHub session found, authentication will be requested when needed', {
+          status: 'warning'
+        });
       }
     } catch (error) {
-      this.logger.error('Failed to initialize GitHub authentication', { error });
+      this.logger.error('Failed to initialize GitHub authentication', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   }
 
@@ -64,19 +80,32 @@ export class PreReleaseService {
     }
 
     try {
-      const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
+      this.logger.debug('Requesting GitHub authentication');
+      const session = await vscode.authentication.getSession('github', ['repo'], {
+        createIfNone: true,
+        clearSessionPreference: true // Clear any previous "don't ask again" settings
+      });
+
       if (session) {
         this.octokit = new Octokit({
           auth: session.accessToken
         });
-        this.logger.info('GitHub authentication completed', { status: 'success' });
+        this.logger.info('GitHub authentication completed', {
+          status: 'success',
+          scopes: session.scopes
+        });
         return true;
       }
-    } catch (error) {
-      this.logger.error('Failed to authenticate with GitHub', { error });
-    }
 
-    return false;
+      this.logger.warn('User cancelled GitHub authentication');
+      return false;
+    } catch (error) {
+      this.logger.error('Failed to authenticate with GitHub', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw new Error('GitHub authentication failed. Please try again.');
+    }
   }
 
   public static getInstance(context: vscode.ExtensionContext): PreReleaseService {
@@ -88,17 +117,12 @@ export class PreReleaseService {
 
   private async getIBMCloudService(): Promise<IBMCloudService> {
     if (!this.ibmCloudService) {
-      try {
-        const { stdout } = await execAsync('ibmcloud iam oauth-tokens --output json');
-        const tokens = JSON.parse(stdout);
-        if (!tokens.iam_token) {
-          throw new Error('Not authenticated with IBM Cloud');
-        }
-        this.ibmCloudService = new IBMCloudService(tokens.iam_token);
-      } catch (error) {
-        this.logger.error('Failed to get IBM Cloud service', { error }, 'preRelease');
-        throw new Error('Failed to initialize IBM Cloud service. Please make sure you are logged in.');
+      const apiKey = await AuthService.getApiKey(this.context);
+      if (!apiKey) {
+        throw new Error('Not authenticated with IBM Cloud');
       }
+      this.ibmCloudService = new IBMCloudService(apiKey);
+      this.logger.debug('IBM Cloud service initialized');
     }
     return this.ibmCloudService;
   }
@@ -109,8 +133,11 @@ export class PreReleaseService {
    * @throws Error if not in a git repository or git command fails
    */
   public async getCurrentBranch(): Promise<string> {
+    if (!this.workspaceRoot) {
+      throw new Error('No workspace root found');
+    }
     try {
-      const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD');
+      const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', this.workspaceRoot);
       return stdout.trim();
     } catch (error) {
       this.logger.error('Failed to get current branch', error, 'preRelease');
@@ -123,9 +150,12 @@ export class PreReleaseService {
    * @returns true if there are unpushed changes, false otherwise
    */
   public async hasUnpushedChanges(): Promise<boolean> {
+    if (!this.workspaceRoot) {
+      throw new Error('No workspace root found');
+    }
     try {
-      const { stdout: localCommit } = await execAsync('git rev-parse HEAD');
-      const { stdout: remoteCommit } = await execAsync('git rev-parse @{u}');
+      const { stdout: localCommit } = await execAsync('git rev-parse HEAD', this.workspaceRoot);
+      const { stdout: remoteCommit } = await execAsync('git rev-parse @{u}', this.workspaceRoot);
       return localCommit.trim() !== remoteCommit.trim();
     } catch (error) {
       this.logger.error('Failed to check for unpushed changes', error, 'preRelease');
@@ -138,6 +168,10 @@ export class PreReleaseService {
    * @returns Array of pre-release details
    */
   public async getLastPreReleases(): Promise<GitHubRelease[]> {
+    if (!this.workspaceRoot) {
+      throw new Error('No workspace root found');
+    }
+
     if (!this.octokit) {
       const authenticated = await this.ensureGitHubAuth();
       if (!authenticated) {
@@ -146,12 +180,17 @@ export class PreReleaseService {
     }
 
     try {
-      const { stdout } = await execAsync('git config --get remote.origin.url');
+      const { stdout } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
       const repoUrl = stdout.trim();
       this.logger.debug('Got repository URL', { url: repoUrl });
 
-      const match = repoUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
+      // Handle both HTTPS and SSH URL formats
+      const httpsMatch = repoUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const sshMatch = repoUrl.match(/git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const match = httpsMatch || sshMatch;
+
       if (!match) {
+        this.logger.error('Invalid GitHub URL format', { repoUrl });
         throw new Error('Could not parse GitHub repository URL');
       }
 
@@ -159,6 +198,7 @@ export class PreReleaseService {
       this.logger.debug('Parsed repository info', { owner, repo });
 
       if (!this.octokit) {
+        this.logger.error('GitHub client not initialized after authentication');
         throw new Error('GitHub client not initialized');
       }
 
@@ -184,29 +224,158 @@ export class PreReleaseService {
       }));
     } catch (error) {
       this.logger.error('Failed to get pre-releases', { error });
+      if (error instanceof Error) {
+        throw new Error(`Failed to get pre-releases from GitHub: ${error.message}`);
+      }
       throw new Error('Failed to get pre-releases from GitHub');
     }
   }
 
   /**
    * Gets the catalog details including recent versions
-   * @returns Catalog details including versions
+   * @returns Catalog details including versions and available catalogs for selection
    */
-  public async getCatalogDetails(): Promise<CatalogDetails> {
+  public async getCatalogDetails(): Promise<{
+    catalogs: Array<{ id: string; label: string; shortDescription?: string }>;
+    selectedCatalog?: CatalogDetails;
+  }> {
     try {
-      // Use existing IBMCloudService to get catalog details
-      // This is a placeholder - implement actual integration with IBMCloudService
+      const ibmCloudService = await this.getIBMCloudService();
+      this.logger.debug('Getting private catalogs from IBM Cloud service');
+
+      // Get private catalogs only
+      const privateCatalogs = await ibmCloudService.getAvailablePrivateCatalogs();
+      this.logger.debug('Retrieved private catalogs', {
+        count: privateCatalogs.length,
+        catalogs: privateCatalogs.map(c => ({ id: c.id, label: c.label }))
+      });
+
+      if (!privateCatalogs.length) {
+        this.logger.warn('No private catalogs found');
+        return { catalogs: [] };
+      }
+
+      // Return catalogs for webview selection
       return {
-        catalogId: "placeholder",
-        offeringId: "placeholder",
-        name: "placeholder",
-        label: "placeholder",
-        versions: []
+        catalogs: privateCatalogs.map(catalog => ({
+          id: catalog.id,
+          label: catalog.label,
+          shortDescription: catalog.shortDescription
+        }))
       };
     } catch (error) {
-      this.logger.error('Failed to get catalog details', { error }, 'preRelease');
-      throw new Error('Failed to get catalog details');
+      this.logger.error('Failed to get catalog details', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined
+      }, 'preRelease');
+      throw error instanceof Error ? error : new Error('Failed to get catalog details');
     }
+  }
+
+  /**
+   * Gets the catalog details for a selected catalog ID
+   * @param catalogId The selected catalog ID
+   * @returns Catalog details including versions
+   */
+  public async getSelectedCatalogDetails(catalogId: string): Promise<CatalogDetails> {
+    try {
+      const ibmCloudService = await this.getIBMCloudService();
+      this.logger.debug('Getting details for selected catalog', { catalogId });
+
+      // Get the selected catalog
+      const privateCatalogs = await ibmCloudService.getAvailablePrivateCatalogs();
+      const selectedCatalog = privateCatalogs.find(c => c.id === catalogId);
+
+      if (!selectedCatalog) {
+        throw new Error(`Catalog with ID ${catalogId} not found`);
+      }
+
+      // Find offering by name (should match the name in ibm_catalog.json)
+      const workspaceRoot = this.workspaceRoot;
+      if (!workspaceRoot) {
+        throw new Error('No workspace root found');
+      }
+
+      const catalogJsonPath = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), 'ibm_catalog.json');
+      const catalogJsonContent = await vscode.workspace.fs.readFile(catalogJsonPath);
+      const catalogJson = JSON.parse(catalogJsonContent.toString());
+      const offeringName = catalogJson.products?.[0]?.name;
+
+      if (!offeringName) {
+        throw new Error('Could not find offering name in ibm_catalog.json');
+      }
+
+      this.logger.debug('Found offering name in ibm_catalog.json', { offeringName });
+
+      // Get offerings and find the matching one
+      this.logger.debug('Getting offerings for catalog', { catalogId });
+      const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id);
+      this.logger.debug('Retrieved offerings', {
+        count: offerings.length,
+        offerings: offerings.map(o => ({ id: o.id, name: o.name }))
+      });
+
+      const offering = offerings.find(o => o.name === offeringName);
+
+      if (!offering) {
+        throw new Error(`Could not find offering with name "${offeringName}" in the selected catalog`);
+      }
+
+      this.logger.debug('Found matching offering', {
+        offeringId: offering.id,
+        offeringName: offering.name
+      });
+
+      // Get available flavors to force a fresh API call for versions
+      this.logger.debug('Getting flavors to refresh versions');
+      await ibmCloudService.getAvailableFlavors(selectedCatalog.id, offering.id);
+
+      // Get all versions from the offering
+      const versions = offering.kinds?.[0]?.versions
+        ?.map(v => v.version)
+        .filter((v): v is string => !!v)
+        .sort((a, b) => -1 * this.compareSemVer(a, b)) // Sort descending
+        .slice(0, 5) || []; // Get latest 5 versions
+
+      this.logger.debug('Retrieved versions', { versions });
+
+      return {
+        catalogId: selectedCatalog.id,
+        offeringId: offering.id,
+        name: offering.name,
+        label: offering.label || offering.name,
+        versions
+      };
+    } catch (error) {
+      this.logger.error('Failed to get selected catalog details', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        catalogId
+      }, 'preRelease');
+      throw error instanceof Error ? error : new Error('Failed to get selected catalog details');
+    }
+  }
+
+  /**
+   * Compare two semantic version strings
+   * @param a First version
+   * @param b Second version
+   * @returns -1 if a < b, 0 if a = b, 1 if a > b
+   */
+  private compareSemVer(a: string, b: string): number {
+    const aParts = a.split('.').map(Number);
+    const bParts = b.split('.').map(Number);
+
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+      const aVal = aParts[i] || 0;
+      const bVal = bParts[i] || 0;
+      if (aVal !== bVal) {
+        return aVal - bVal;
+      }
+    }
+    return 0;
   }
 
   /**
@@ -248,13 +417,15 @@ export class PreReleaseService {
    * @param tagName The tag name for the release
    */
   private async createGitHubRelease(tagName: string): Promise<void> {
+    if (!this.workspaceRoot) {
+      throw new Error('No workspace root found');
+    }
     try {
       // Create and push tag
-      await execAsync(`git tag ${tagName}`);
-      await execAsync(`git push origin ${tagName}`);
+      await execAsync(`git tag ${tagName}`, this.workspaceRoot);
+      await execAsync(`git push origin ${tagName}`, this.workspaceRoot);
 
       // Create GitHub release through API
-      // Note: This is a placeholder. You'll need to implement GitHub API integration
       this.logger.info(`Created GitHub release ${tagName}`, undefined, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to create GitHub release', { error }, 'preRelease');
@@ -290,4 +461,14 @@ export class PreReleaseService {
     // For pre-releases, increment the patch version
     return semver.inc(currentVersion, 'patch') || currentVersion;
   }
-} 
+
+  /**
+   * Gets the GitHub tag name for the current version and postfix
+   * @param version The version number
+   * @param postfix The postfix string
+   * @returns The GitHub tag name
+   */
+  public getGitHubTagName(version: string, postfix: string): string {
+    return `v${version}-${postfix}`;
+  }
+}
