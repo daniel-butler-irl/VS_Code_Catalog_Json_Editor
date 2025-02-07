@@ -426,11 +426,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * @returns The found tree item or undefined
      */
     public async findTreeItemByPath(jsonPath: string): Promise<CatalogTreeItem | undefined> {
-        this.logger.debug('Finding tree item for path:', jsonPath);
+        this.logger.debug('Finding tree item for path', { path: jsonPath });
 
         // Parse the path into segments
         const segments = jsonPath.split(/\.|\[|\]/).filter(s => s && s !== '$');
-        this.logger.debug('Path segments:', segments);
+        this.logger.debug('Path segments', { segments });
 
         // Start from root and traverse
         let currentItems = await this.getChildren();
@@ -443,7 +443,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             const isArrayIndex = !isNaN(Number(segment));
             const searchValue = isArrayIndex ? Number(segment) : segment;
 
-            this.logger.debug('Searching for segment:', {
+            this.logger.debug('Searching for segment', {
                 segment,
                 isArrayIndex,
                 searchValue,
@@ -464,11 +464,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             });
 
             if (!currentItem) {
-                this.logger.debug('No matching item found for segment:', segment);
+                this.logger.debug('No matching item found for segment', { segment });
                 return undefined;
             }
 
-            this.logger.debug('Found matching item:', {
+            this.logger.debug('Found matching item', {
                 label: currentItem.label,
                 path: currentItem.jsonPath,
                 type: currentItem.contextValue

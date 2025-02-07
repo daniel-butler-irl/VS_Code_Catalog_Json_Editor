@@ -17,6 +17,31 @@ import {
     OfferingFlavor,
 } from '../types/ibmCloud';
 import { deduplicateRequest } from '../decorators/requestDeduplication';
+import { execAsync } from '../utils/execAsync';
+
+interface ImportVersionOptions {
+    zipurl: string;
+    targetVersion?: string;
+    includeConfig?: boolean;
+    isVSI?: boolean;
+    repotype?: 'public_git' | 'enterprise_git';
+    tags?: string[];
+    keywords?: string[];
+    name?: string;
+    label?: string;
+    install_kind?: string;
+    target_kinds?: string[];
+    format_kind?: string;
+    product_kind?: 'software' | 'module' | 'solution';
+    product_kind_label?: string;
+    sha?: string;
+    version?: string;
+    flavor?: {
+        metadata: Record<string, unknown>;
+    };
+    working_directory?: string;
+    install_type?: 'extension' | 'fullstack';
+}
 
 /**
  * Service for interacting with IBM Cloud APIs and managing catalog data.
@@ -27,6 +52,7 @@ export class IBMCloudService {
     private logger: LoggingService;
     private backgroundCacheQueue: Set<string> = new Set();
     private isProcessingQueue: boolean = false;
+    private readonly apiUrl = 'https://cm.globalcatalog.cloud.ibm.com/api/v1-beta';
 
     /**
      * Constructor for IBMCloudService.
@@ -614,7 +640,7 @@ export class IBMCloudService {
             let flavorDetails: OfferingFlavor | undefined;
 
             for (const kind of offering.kinds) {
-                if (!kind.versions?.length) continue;
+                if (!kind.versions?.length) { continue; }
 
                 for (const version of kind.versions) {
                     if (version.flavor?.name === flavorName) {
@@ -627,7 +653,7 @@ export class IBMCloudService {
                         break;
                     }
                 }
-                if (flavorDetails) break;
+                if (flavorDetails) { break; }
             }
 
             if (flavorDetails) {
@@ -720,5 +746,64 @@ export class IBMCloudService {
             return ibmError.message;
         }
         return 'An unknown error occurred';
+    }
+
+    /**
+     * Imports a version to an offering in the catalog
+     * @param catalogId The catalog identifier
+     * @param offeringId The offering identifier
+     * @param options Import version options
+     */
+    public async importVersion(
+        catalogId: string,
+        offeringId: string,
+        options: ImportVersionOptions
+    ): Promise<void> {
+        try {
+            const token = await this.getAuthToken();
+            if (!token) {
+                throw new Error('Not authenticated with IBM Cloud');
+            }
+
+            const url = `${this.apiUrl}/catalogs/${catalogId}/offerings/${offeringId}/version`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(options)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to import version: ${errorText}`);
+            }
+
+            this.logger.info('Successfully imported version to catalog', {
+                catalogId,
+                offeringId,
+                version: options.version
+            });
+        } catch (error) {
+            this.logger.error('Error importing version to catalog', { error });
+            throw error;
+        }
+    }
+
+    /**
+     * Gets the authentication token for IBM Cloud API calls
+     * @returns The authentication token or undefined if not authenticated
+     */
+    private async getAuthToken(): Promise<string | undefined> {
+        try {
+            const { stdout } = await execAsync('ibmcloud iam oauth-tokens --output json');
+            const tokens = JSON.parse(stdout);
+            return tokens.iam_token;
+        } catch (error) {
+            this.logger.error('Failed to get IBM Cloud auth token', { error });
+            return undefined;
+        }
     }
 }

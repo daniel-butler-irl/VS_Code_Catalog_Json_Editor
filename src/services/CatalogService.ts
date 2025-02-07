@@ -594,8 +594,14 @@ export class CatalogService {
                             label: details?.label || flavorName,
                             description: details?.description || 'No description available'
                         };
-                    } catch (error) {
-                        this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
+                    } catch (error: unknown) {
+                        const errorData: Record<string, unknown> = {
+                            flavorName,
+                            error: error instanceof Error ? error.message : String(error),
+                            catalogId,
+                            offeringId
+                        };
+                        this.logger.warn('Failed to fetch details for flavor', errorData);
                         return {
                             name: flavorName,
                             label: flavorName,
@@ -2331,9 +2337,9 @@ export class CatalogService {
                         value: flavorName
                     });
                 } catch (error) {
-                    logger.error('Failed to get flavor details', {
+                    this.logger.warn('Failed to fetch details for flavor', {
                         flavorName,
-                        error,
+                        error: error instanceof Error ? error.message : String(error),
                         catalogId: context.catalogId,
                         offeringId: context.offeringId
                     });
@@ -2359,7 +2365,7 @@ export class CatalogService {
 
             return result;
         } catch (error) {
-            logger.error('Failed to fetch flavors', error);
+            this.logger.error('Failed to fetch flavors', { error: error instanceof Error ? error.message : String(error) });
             return this.promptForManualFlavorInput(currentValue);
         }
     }

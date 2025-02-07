@@ -120,7 +120,7 @@ export class SchemaService {
       return metadata;
 
     } catch (error) {
-      this.logger.error('Failed to get schema for path', error, { path: jsonPath });
+      this.logger.error('Failed to get schema for path', { error: error instanceof Error ? error.message : String(error), path: jsonPath });
       return undefined;
     }
   }

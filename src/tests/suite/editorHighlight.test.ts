@@ -101,7 +101,7 @@ suite('EditorHighlight Test Suite', () => {
 
         await highlightService.highlightJsonPath(jsonPath, editor);
 
-        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', jsonPath);
+        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', { path: jsonPath });
         const decorations = (highlightService as any).currentDecorations;
         assert.strictEqual(decorations.length, 0, 'No decorations should be present for invalid path');
     });
@@ -131,7 +131,7 @@ suite('EditorHighlight Test Suite', () => {
         const jsonPath = '$.products[0].label_测试';
         await highlightService.highlightJsonPath(jsonPath, editor);
 
-        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', jsonPath);
+        sinon.assert.calledWith(loggerStub.debug, 'Node not found for path', { path: jsonPath });
         const decorations = (highlightService as any).currentDecorations;
         assert.strictEqual(decorations.length, 0, 'No decorations should be present for invalid unicode path');
     });

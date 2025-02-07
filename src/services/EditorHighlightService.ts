@@ -167,7 +167,7 @@ export class EditorHighlightService implements vscode.Disposable {
                 return root;
             }
         } catch (error) {
-            this.logger.error('Failed to parse document', error);
+            this.logger.error('Failed to parse document', { error: error instanceof Error ? error.message : String(error) });
             this.parsedDocuments.delete(uri);
         }
         return undefined;
@@ -203,7 +203,7 @@ export class EditorHighlightService implements vscode.Disposable {
 
             const pathSegments = this.parseJsonPath(jsonPath);
             if (!pathSegments) {
-                this.logger.debug('Invalid JSON path format', jsonPath);
+                this.logger.debug('Invalid JSON path format', { path: jsonPath });
                 return;
             }
 
@@ -238,11 +238,11 @@ export class EditorHighlightService implements vscode.Disposable {
                     });
                 }
             } else {
-                this.logger.debug('Node not found for path', jsonPath);
+                this.logger.debug('Node not found for path', { path: jsonPath });
                 this.clearHighlight();
             }
         } catch (error) {
-            this.logger.error('Error performing highlight:', error);
+            this.logger.error('Error performing highlight:', { error });
             this.clearHighlight();
         }
     }
@@ -356,14 +356,14 @@ export class EditorHighlightService implements vscode.Disposable {
 
         // Check for double-click (either through word selection or rapid clicks)
         if (isWordSelection || timeSinceLastClick <= EditorHighlightService.DOUBLE_CLICK_THRESHOLD) {
-            this.logger.debug('Double-click detected on line ' + currentLine);
+            this.logger.debug('Double-click detected', { line: currentLine, selection: 'word' });
 
             const document = editor.document;
             const position = event.selections[0].active;
             const jsonPath = await this.findJsonPathAtPosition(document, position);
 
             if (jsonPath) {
-                this.logger.debug(`Highlighting path: ${jsonPath}`);
+                this.logger.debug('Highlighting path', { path: jsonPath, line: currentLine });
                 await this.highlightJsonPath(jsonPath, editor);
                 // Reveal in tree without taking focus
                 if (this.treeView) {

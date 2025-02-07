@@ -14,7 +14,9 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "workspaceContains:**/ibm_catalog.json"
+    "workspaceContains:**/ibm_catalog.json",
+    "onCommand:ibmCatalog.openPreReleasePanel",
+    "onCommand:ibmCatalog.createPreRelease"
   ],
   "contributes": {
     "configuration": {
@@ -76,6 +78,21 @@
         "title": "Create ibm_catalog.json",
         "category": "IBM Catalog",
         "icon": "$(new-file)"
+      },
+      {
+        "command": "ibmCatalog.openPreReleasePanel",
+        "title": "Open Pre-release Panel",
+        "category": "IBM Catalog"
+      },
+      {
+        "command": "ibmCatalog.createPreRelease",
+        "title": "Create Pre-release",
+        "category": "IBM Catalog"
+      },
+      {
+        "command": "ibmCatalog.showPreReleaseLogs",
+        "title": "Show Pre-release Logs",
+        "category": "IBM Catalog"
       }
     ],
     "viewsContainers": {
@@ -94,6 +111,12 @@
           "name": "Catalog Structure",
           "icon": "$(json)",
           "contextualTitle": "IBM Catalog JSON"
+        },
+        {
+          "id": "ibmCatalogPreRelease",
+          "name": "Pre-release",
+          "type": "webview",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -105,18 +128,28 @@
       }
     ],
     "menus": {
-      "view/item/context": [
-        {
-          "command": "ibmCatalog.addElement",
-          "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
-          "group": "inline"
-        }
-      ],
       "view/title": [
         {
           "command": "ibmCatalog.clearCache",
           "when": "view == ibmCatalogTree",
           "group": "navigation"
+        },
+        {
+          "command": "ibmCatalog.createPreRelease",
+          "when": "view == ibmCatalogPreRelease",
+          "group": "navigation"
+        },
+        {
+          "command": "ibmCatalog.showPreReleaseLogs",
+          "when": "view == ibmCatalogPreRelease",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ibmCatalog.addElement",
+          "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
+          "group": "inline"
         }
       ]
     },
@@ -253,15 +286,15 @@
     ]
   },
   "scripts": {
-        "vscode:prepublish": "node esbuild.js --production",
-        "build": "node esbuild.js",
-        "watch": "node esbuild.js --watch",
-        "test": "node ./out/tests/runTest.js",
-        "pretest": "tsc -p ./ && node esbuild.js --test",
-        "compile-tests": "tsc -p ./",
-        "watch-tests": "tsc -p ./ -w",
-        "clean": "rimraf dist out test-workspace .vscode-test"
-    },
+    "vscode:prepublish": "node esbuild.js --production",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "test": "node ./out/tests/runTest.js",
+    "pretest": "tsc -p ./ && node esbuild.js --test",
+    "compile-tests": "tsc -p ./",
+    "watch-tests": "tsc -p ./ -w",
+    "clean": "rimraf dist out test-workspace .vscode-test"
+  },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
     "@types/glob": "^8.1.0",
@@ -291,7 +324,10 @@
   },
   "dependencies": {
     "@ibm-cloud/platform-services": "^0.67.0",
+    "@octokit/plugin-rest-endpoint-methods": "^13.3.0",
+    "@octokit/rest": "^21.1.0",
     "ibm-cloud-sdk-core": "^5.1.0",
-    "jsonc-parser": "^3.3.1"
+    "jsonc-parser": "^3.3.1",
+    "semver": "^7.5.4"
   }
 }

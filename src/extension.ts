@@ -13,6 +13,7 @@ import { LoggingService, LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
 import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
+import { PreReleaseWebview } from './webview/PreReleaseWebview';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
@@ -351,6 +352,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         setTimeout(() => targetItem.setHighlighted(false), 1000);
                     });
                 }
+            }),
+            vscode.commands.registerCommand('ibmCatalog.openPreReleasePanel', () => {
+                vscode.commands.executeCommand('ibmCatalogPreRelease.focus');
+            }),
+            vscode.commands.registerCommand('ibmCatalog.createPreRelease', () => {
+                vscode.commands.executeCommand('ibmCatalogPreRelease.focus');
+            }),
+            vscode.commands.registerCommand('ibmCatalog.showPreReleaseLogs', () => {
+                const logger = LoggingService.getInstance();
+                logger.show('preRelease');
             })
         );
 
@@ -453,6 +464,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', catalogService.hasWorkspace());
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
+
+        // Register the pre-release webview provider
+        const preReleaseWebview = PreReleaseWebview.getInstance(context);
+        context.subscriptions.push(
+            vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview)
+        );
 
         logger.info('IBM Catalog Extension activated successfully');
     } catch (error) {
