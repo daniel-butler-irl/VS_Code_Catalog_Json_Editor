@@ -90,7 +90,7 @@ IBM Catalog JSON Editor is a Visual Studio Code extension designed to streamline
 
 ### VS Code Marketplace
 
-https://marketplace.visualstudio.com/items?itemName=DanielButler.ibm-catalog-json-editor
+<https://marketplace.visualstudio.com/items?itemName=DanielButler.ibm-catalog-json-editor>
 
 1. Open VS Code.
 2. Click the Extensions icon in the Activity Bar (`Cmd+Shift+X`).
@@ -101,6 +101,7 @@ https://marketplace.visualstudio.com/items?itemName=DanielButler.ibm-catalog-jso
 
 1. Download the `.vsix` file from [Releases](https://github.com/daniel-butler-irl/VS_Code_Catalog_Json_Editor/releases).
 2. Install via the command:
+
    ```bash
    code --install-extension ibm-catalog-json-editor-x.x.x.vsix
    ```
@@ -150,6 +151,64 @@ Fetching offerings from IBM Cloud can take some time initially. During this time
 
 - Use the command **IBM Catalog: Clear Cache**.
 - Alternatively, log out and back in to clear the cache.
+
+## Creating Releases
+
+The extension supports both stable releases and pre-releases. The release process is automated through GitHub Actions.
+
+### Stable Releases
+
+To create a stable release:
+
+1. Update the version in `package.json` following semantic versioning (e.g., `1.2.3`).
+2. Commit and push the changes to the `main` branch.
+3. The GitHub Action will automatically:
+   - Validate the version increment
+   - Generate a changelog
+   - Create a GitHub release
+   - Publish to VS Code Marketplace
+
+### Pre-releases
+
+To create a pre-release:
+
+1. Create a new branch from `main` with the pattern `releases/**` (e.g., `releases/v1.2.3-beta`).
+2. Update the version in `package.json` with a pre-release tag:
+   - Beta: `1.2.3-beta.1`
+   - Release Candidate: `1.2.3-rc.1`
+   - Alpha: `1.2.3-alpha.1`
+3. Commit and push the changes to your release branch.
+4. The GitHub Action will automatically:
+   - Detect the pre-release version
+   - Create a GitHub pre-release
+   - Publish to VS Code Marketplace as a pre-release
+
+Pre-releases in the VS Code Marketplace:
+
+- Are marked as pre-release versions
+- Can be installed alongside stable versions
+- Help test new features before stable release
+- Are not automatically updated for users on stable versions
+
+### Version Guidelines
+
+Follow semantic versioning (MAJOR.MINOR.PATCH):
+
+- MAJOR: Breaking changes
+- MINOR: New features (backward compatible)
+- PATCH: Bug fixes (backward compatible)
+
+Pre-release tags:
+
+- `-alpha.N`: Early development versions
+- `-beta.N`: Feature complete, testing versions
+- `-rc.N`: Release candidates
+
+Example version sequence:
+
+```
+1.2.0-alpha.1 -> 1.2.0-alpha.2 -> 1.2.0-beta.1 -> 1.2.0-rc.1 -> 1.2.0
+```
 
 ## License
 

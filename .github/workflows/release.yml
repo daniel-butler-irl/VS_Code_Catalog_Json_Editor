@@ -4,16 +4,35 @@ on:
   push:
     branches:
       - main
+      - 'releases/**'
     paths:
       - 'package.json'  # Trigger only when package.json is modified
 
 jobs:
-  release:
+  determine_release_type:
     runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.check_version.outputs.is_prerelease }}
+      version: ${{ steps.check_version.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        
+      - name: Check Version Type
+        id: check_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ $VERSION =~ .*-beta.* || $VERSION =~ .*-alpha.* || $VERSION =~ .*-rc.* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+  release:
+    needs: determine_release_type
+    runs-on: ubuntu-latest
     permissions:
-      # Give the default GITHUB_TOKEN write permission to commit and push the
-      # added or changed files to the repository.
       contents: write
 
     steps:
@@ -60,6 +79,14 @@ jobs:
             const semver = require('semver');
             const currentVersion = process.env.CURRENT_VERSION;
             const previousVersion = process.env.PREVIOUS_VERSION;
+            if (!semver.valid(currentVersion)) {
+              console.error('Error: Current version (' + currentVersion + ') is not a valid semver version.');
+              process.exit(1);
+            }
+            if (!semver.valid(previousVersion)) {
+              console.error('Error: Previous version (' + previousVersion + ') is not a valid semver version.');
+              process.exit(1);
+            }
             if (!semver.gt(currentVersion, previousVersion)) {
               console.error('Error: Current version (' + currentVersion + ') is not greater than previous version (' + previousVersion + ').');
               process.exit(1);
@@ -74,8 +101,8 @@ jobs:
       - name: Install Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.0'        # Specify the Ruby version you need
-          bundler-cache: true        # Enables automatic bundler caching
+          ruby-version: '3.0'
+          bundler-cache: true
 
       # Step 9: Install github-changelog-generator and faraday-retry
       - name: Install Gems
@@ -103,7 +130,7 @@ jobs:
         with:
           commit_message: "chore: update CHANGELOG for version ${{ env.CURRENT_VERSION }}"
           file_pattern: CHANGELOG.md
-          branch: main
+          branch: ${{ github.ref_name }}
 
       # Step 12: Tag the New Version
       - name: Create Git Tag
@@ -129,7 +156,7 @@ jobs:
           name: Release v${{ env.CURRENT_VERSION }}
           body_path: ./CHANGELOG.md
           draft: false
-          prerelease: false
+          prerelease: ${{ needs.determine_release_type.outputs.is_prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -146,6 +173,11 @@ jobs:
 
       # Step 16: Publish to VS Code Marketplace
       - name: Publish to VS Code Marketplace
-        run: npx vsce publish --pat ${{ secrets.VSCE_PAT }}
+        run: |
+          if [[ "${{ needs.determine_release_type.outputs.is_prerelease }}" == "true" ]]; then
+            npx vsce publish --pre-release --pat ${{ secrets.VSCE_PAT }}
+          else
+            npx vsce publish --pat ${{ secrets.VSCE_PAT }}
+          fi
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
