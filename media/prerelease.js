@@ -100,14 +100,10 @@
 
     catalogSelect?.addEventListener('change', () => {
         const selectedCatalogId = catalogSelect.value;
-        // Save selection to state
-        vscode.setState({ ...state, selectedCatalogId });
-        
-        // Update refresh button state
         const refreshButton = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
-        if (refreshButton) {
-            refreshButton.disabled = !selectedCatalogId;
-        }
+        
+        // Save selection in state
+        vscode.setState({ ...state, selectedCatalogId: selectedCatalogId });
         
         if (selectedCatalogId) {
             // Show loading state
@@ -164,6 +160,7 @@
                 if (versionInput) {versionInput.disabled = false;}
                 if (postfixInput) {postfixInput.disabled = false;}
                 if (publishCheckbox) {publishCheckbox.disabled = false;}
+                if (refreshButton) {refreshButton.disabled = true;} // Disable refresh when no catalog selected
             }
         }
     });
@@ -427,6 +424,16 @@
             currentTimeoutId = null;
         }
 
+        // Re-enable controls if not on main/master branch
+        if (!isMainOrMaster) {
+            if (catalogSelect) {catalogSelect.disabled = false;}
+            if (versionInput) {versionInput.disabled = false;}
+            if (postfixInput) {postfixInput.disabled = false;}
+            if (publishCheckbox) {publishCheckbox.disabled = false;}
+            const refreshButton = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
+            if (refreshButton) {refreshButton.disabled = !catalogSelect?.value;}
+        }
+
         // Don't update if we don't have a selected catalog
         if (!catalogSelect?.value) {
             if (catalogDetailsDiv) {
@@ -479,8 +486,10 @@
                 }
             }
 
-            // Update version suggestion when versions are loaded
-            suggestNextVersion();
+            // Only suggest version if input is empty
+            if (!versionInput?.value) {
+                suggestNextVersion();
+            }
 
             // Update the version table with the loaded versions
             renderCatalogDetails(details, versionInput?.value || '', proposedPostfix, githubReleases, catalogVersions);
@@ -653,22 +662,35 @@
             return;
         }
 
-        // Use catalog versions to suggest next version
-        const versions = catalogDetails.versions
-            .filter(v => /^\d+\.\d+\.\d+$/.test(v))
-            .sort((a, b) => {
-                const [aMajor, aMinor, aPatch] = a.split('.').map(Number);
-                const [bMajor, bMinor, bPatch] = b.split('.').map(Number);
-                
-                if (aMajor !== bMajor) {return bMajor - aMajor;}
-                if (aMinor !== bMinor) {return bMinor - aMinor;}
-                return bPatch - aPatch;
-            });
+        // Only suggest version if the input is empty
+        if (!versionInput.value) {
+            const versions = catalogDetails.versions
+                .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+                .sort((a, b) => {
+                    const [aMajor, aMinor, aPatch] = a.split('.').map(Number);
+                    const [bMajor, bMinor, bPatch] = b.split('.').map(Number);
+                    
+                    if (aMajor !== bMajor) {return bMajor - aMajor;}
+                    if (aMinor !== bMinor) {return bMinor - aMinor;}
+                    return bPatch - aPatch;
+                });
 
-        if (versions.length) {
-            const latest = versions[0];
-            const [major, minor, patch] = latest.split('.').map(Number);
-            versionInput.value = `${major}.${minor}.${patch + 1}`;
+            if (versions.length) {
+                const latest = versions[0];
+                const [major, minor, patch] = latest.split('.').map(Number);
+                versionInput.value = `${major}.${minor}.${patch + 1}`;
+            }
+        }
+
+        // Validate current version against catalog versions
+        if (versionInput.value && catalogDetails.versions) {
+            const isVersionInvalid = catalogDetails.versions.includes(versionInput.value);
+            if (createBtn) {
+                createBtn.disabled = isVersionInvalid || isMainOrMaster;
+            }
+            if (isVersionInvalid && !isMainOrMaster) {
+                showError(`Version ${versionInput.value} already exists in the catalog`);
+            }
         }
     }
 
@@ -676,9 +698,6 @@
      * Updates the GitHub tag preview and catalog version preview
      */
     function updateTagPreview() {
-        const version = versionInput?.value || '';
-        const postfix = postfixInput?.value || '';
-
         // Update the next versions in the catalog details
         updateCatalogDetails(catalogDetails);
     }
