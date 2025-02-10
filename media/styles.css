@@ -1,0 +1,63 @@
+.next-version {
+    margin: 16px 0;
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+}
+
+.next-version-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.version-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.version-label {
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+}
+
+.version-value {
+    font-family: var(--vscode-editor-font-family);
+    color: var(--vscode-textLink-foreground);
+}
+
+.catalog-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.info-label {
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+    min-width: 100px;
+}
+
+.info-value {
+    font-family: var(--vscode-editor-font-family);
+    color: var(--vscode-textLink-foreground);
+    word-break: break-all;
+}
+
+.button-container {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+} 

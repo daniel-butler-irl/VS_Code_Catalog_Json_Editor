@@ -27,12 +27,21 @@ interface GitHubRelease {
   tarball_url: string;
 }
 
+interface CatalogVersion {
+  version: string;
+  flavor: {
+    name: string;
+    label: string;
+  };
+  tgz_url: string;
+}
+
 interface CatalogDetails {
   catalogId: string;
   offeringId: string;
   name: string;
   label: string;
-  versions: string[];
+  versions: CatalogVersion[];
   offeringNotFound?: boolean;
 }
 
@@ -56,11 +65,11 @@ export class PreReleaseService {
   private constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.logger = LoggingService.getInstance();
-    this.logger.debug('Initializing PreReleaseService', { service: 'PreReleaseService' });
+    this.logger.debug('Initializing PreReleaseService', { service: 'PreReleaseService' }, 'preRelease');
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
       this.workspaceRoot = workspaceFolders[0].uri.fsPath;
-      this.logger.debug('Workspace root set to', { path: this.workspaceRoot });
+      this.logger.debug('Workspace root set to', { path: this.workspaceRoot }, 'preRelease');
     }
     this.cacheService = CacheService.getInstance();
     void this.initializeGitHub();
@@ -77,17 +86,17 @@ export class PreReleaseService {
         this.logger.debug('GitHub authentication initialized', {
           status: 'success',
           scopes: session.scopes
-        });
+        }, 'preRelease');
       } else {
         this.logger.warn('No GitHub session found, authentication will be requested when needed', {
           status: 'warning'
-        });
+        }, 'preRelease');
       }
     } catch (error) {
       this.logger.error('Failed to initialize GitHub authentication', {
         error,
         message: error instanceof Error ? error.message : 'Unknown error'
-      });
+      }, 'preRelease');
     }
   }
 
@@ -97,10 +106,10 @@ export class PreReleaseService {
     }
 
     try {
-      this.logger.debug('Requesting GitHub authentication');
+      this.logger.debug('Requesting GitHub authentication', {}, 'preRelease');
       const session = await vscode.authentication.getSession('github', ['repo'], {
         createIfNone: true,
-        clearSessionPreference: true // Clear any previous "don't ask again" settings
+        clearSessionPreference: true
       });
 
       if (session) {
@@ -110,17 +119,17 @@ export class PreReleaseService {
         this.logger.info('GitHub authentication completed', {
           status: 'success',
           scopes: session.scopes
-        });
+        }, 'preRelease');
         return true;
       }
 
-      this.logger.warn('User cancelled GitHub authentication');
+      this.logger.warn('User cancelled GitHub authentication', {}, 'preRelease');
       return false;
     } catch (error) {
       this.logger.error('Failed to authenticate with GitHub', {
         error,
         message: error instanceof Error ? error.message : 'Unknown error'
-      });
+      }, 'preRelease');
       throw new Error('GitHub authentication failed. Please try again.');
     }
   }
@@ -139,7 +148,7 @@ export class PreReleaseService {
         throw new Error('Not authenticated with IBM Cloud');
       }
       this.ibmCloudService = new IBMCloudService(apiKey);
-      this.logger.debug('IBM Cloud service initialized');
+      this.logger.debug('IBM Cloud service initialized', {}, 'preRelease');
     }
     return this.ibmCloudService;
   }
@@ -181,7 +190,7 @@ export class PreReleaseService {
   }
 
   /**
-   * Gets the last 5 pre-releases from GitHub
+   * Gets the last 5 pre-releases from both GitHub and the catalog
    * @returns Array of pre-release details
    */
   public async getLastPreReleases(): Promise<GitHubRelease[]> {
@@ -189,6 +198,54 @@ export class PreReleaseService {
       throw new Error('No workspace root found');
     }
 
+    try {
+      // Get GitHub releases
+      const githubReleases = await this.getGitHubReleases();
+
+      // Get catalog releases if we have a selected catalog
+      const selectedCatalogId = await this.getSelectedCatalogId();
+      let catalogReleases: GitHubRelease[] = [];
+
+      if (selectedCatalogId) {
+        try {
+          const catalogDetails = await this.getSelectedCatalogDetails(selectedCatalogId);
+          catalogReleases = catalogDetails.versions.map(version => ({
+            tag_name: `catalog-${version.version}`,
+            name: `Catalog Release ${version.version}`,
+            created_at: new Date().toISOString(), // Catalog doesn't provide dates
+            tarball_url: ''
+          }));
+        } catch (error) {
+          this.logger.warn('Failed to fetch catalog releases', { error }, 'preRelease');
+        }
+      }
+
+      // Combine and sort all releases
+      const allReleases = [...githubReleases, ...catalogReleases]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 5);
+
+      this.logger.debug('Fetched combined releases', {
+        githubCount: githubReleases.length,
+        catalogCount: catalogReleases.length,
+        totalCount: allReleases.length
+      }, 'preRelease');
+
+      return allReleases;
+    } catch (error) {
+      this.logger.error('Failed to get pre-releases', { error }, 'preRelease');
+      if (error instanceof Error) {
+        throw new Error(`Failed to get pre-releases: ${error.message}`);
+      }
+      throw new Error('Failed to get pre-releases');
+    }
+  }
+
+  /**
+   * Gets the last 5 pre-releases from GitHub
+   * @returns Array of GitHub releases
+   */
+  private async getGitHubReleases(): Promise<GitHubRelease[]> {
     if (!this.octokit) {
       const authenticated = await this.ensureGitHubAuth();
       if (!authenticated) {
@@ -199,7 +256,7 @@ export class PreReleaseService {
     try {
       const { stdout } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
       const repoUrl = stdout.trim();
-      this.logger.debug('Got repository URL', { url: repoUrl });
+      this.logger.debug('Got repository URL', { url: repoUrl }, 'preRelease');
 
       // Handle both HTTPS and SSH URL formats
       const httpsMatch = repoUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -207,15 +264,15 @@ export class PreReleaseService {
       const match = httpsMatch || sshMatch;
 
       if (!match) {
-        this.logger.error('Invalid GitHub URL format', { repoUrl });
+        this.logger.error('Invalid GitHub URL format', { repoUrl }, 'preRelease');
         throw new Error('Could not parse GitHub repository URL');
       }
 
       const [, owner, repo] = match;
-      this.logger.debug('Parsed repository info', { owner, repo });
+      this.logger.debug('Parsed repository info', { owner, repo }, 'preRelease');
 
       if (!this.octokit) {
-        this.logger.error('GitHub client not initialized after authentication');
+        this.logger.error('GitHub client not initialized after authentication', {}, 'preRelease');
         throw new Error('GitHub client not initialized');
       }
 
@@ -231,7 +288,7 @@ export class PreReleaseService {
           tag_name: r.tag_name,
           created_at: r.created_at
         }))
-      });
+      }, 'preRelease');
 
       return releases.data.map(release => ({
         tag_name: release.tag_name,
@@ -240,11 +297,8 @@ export class PreReleaseService {
         tarball_url: release.tarball_url || ''
       }));
     } catch (error) {
-      this.logger.error('Failed to get pre-releases', { error });
-      if (error instanceof Error) {
-        throw new Error(`Failed to get pre-releases from GitHub: ${error.message}`);
-      }
-      throw new Error('Failed to get pre-releases from GitHub');
+      this.logger.error('Failed to get GitHub releases', { error }, 'preRelease');
+      throw error;
     }
   }
 
@@ -258,17 +312,17 @@ export class PreReleaseService {
   }> {
     try {
       const ibmCloudService = await this.getIBMCloudService();
-      this.logger.debug('Getting private catalogs from IBM Cloud service');
+      this.logger.debug('Getting private catalogs from IBM Cloud service', {}, 'preRelease');
 
       // Get private catalogs only
       const privateCatalogs = await ibmCloudService.getAvailablePrivateCatalogs();
       this.logger.debug('Retrieved private catalogs', {
         count: privateCatalogs.length,
         catalogs: privateCatalogs.map(c => ({ id: c.id, label: c.label }))
-      });
+      }, 'preRelease');
 
       if (!privateCatalogs.length) {
-        this.logger.warn('No private catalogs found');
+        this.logger.warn('No private catalogs found', {}, 'preRelease');
         return { catalogs: [] };
       }
 
@@ -300,13 +354,21 @@ export class PreReleaseService {
       // Check cache first
       const cacheKey = `${CacheKeys.OFFERING_DETAILS}_${catalogId}`;
       const cachedDetails = this.cacheService.get<CatalogDetails>(cacheKey);
-      if (cachedDetails) {
+      if (cachedDetails && cachedDetails.label) {
         this.logger.debug('Using cached catalog details', {
           catalogId,
           offeringId: cachedDetails.offeringId,
-          name: cachedDetails.name
+          name: cachedDetails.name,
+          label: cachedDetails.label
         }, 'preRelease');
         return cachedDetails;
+      }
+
+      if (cachedDetails) {
+        this.logger.debug('Cached details missing label, forcing refresh', {
+          catalogId,
+          cachedFields: Object.keys(cachedDetails)
+        }, 'preRelease');
       }
 
       const ibmCloudService = await this.getIBMCloudService();
@@ -329,58 +391,94 @@ export class PreReleaseService {
       const catalogJsonPath = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), 'ibm_catalog.json');
       const catalogJsonContent = await vscode.workspace.fs.readFile(catalogJsonPath);
       const catalogJson = JSON.parse(catalogJsonContent.toString());
+
+      this.logger.info('Reading ibm_catalog.json for offering details', {
+        hasProducts: !!catalogJson.products,
+        productCount: catalogJson.products?.length,
+        firstProduct: catalogJson.products?.[0],
+        catalogId
+      }, 'preRelease');
+
       const offeringName = catalogJson.products?.[0]?.name;
+      const offeringLabel = catalogJson.products?.[0]?.label;
+
+      this.logger.info('Offering details from ibm_catalog.json', {
+        offeringLabel,
+        offeringName,
+        hasLabel: !!offeringLabel,
+        source: 'ibm_catalog.json',
+        catalogId
+      }, 'preRelease');
 
       if (!offeringName) {
         throw new Error('Could not find offering name in ibm_catalog.json');
       }
 
-      this.logger.debug('Found offering name in ibm_catalog.json', { offeringName }, 'preRelease');
+      if (!offeringLabel) {
+        throw new Error('Could not find offering label in ibm_catalog.json. Label is required.');
+      }
 
       // Get offerings and find the matching one
-      this.logger.debug('Getting offerings for catalog', { catalogId }, 'preRelease');
+      this.logger.debug('Getting offerings for catalog', { catalogId, offeringLabel }, 'preRelease');
       const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id);
-      this.logger.debug('Retrieved offerings', {
-        count: offerings.length,
-        offerings: offerings.map(o => ({ id: o.id, name: o.name }))
-      }, 'preRelease');
-
       const offering = offerings.find(o => o.name === offeringName);
 
       let catalogDetails: CatalogDetails;
       if (!offering) {
-        // Return a special response for missing offering case
         catalogDetails = {
           catalogId: selectedCatalog.id,
           offeringId: '',
           name: offeringName,
-          label: selectedCatalog.label,
+          label: offeringLabel,
           versions: [],
           offeringNotFound: true
         };
       } else {
-        // Get all versions for the offering
-        const allVersions = (offering.kinds || [])
-          .flatMap(kind => kind.versions?.map(version => version.version) ?? [])
-          .filter((version): version is string => Boolean(version))
-          .sort((a, b) => semver.rcompare(a, b));
+        // Get all versions for each kind
+        const allVersions: CatalogVersion[] = [];
+
+        for (const kind of offering.kinds || []) {
+          try {
+            const kindVersions = await ibmCloudService.getOfferingKindVersions(
+              catalogId,
+              offering.id,
+              kind.target_kind || kind.install_kind || 'terraform'
+            );
+
+            // Map the versions to our format
+            const mappedVersions = kindVersions.versions.map(version => ({
+              version: version.version,
+              flavor: {
+                name: version.flavor?.name || kind.target_kind || kind.install_kind || 'terraform',
+                label: version.flavor?.label || kind.target_kind || kind.install_kind || 'Terraform'
+              },
+              tgz_url: version.tgz_url || ''
+            }));
+
+            allVersions.push(...mappedVersions);
+          } catch (error) {
+            this.logger.error('Failed to get versions for kind', {
+              error,
+              kindId: kind.target_kind || kind.install_kind,
+              offeringId: offering.id
+            }, 'preRelease');
+          }
+        }
+
+        // Sort versions by semver
+        allVersions.sort((a, b) => semver.rcompare(a.version, b.version));
 
         catalogDetails = {
           catalogId: selectedCatalog.id,
           offeringId: offering.id,
           name: offering.name,
-          label: selectedCatalog.label,
+          label: offeringLabel,
           versions: allVersions
         };
       }
 
       // Cache the result
       this.cacheService.set(cacheKey, catalogDetails, CacheConfigurations[CacheKeys.OFFERING_DETAILS]);
-      this.logger.debug('Cached catalog details', {
-        catalogId,
-        offeringId: catalogDetails.offeringId,
-        name: catalogDetails.name
-      }, 'preRelease');
 
       return catalogDetails;
     } catch (error) {
@@ -753,7 +851,7 @@ export class PreReleaseService {
           break;
       }
     } catch (error) {
-      this.logger.error('Error handling message', { error, message });
+      this.logger.error('Error handling message', { error, message }, 'preRelease');
       this.view?.webview.postMessage({
         command: 'showError',
         error: error instanceof Error ? error.message : 'An error occurred'
@@ -842,7 +940,7 @@ export class PreReleaseService {
       // Refresh data after setup
       await this.refresh();
     } catch (error) {
-      this.logger.error('Setup failed', { error });
+      this.logger.error('Setup failed', { error }, 'preRelease');
       this.view?.webview.postMessage({
         command: 'showError',
         error: error instanceof Error ? error.message : 'Setup failed'
@@ -856,7 +954,7 @@ export class PreReleaseService {
       await this.refresh(); // Refresh data after creation
       vscode.window.showInformationMessage('Pre-release created successfully');
     } catch (error) {
-      this.logger.error('Failed to create pre-release', { error });
+      this.logger.error('Failed to create pre-release', { error }, 'preRelease');
       throw error;
     }
   }
@@ -864,12 +962,24 @@ export class PreReleaseService {
   private async handleCatalogSelection(catalogId: string): Promise<void> {
     try {
       const catalogDetails = await this.getSelectedCatalogDetails(catalogId);
+      this.logger.debug('Updating catalog details in UI', {
+        catalogId: catalogDetails.catalogId,
+        name: catalogDetails.name,
+        label: catalogDetails.label,
+        offeringId: catalogDetails.offeringId,
+        versionCount: catalogDetails.versions.length,
+        fullDetails: catalogDetails
+      }, 'preRelease');
       this.view?.webview.postMessage({
         command: 'updateCatalogDetails',
         catalogDetails
       });
+      this.logger.info('Successfully updated catalog details', {
+        catalogId,
+        label: catalogDetails.label
+      }, 'preRelease');
     } catch (error) {
-      this.logger.error('Failed to get catalog details', { error, catalogId });
+      this.logger.error('Failed to get catalog details', { error, catalogId }, 'preRelease');
       this.view?.webview.postMessage({
         command: 'showError',
         error: error instanceof Error ? error.message : 'Failed to get catalog details'
@@ -889,7 +999,10 @@ export class PreReleaseService {
         branch
       });
     } catch (error) {
-      this.logger.warn('Failed to get branch name, showing empty state', { error: error instanceof Error ? error.message : String(error) });
+      this.logger.warn('Failed to get branch name, showing empty state',
+        { error: error instanceof Error ? error.message : String(error) },
+        'preRelease'
+      );
       await this.view.webview.postMessage({
         command: 'updateBranchName',
         branch: '',
@@ -969,6 +1082,26 @@ export class PreReleaseService {
         command: 'showError',
         error: 'Failed to refresh data. Please try again.'
       });
+    }
+  }
+
+  public async isGitHubAuthenticated(): Promise<boolean> {
+    try {
+      const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: false });
+      return !!session;
+    } catch (error) {
+      this.logger.warn('GitHub authentication check failed', { error }, 'preRelease');
+      return false;
+    }
+  }
+
+  public async isCatalogAuthenticated(): Promise<boolean> {
+    try {
+      const apiKey = await AuthService.getApiKey(this.context);
+      return !!apiKey;
+    } catch (error) {
+      this.logger.warn('IBM Cloud authentication check failed', { error }, 'preRelease');
+      return false;
     }
   }
 }

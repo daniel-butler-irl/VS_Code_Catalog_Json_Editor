@@ -252,54 +252,80 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   }
 
   private getWebviewContent(styleUri: vscode.Uri, scriptUri: vscode.Uri): string {
+    const nonce = this.getNonce();
+
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view?.webview.cspSource} 'unsafe-inline'; script-src ${this.view?.webview.cspSource};">
-        <title>Create Pre-release</title>
-        <link rel="stylesheet" type="text/css" href="${styleUri}">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view?.webview.cspSource}; script-src 'nonce-${nonce}';">
+        <link href="${styleUri}" rel="stylesheet">
+        <title>Pre-Release Manager</title>
     </head>
     <body>
         <div class="container">
-            <div id="errorContainer" class="error-container">
-                <div class="error-message">
-                    <h3>Error</h3>
-                    <p id="errorText"></p>
-                </div>
-            </div>
-
-            <div id="mainContent" class="loading-state">
-                <div class="section compact">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="version">Version</label>
-                            <input type="text" id="version" placeholder="Loading..." disabled>
-                            <small>Use semantic versioning</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="postfix">Postfix</label>
-                            <input type="text" id="postfix" placeholder="Loading..." disabled>
-                            <small>Added to version (e.g., -beta, -preview)</small>
-                        </div>
+            <div id="errorContainer" class="error-container"></div>
+            <div id="mainContent">
+                <div class="section">
+                    <h2>Create Pre-Release</h2>
+                    <div class="form-group">
+                        <label for="version">Version</label>
+                        <input type="text" id="version" placeholder="1.0.0" disabled>
+                        <small>The version number for this release</small>
                     </div>
                     <div class="form-group">
-                        <label for="catalogSelect">Target Catalog</label>
+                        <label for="postfix">Postfix</label>
+                        <input type="text" id="postfix" placeholder="branch-beta" disabled>
+                        <small>The postfix to append to the version (e.g. beta)</small>
+                    </div>
+                    <div class="next-version" id="nextVersion">
+                        <div class="next-version-info">
+                            <div class="version-row">
+                                <span class="version-label">GitHub:</span>
+                                <span class="version-value">Loading...</span>
+                            </div>
+                            <div class="version-row">
+                                <span class="version-label">Catalog:</span>
+                                <span class="version-value">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="button-container">
+                        <button id="githubBtn" class="github-button" disabled>
+                            Pre-Release GitHub
+                        </button>
+                        <button id="catalogBtn" class="catalog-button" disabled>
+                            Pre-Release Catalog
+                        </button>
+                    </div>
+                </div>
+                <div class="section">
+                    <h2>Catalog Details</h2>
+                    <div class="form-group">
+                        <label for="catalogSelect">Select Catalog</label>
                         <select id="catalogSelect" disabled>
                             <option value="">Loading catalogs...</option>
                         </select>
                     </div>
-                </div>
-
-                <div id="catalogDetails">
-                    <p class="loading">Initializing pre-release panel...</p>
+                    <div id="catalogDetails">
+                        <p class="loading">Loading catalog details...</p>
+                    </div>
                 </div>
             </div>
         </div>
-        <script src="${scriptUri}"></script>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
     </body>
     </html>`;
+  }
+
+  private getNonce() {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
   }
 
   private getMediaUri(fileName: string): vscode.Uri {
@@ -346,9 +372,8 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         case 'getBranchName':
           await this.sendBranchName();
           break;
-        case 'refresh':
-          this.logger.info('Refreshing pre-release panel', {}, 'preRelease');
-          await this.refresh();
+        case 'checkAuthentication':
+          await this.sendAuthenticationStatus();
           break;
         case 'selectCatalog':
           if (message.catalogId) {
@@ -409,6 +434,27 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       this.view?.webview.postMessage({
         command: 'showError',
         error: error instanceof Error ? error.message : 'An error occurred'
+      });
+    }
+  }
+
+  private async sendAuthenticationStatus(): Promise<void> {
+    try {
+      const [githubAuth, catalogAuth] = await Promise.all([
+        this.preReleaseService.isGitHubAuthenticated(),
+        this.preReleaseService.isCatalogAuthenticated()
+      ]);
+
+      this.view?.webview.postMessage({
+        command: 'authenticationStatus',
+        githubAuthenticated: githubAuth,
+        catalogAuthenticated: catalogAuth
+      });
+    } catch (error) {
+      this.logger.error('Failed to get authentication status', { error }, 'preRelease');
+      this.view?.webview.postMessage({
+        command: 'showError',
+        error: 'Failed to check authentication status'
       });
     }
   }

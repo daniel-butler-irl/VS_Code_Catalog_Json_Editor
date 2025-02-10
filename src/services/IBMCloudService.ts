@@ -454,6 +454,47 @@ export class IBMCloudService {
         return `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`;
     }
 
+    /**
+     * Gets versions for a specific offering kind
+     * @param catalogId The catalog identifier
+     * @param offeringId The offering identifier
+     * @param kindId The kind identifier
+     * @returns Promise with the versions for the kind
+     */
+    public async getOfferingKindVersions(
+        catalogId: string,
+        offeringId: string,
+        kindId: string
+    ): Promise<{ versions: OfferingVersion[] }> {
+        try {
+            const response = await this.withProgress(`Fetching versions for kind ${kindId}`, () =>
+                this.catalogManagement.getOffering({
+                    catalogIdentifier: catalogId,
+                    offeringId: offeringId
+                })
+            );
+
+            const offering = response.result;
+            const kind = offering.kinds?.find(k =>
+                k.target_kind === kindId ||
+                k.install_kind === kindId ||
+                k.format_kind === kindId
+            );
+
+            return {
+                versions: (kind?.versions || []) as OfferingVersion[]
+            };
+        } catch (error) {
+            this.logger.error('Failed to fetch kind versions', {
+                catalogId,
+                offeringId,
+                kindId,
+                error: this.formatError(error)
+            });
+            throw error;
+        }
+    }
+
     public async getAvailablePublicCatalogs(): Promise<CatalogItem[]> {
         this.logger.debug('Fetching available public catalogs');
 
