@@ -15,8 +15,7 @@
   "main": "./dist/extension.js",
   "files": [
     "dist",
-    "media",
-    "schemas"
+    "media"
   ],
   "activationEvents": [
     "workspaceContains:**/ibm_catalog.json",
