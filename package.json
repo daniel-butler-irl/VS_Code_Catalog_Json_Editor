@@ -42,6 +42,30 @@
         "icon": "$(trash)"
       },
       {
+        "command": "ibmCatalog.login",
+        "title": "Login to IBM Cloud",
+        "category": "IBM Catalog",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "ibmCatalog.logout",
+        "title": "Logout from IBM Cloud",
+        "category": "IBM Catalog",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "ibmCatalog.loginGithub",
+        "title": "Login to GitHub",
+        "category": "IBM Catalog",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "ibmCatalog.logoutGithub",
+        "title": "Logout from GitHub",
+        "category": "IBM Catalog",
+        "icon": "$(sign-out)"
+      },
+      {
         "command": "ibmCatalog.showLogs",
         "title": "Show IBM Catalog Logs",
         "category": "IBM Catalog"
@@ -69,14 +93,6 @@
         "command": "ibmCatalog.locateCatalogFile",
         "title": "Locate IBM Catalog File",
         "icon": "$(file-add)"
-      },
-      {
-        "command": "ibmCatalog.login",
-        "title": "Login to IBM Cloud"
-      },
-      {
-        "command": "ibmCatalog.logout",
-        "title": "Logout from IBM Cloud"
       },
       {
         "command": "ibmCatalog.createCatalogFile",
@@ -135,19 +151,40 @@
     "menus": {
       "view/title": [
         {
+          "command": "ibmCatalog.login",
+          "when": "view == ibmCatalogTree && !ibmCatalog.isLoggedIn",
+          "group": "navigation@1",
+          "icon": "$(sign-in)"
+        },
+        {
+          "command": "ibmCatalog.logout",
+          "when": "view == ibmCatalogTree && ibmCatalog.isLoggedIn",
+          "group": "navigation@1",
+          "icon": "$(sign-out)"
+        },
+        {
           "command": "ibmCatalog.clearCache",
           "when": "view == ibmCatalogTree",
-          "group": "navigation"
+          "group": "navigation@3",
+          "icon": "$(trash)"
         },
         {
-          "command": "ibmCatalog.createPreRelease",
-          "when": "view == ibmCatalogPreRelease",
-          "group": "navigation"
+          "command": "ibmCatalog.loginGithub",
+          "when": "view == ibmCatalogPreRelease && !ibmCatalog.isGithubLoggedIn",
+          "group": "navigation@1",
+          "icon": "$(sign-in)"
         },
         {
-          "command": "ibmCatalog.showPreReleaseLogs",
+          "command": "ibmCatalog.logoutGithub",
+          "when": "view == ibmCatalogPreRelease && ibmCatalog.isGithubLoggedIn",
+          "group": "navigation@1",
+          "icon": "$(sign-out)"
+        },
+        {
+          "command": "ibmCatalog.clearCache",
           "when": "view == ibmCatalogPreRelease",
-          "group": "navigation"
+          "group": "navigation@3",
+          "icon": "$(trash)"
         }
       ],
       "view/item/context": [
@@ -291,16 +328,23 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "node esbuild.js --production",
-    "build": "node esbuild.js",
-    "watch": "node esbuild.js --watch",
-    "test": "node ./out/tests/runTest.js",
-    "pretest": "tsc -p ./ && node esbuild.js --test",
-    "compile-tests": "tsc -p ./",
-    "watch-tests": "tsc -p ./ -w",
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src/**/*.ts",
+    "test": "node ./out/src/test/runTest.js",
+    "test:unit": "node ./out/src/test/runTest.js \"**/*.test.js\"",
+    "test:perf": "node ./out/src/test/runTest.js \"**/*.perf.test.js\"",
+    "test:all": "node ./out/src/test/runTest.js \"**/*.{test,perf.test}.js\"",
+    "test:auth": "node ./out/src/test/runTest.js \"**/authentication.test.js\"",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p ./src/test/tsconfig.test.json",
+    "watch-tests": "tsc -p ./src/test/tsconfig.test.json -w",
     "clean": "rimraf dist out test-workspace .vscode-test"
   },
   "devDependencies": {
+    "@types/chai": "^5.0.1",
     "@types/fs-extra": "^11.0.4",
     "@types/glob": "^8.1.0",
     "@types/lodash": "^4.17.12",
@@ -313,6 +357,7 @@
     "@typescript-eslint/parser": "^6.13.1",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "chai": "^5.1.2",
     "esbuild": "^0.19.12",
     "eslint": "^8.54.0",
     "fs-extra": "^11.2.0",
