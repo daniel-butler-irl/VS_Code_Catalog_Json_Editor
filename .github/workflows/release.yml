@@ -22,12 +22,22 @@ jobs:
         id: check_version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if [[ $VERSION =~ .*-beta.* || $VERSION =~ .*-alpha.* || $VERSION =~ .*-rc.* ]]; then
+          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
+          if [[ "$IS_PREVIEW" == "true" ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validate No Preview on Main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
+          if [[ "$IS_PREVIEW" == "true" ]]; then
+            echo "Error: Preview flag must be false on main branch"
+            exit 1
+          fi
 
   release:
     needs: determine_release_type
@@ -175,9 +185,9 @@ jobs:
       - name: Publish to VS Code Marketplace
         run: |
           if [[ "${{ needs.determine_release_type.outputs.is_prerelease }}" == "true" ]]; then
-            npx vsce publish --pre-release --pat ${{ secrets.VSCE_PAT }}
+            npx vsce publish --pre-release --pat ${{ secrets.VSCE_PAT }} ${{ env.CURRENT_VERSION }}
           else
-            npx vsce publish --pat ${{ secrets.VSCE_PAT }}
+            npx vsce publish --pat ${{ secrets.VSCE_PAT }} ${{ env.CURRENT_VERSION }}
           fi
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

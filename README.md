@@ -172,20 +172,19 @@ To create a stable release:
 
 To create a pre-release:
 
-1. Create a new branch from `main` with the pattern `releases/**` (e.g., `releases/v1.2.3-beta`).
-2. Update the version in `package.json` with a pre-release tag:
-   - Beta: `1.2.3-beta.1`
-   - Release Candidate: `1.2.3-rc.1`
-   - Alpha: `1.2.3-alpha.1`
+1. Create a new branch from `main` with the pattern `releases/**` (e.g., `releases/v1.2.3-preview`).
+2. Update `package.json`:
+   - Set the version (e.g., `"version": "1.2.3"`)
+   - Add the preview flag: `"preview": true`
 3. Commit and push the changes to your release branch.
 4. The GitHub Action will automatically:
-   - Detect the pre-release version
+   - Detect the preview flag
    - Create a GitHub pre-release
    - Publish to VS Code Marketplace as a pre-release
 
 Pre-releases in the VS Code Marketplace:
 
-- Are marked as pre-release versions
+- Are marked as preview versions
 - Can be installed alongside stable versions
 - Help test new features before stable release
 - Are not automatically updated for users on stable versions
@@ -198,17 +197,13 @@ Follow semantic versioning (MAJOR.MINOR.PATCH):
 - MINOR: New features (backward compatible)
 - PATCH: Bug fixes (backward compatible)
 
-Pre-release tags:
-
-- `-alpha.N`: Early development versions
-- `-beta.N`: Feature complete, testing versions
-- `-rc.N`: Release candidates
-
-Example version sequence:
+Example version sequence with preview:
 
 ```
-1.2.0-alpha.1 -> 1.2.0-alpha.2 -> 1.2.0-beta.1 -> 1.2.0-rc.1 -> 1.2.0
+1.2.0 (preview: true) -> 1.2.0 (preview: false)
 ```
+
+For preview releases, we use the preview flag in package.json instead of version suffixes.
 
 ## License
 
