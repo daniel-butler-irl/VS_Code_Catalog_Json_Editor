@@ -198,4 +198,13 @@ export class CacheService {
             this.logger.warn('CacheService context is not set. Cannot invalidate cache entries by prefix.');
         }
     }
+
+    /**
+     * Deletes a value from the cache
+     * @param key The key to delete
+     */
+    public delete(key: string): void {
+        this.logger.debug(`Deleting cache key: ${key}`);
+        this.cache.delete(key);
+    }
 }

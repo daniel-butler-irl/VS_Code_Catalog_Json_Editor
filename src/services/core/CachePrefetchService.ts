@@ -93,7 +93,7 @@ export class CachePrefetchService {
         this.logger.debug('Starting catalog JSON analysis for dependencies');
 
         const extractDependencies = (obj: unknown): void => {
-            if (!obj || typeof obj !== 'object') return;
+            if (!obj || typeof obj !== 'object') { return; }
 
             if (Array.isArray(obj)) {
                 obj.forEach(item => extractDependencies(item));
@@ -194,28 +194,49 @@ export class CachePrefetchService {
     ): Promise<void> {
         this.logger.debug(`Initiating prefetch for ${catalogDependencies.size} catalogs with dependencies`);
 
-        // Process catalogs in parallel, but wait for all to complete before moving to offerings
-        const catalogResults = await Promise.all(
-            Array.from(catalogDependencies.entries()).map(async ([catalogId, { offerings }]) => {
-                try {
-                    this.logger.debug(`Processing catalog ${catalogId} with ${offerings.size} offerings`);
-                    const catalogExists = await this.prefetchCatalogIfExists(catalogId);
-                    return { catalogId, offerings, exists: catalogExists };
-                } catch (error) {
-                    this.logger.error(`Error prefetching catalog ${catalogId}`, error);
-                    return { catalogId, offerings, exists: false };
-                }
-            })
-        );
+        // Process catalogs in parallel with concurrency limit
+        const concurrencyLimit = 3; // Process 3 catalogs at a time
+        const catalogEntries = Array.from(catalogDependencies.entries());
+        const results: { catalogId: string; offerings: Map<string, { flavors: Set<string> }>; exists: boolean }[] = [];
 
-        // Filter to valid catalogs and process their offerings in parallel
-        const validCatalogs = catalogResults.filter(result => result.exists);
-        if (validCatalogs.length > 0) {
-            await Promise.all(
-                validCatalogs.map(({ catalogId, offerings }) =>
-                    this.prefetchOfferingsForCatalog(catalogId, offerings)
-                )
+        for (let i = 0; i < catalogEntries.length; i += concurrencyLimit) {
+            const batch = catalogEntries.slice(i, i + concurrencyLimit);
+            const batchResults = await Promise.all(
+                batch.map(async ([catalogId, { offerings }]) => {
+                    try {
+                        this.logger.debug(`Processing catalog ${catalogId} with ${offerings.size} offerings`);
+                        const catalogExists = await this.prefetchCatalogIfExists(catalogId);
+                        return { catalogId, offerings, exists: catalogExists };
+                    } catch (error) {
+                        this.logger.error(`Error prefetching catalog ${catalogId}`, error);
+                        return { catalogId, offerings, exists: false };
+                    }
+                })
             );
+            results.push(...batchResults);
+
+            // Add a small delay between batches to prevent overwhelming the API
+            if (i + concurrencyLimit < catalogEntries.length) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+
+        // Filter to valid catalogs and process their offerings with concurrency limit
+        const validCatalogs = results.filter(result => result.exists);
+        if (validCatalogs.length > 0) {
+            for (let i = 0; i < validCatalogs.length; i += concurrencyLimit) {
+                const batch = validCatalogs.slice(i, i + concurrencyLimit);
+                await Promise.all(
+                    batch.map(({ catalogId, offerings }) =>
+                        this.prefetchOfferingsForCatalog(catalogId, offerings)
+                    )
+                );
+
+                // Add a small delay between batches
+                if (i + concurrencyLimit < validCatalogs.length) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            }
         }
 
         this.logger.debug('Completed prefetch initiation for all catalogs with dependencies');

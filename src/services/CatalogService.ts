@@ -2885,4 +2885,60 @@ export class CatalogService {
             item.requestValidation();
         }
     }
+
+    /**
+     * Validates a node in the catalog tree.
+     * @param node The node to validate.
+     * @returns A promise that resolves to true if the validation was successful, false otherwise.
+     */
+    public async validateNode(node: CatalogTreeItem): Promise<boolean> {
+        try {
+            await this.ensureInitialized();
+
+            if (node.label === 'catalog_id' && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                return await ibmCloudService.validateCatalogId(node.value);
+            }
+
+            if (node.isOfferingIdInDependency() && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                const catalogId = await this.getCatalogIdForNode(node);
+                if (!catalogId) {
+                    return false;
+                }
+                return await ibmCloudService.validateOfferingId(catalogId, node.value);
+            }
+
+            if (node.isDependencyFlavor() && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                const dependencyNode = node.parent?.parent;
+                if (!dependencyNode) {
+                    return false;
+                }
+                const catalogId = (dependencyNode.value as Record<string, any>)['catalog_id'];
+                const offeringId = (dependencyNode.value as Record<string, any>)['id'];
+                if (!catalogId || !offeringId) {
+                    return false;
+                }
+                return await ibmCloudService.validateFlavor(catalogId, offeringId, node.value);
+            }
+
+            return true;
+        } catch (error) {
+            this.logger.error('Error validating node', error);
+            return false;
+        }
+    }
 }

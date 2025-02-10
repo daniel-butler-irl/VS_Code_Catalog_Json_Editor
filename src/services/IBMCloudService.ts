@@ -53,6 +53,7 @@ export class IBMCloudService {
     private backgroundCacheQueue: Set<string> = new Set();
     private isProcessingQueue: boolean = false;
     private readonly apiUrl = 'https://cm.globalcatalog.cloud.ibm.com/api/v1-beta';
+    private readonly CACHE_DURATION_MS = 6 * 60 * 60 * 1000; // 6 hours
 
     /**
      * Constructor for IBMCloudService.
@@ -71,11 +72,13 @@ export class IBMCloudService {
      * Provides visual feedback in VS Code for long-running tasks.
      * @param title - Title of the progress bar.
      * @param task - Task function returning a Promise.
+     * @param retryCount - Number of retry attempts.
      * @returns Promise<T> - Result of the task.
      */
     private async withProgress<T>(
         title: string,
-        task: () => Promise<T>
+        task: () => Promise<T>,
+        retryCount: number = 3
     ): Promise<T> {
         return vscode.window.withProgress(
             {
@@ -84,19 +87,33 @@ export class IBMCloudService {
                 cancellable: false,
             },
             async (progress) => {
-                progress.report({ message: `In Progress` });
+                let lastError: Error | undefined;
 
-                try {
-                    const result = await task();
-                    progress.report({ message: `Complete` });
-                    await this.delay(500);
-                    return result;
-                } catch (error) {
-                    progress.report({ message: `Failed` });
-                    await this.delay(1000);
-                    vscode.window.showErrorMessage(`Task failed: ${this.extractErrorMessage(error)}`);
-                    throw error;
+                for (let attempt = 1; attempt <= retryCount; attempt++) {
+                    try {
+                        progress.report({ message: `In Progress${attempt > 1 ? ` (Attempt ${attempt}/${retryCount})` : ''}` });
+
+                        const result = await task();
+                        progress.report({ message: `Complete` });
+                        await this.delay(500);
+                        return result;
+                    } catch (error) {
+                        lastError = error instanceof Error ? error : new Error(String(error));
+
+                        if (attempt < retryCount) {
+                            this.logger.warn(`Attempt ${attempt} failed, retrying...`, { error: lastError });
+                            progress.report({ message: `Retrying...` });
+                            await this.delay(1000 * attempt); // Exponential backoff
+                        } else {
+                            progress.report({ message: `Failed` });
+                            await this.delay(1000);
+                            vscode.window.showErrorMessage(`Task failed after ${retryCount} attempts: ${this.extractErrorMessage(lastError)}`);
+                            throw lastError;
+                        }
+                    }
                 }
+
+                throw lastError || new Error('Task failed');
             }
         );
     }
@@ -106,8 +123,17 @@ export class IBMCloudService {
      * @param error - Error object.
      * @returns string - Error message.
      */
-    private extractErrorMessage(error: any): string {
-        return error instanceof Error ? error.message : String(error);
+    private extractErrorMessage(error: unknown): string {
+        if (error instanceof Error) {
+            return error.message;
+        }
+        if (typeof error === 'string') {
+            return error;
+        }
+        if (error && typeof error === 'object' && 'message' in error) {
+            return String((error as { message: unknown }).message);
+        }
+        return 'An unknown error occurred';
     }
 
     /**
@@ -284,53 +310,51 @@ export class IBMCloudService {
             LoggingService.getInstance().debug('Duplicate offerings request detected', { key });
         },
     })
-    public async getOfferingsForCatalog(catalogId: string, skipCache = false): Promise<OfferingItem[]> {
-        const cacheKey = DynamicCacheKeys.OFFERINGS(catalogId);
-        const logger = this.logger;
+    public async getOfferingsForCatalog(catalogId: string, skipCache: boolean = false): Promise<OfferingItem[]> {
+        this.logger.debug('Getting offerings for catalog', { catalogId, skipCache }, 'preRelease');
 
-        const cachedOfferings = this.cacheService.get<OfferingItem[]>(cacheKey);
-        if (!skipCache && Array.isArray(cachedOfferings)) {
-            logger.debug(`Using cached offerings for catalog ID: ${catalogId}`, { count: cachedOfferings.length });
-            return cachedOfferings;
+        const cacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
+
+        // If skipCache is true, delete the cache entry first
+        if (skipCache) {
+            this.logger.debug('Skipping cache, clearing existing data', { catalogId }, 'preRelease');
+            this.cacheService.delete(cacheKey);
         }
 
-        const PAGE_LIMIT = 1000;
-        let offset = 0;
-        let totalCount = 0;
-        let fetchedOfferings: OfferingItem[] = [];
-
-        logger.debug(`Starting to fetch offerings for catalog ID: ${catalogId}`);
+        // Try to get from cache first if not skipping cache
+        if (!skipCache) {
+            const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
+            if (cached) {
+                this.logger.debug('Returning cached offerings', { catalogId, count: cached.length }, 'preRelease');
+                return cached;
+            }
+        }
 
         try {
-            do {
-                logger.debug(`Fetching offerings with limit=${PAGE_LIMIT} and offset=${offset}`);
-                const response = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
-                    this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: PAGE_LIMIT, offset })
-                );
+            this.logger.debug('Fetching fresh offerings from API', { catalogId }, 'preRelease');
+            const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
+                this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
+            );
 
-                const resources = response.result.resources ?? [];
-                const offeringsPage: OfferingItem[] = resources.map((offering) => ({
-                    id: offering.id!,
-                    name: offering.name!,
-                    label: offering.label,
-                    shortDescription: offering.short_description,
-                    kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
-                    created: offering.created,
-                    updated: offering.updated,
-                    metadata: offering.metadata,
-                }));
+            const resources = offerings.result.resources ?? [];
+            const offeringsPage: OfferingItem[] = resources.map((offering) => ({
+                id: offering.id!,
+                name: offering.name!,
+                label: offering.label,
+                shortDescription: offering.short_description,
+                kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
+                created: offering.created,
+                updated: offering.updated,
+                metadata: offering.metadata,
+            }));
 
-                fetchedOfferings = fetchedOfferings.concat(offeringsPage);
-                offset += PAGE_LIMIT;
-                totalCount = response.result.total_count ?? fetchedOfferings.length;
-                await this.delay(200);
-            } while (fetchedOfferings.length < totalCount);
+            // Cache the result with TTL
+            this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
 
-            logger.debug(`Successfully fetched all offerings for catalog ID: ${catalogId}`, { total: fetchedOfferings.length });
-            this.cacheService.set(cacheKey, fetchedOfferings, CacheConfigurations[CacheKeys.OFFERING]);
-            return fetchedOfferings;
+            this.logger.debug('Successfully fetched offerings', { catalogId, count: offeringsPage.length }, 'preRelease');
+            return offeringsPage;
         } catch (error) {
-            logger.error(`Failed to fetch offerings for catalog ID: ${catalogId}`, error);
+            this.logger.error('Failed to get offerings', { error, catalogId }, 'preRelease');
             throw error;
         }
     }
@@ -799,5 +823,23 @@ export class IBMCloudService {
             this.logger.error('Failed to get IBM Cloud auth token', { error });
             return undefined;
         }
+    }
+
+    /**
+     * Clears the catalog cache
+     */
+    public async clearCatalogCache(): Promise<void> {
+        this.logger.debug('Clearing catalog cache');
+        this.cacheService.delete(CacheKeys.CATALOG);
+    }
+
+    /**
+     * Clears the offering cache for a specific catalog
+     * @param catalogId The catalog ID to clear cache for
+     */
+    public async clearOfferingCache(catalogId: string): Promise<void> {
+        this.logger.debug('Clearing offering cache', { catalogId });
+        const cacheKey = DynamicCacheKeys.OFFERINGS(catalogId);
+        this.cacheService.delete(cacheKey);
     }
 }

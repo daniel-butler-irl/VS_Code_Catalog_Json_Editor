@@ -14,6 +14,7 @@ import { CacheService } from './services/CacheService';
 import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
 import { PreReleaseWebview } from './webview/PreReleaseWebview';
+import { AuthenticationSession } from 'vscode';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
@@ -255,9 +256,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 }
             }),
             vscode.commands.registerCommand('ibmCatalog.login', async () => {
-                await AuthService.promptForApiKey(context);
-                await updateStatusBar();
-                treeProvider.refresh();
+                const logger = LoggingService.getInstance();
+                try {
+                    logger.info('Starting IBM Cloud login process');
+
+                    // Try to login first before updating UI state
+                    await AuthService.login(context);
+
+                    // Verify we actually have an API key after login
+                    const apiKey = await AuthService.getApiKey(context);
+                    if (apiKey) {
+                        // Only update UI state after confirming we have an API key
+                        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', true);
+                        await updateLoginStates(context);
+                        logger.info('IBM Cloud login completed successfully');
+                        vscode.window.showInformationMessage('Successfully logged in to IBM Cloud');
+                    } else {
+                        logger.debug('Login completed but no API key found');
+                        throw new Error('Login completed but no API key was saved');
+                    }
+                } catch (error) {
+                    logger.error('Failed to login to IBM Cloud', { error });
+                    // Don't update UI state on failure - keep previous state
+                    vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
             }),
             vscode.commands.registerCommand('ibmCatalog.selectElement', async (item: CatalogTreeItem) => {
                 const catalogFilePath = catalogService.getCatalogFilePath();
@@ -282,10 +304,131 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 });
             }),
             vscode.commands.registerCommand('ibmCatalog.logout', async () => {
-                await AuthService.clearApiKey(context);
-                vscode.window.showInformationMessage('Logged out of IBM Cloud.');
-                await updateStatusBar();
-                treeProvider.refresh();
+                const logger = LoggingService.getInstance();
+                try {
+                    logger.info('Starting IBM Cloud logout process');
+
+                    // Check if we're actually logged in first
+                    const currentApiKey = await AuthService.getApiKey(context);
+                    if (currentApiKey) {
+                        logger.debug('Found active IBM Cloud session');
+                        try {
+                            // Try to logout
+                            await AuthService.logout(context);
+
+                            // Verify the API key was actually cleared
+                            const apiKeyAfterLogout = await AuthService.getApiKey(context);
+                            if (!apiKeyAfterLogout) {
+                                // Only update UI state after confirming logout was successful
+                                await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+                                await updateLoginStates(context);
+                                logger.info('IBM Cloud logout completed successfully');
+                                vscode.window.showInformationMessage('Successfully logged out from IBM Cloud');
+                            } else {
+                                logger.error('Logout failed - API key still present');
+                                throw new Error('Failed to clear IBM Cloud credentials');
+                            }
+                        } catch (error) {
+                            logger.error('Failed to clear IBM Cloud session', { error });
+                            throw error; // Re-throw to be caught by outer catch
+                        }
+                    } else {
+                        logger.debug('No active IBM Cloud session found');
+                        // Update state to reflect no active session
+                        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+                        await updateLoginStates(context);
+                        vscode.window.showInformationMessage('No active IBM Cloud session to logout from');
+                    }
+                } catch (error) {
+                    logger.error('Failed to logout from IBM Cloud', { error });
+                    // Don't update the UI state on error - keep previous state
+                    vscode.window.showErrorMessage(`Failed to logout: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
+            }),
+            vscode.commands.registerCommand('ibmCatalog.loginGithub', async () => {
+                const logger = LoggingService.getInstance();
+                try {
+                    logger.info('Starting GitHub login process');
+
+                    // Try to get or create a session
+                    const session = await vscode.authentication.getSession('github', ['repo'], {
+                        createIfNone: true
+                    });
+
+                    if (session) {
+                        logger.debug('GitHub session created', { id: session.id });
+                        // First set the context directly for immediate UI update
+                        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', true);
+                        // Then update all states
+                        await updateLoginStates(context);
+                        logger.info('GitHub login completed successfully');
+                        vscode.window.showInformationMessage('Successfully logged in to GitHub');
+                    }
+                } catch (error) {
+                    logger.error('Failed to login to GitHub', { error });
+                    vscode.window.showErrorMessage(`Failed to login to GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    // Ensure UI state is updated even on failure
+                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+                    await updateLoginStates(context);
+                }
+            }),
+            vscode.commands.registerCommand('ibmCatalog.logoutGithub', async () => {
+                const logger = LoggingService.getInstance();
+                try {
+                    logger.info('Starting GitHub logout process');
+
+                    // Get current session first
+                    const session = await vscode.authentication.getSession('github', ['repo'], {
+                        createIfNone: false,
+                        silent: true // Don't show UI
+                    });
+
+                    if (session) {
+                        logger.debug('Found active GitHub session', { id: session.id });
+                        try {
+                            // First clear the session preference
+                            await vscode.authentication.getSession('github', ['repo'], {
+                                clearSessionPreference: true,
+                                createIfNone: false,
+                                silent: true
+                            });
+
+                            // Wait a bit for the session to clear
+                            await new Promise(resolve => setTimeout(resolve, 100));
+
+                            // Verify session is actually cleared
+                            const checkSession = await vscode.authentication.getSession('github', ['repo'], {
+                                createIfNone: false,
+                                silent: true
+                            });
+
+                            if (!checkSession) {
+                                logger.debug('Successfully cleared GitHub session');
+                                // Only update UI state after confirming session is cleared
+                                await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+                                await updateLoginStates(context);
+                                logger.info('GitHub logout completed successfully');
+                                vscode.window.showInformationMessage('Successfully logged out from GitHub');
+                            } else {
+                                logger.error('Failed to clear GitHub session - session still exists');
+                                throw new Error('Failed to clear GitHub session');
+                            }
+                        } catch (error) {
+                            logger.error('Failed to clear GitHub session', { error, sessionId: session.id });
+                            throw error; // Re-throw to be caught by outer catch
+                        }
+                    } else {
+                        logger.debug('No active GitHub session found');
+                        // Update state to reflect no active session
+                        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+                        await updateLoginStates(context);
+                        vscode.window.showInformationMessage('No active GitHub session to logout from');
+                    }
+                } catch (error) {
+                    logger.error('Failed to logout from GitHub', { error });
+                    // Don't update the UI state on error - keep previous state
+                    vscode.window.showErrorMessage(`Failed to logout from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
             }),
             vscode.commands.registerCommand('ibmCatalog.locateCatalogFile', async () => {
                 const files = await vscode.workspace.findFiles('**/ibm_catalog.json', '**/node_modules/**');
@@ -471,6 +614,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview)
         );
 
+        // Set initial login states
+        await updateLoginStates(context);
+
+        // Watch for authentication changes
+        context.subscriptions.push(
+            vscode.authentication.onDidChangeSessions(async e => {
+                if (e.provider.id === 'github') {
+                    await updateLoginStates(context);
+                }
+            })
+        );
+
         logger.info('IBM Catalog Extension activated successfully');
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -480,4 +635,55 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
     LoggingService.getInstance().info('Deactivating IBM Catalog Extension');
+}
+
+// Add new function to manage login states
+async function updateLoginStates(context: vscode.ExtensionContext): Promise<void> {
+    const logger = LoggingService.getInstance();
+    try {
+        logger.debug('Starting login state update');
+
+        // Check IBM Cloud login status
+        const apiKey = await AuthService.getApiKey(context);
+        const isLoggedIn = Boolean(apiKey);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
+        logger.debug('Updated IBM Cloud login state', { isLoggedIn });
+
+        // Check GitHub login status
+        let isGithubLoggedIn = false;
+        try {
+            const session = await vscode.authentication.getSession('github', ['repo'], {
+                createIfNone: false,
+                silent: true  // Don't show any UI
+            });
+            isGithubLoggedIn = Boolean(session);
+            logger.debug('Checked GitHub session', {
+                hasSession: Boolean(session),
+                sessionId: session?.id
+            });
+        } catch (error) {
+            logger.debug('No GitHub session found or error checking session', { error });
+            isGithubLoggedIn = false;
+        }
+
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', isGithubLoggedIn);
+        logger.debug('Updated GitHub login state', { isGithubLoggedIn });
+
+        // Log state changes for debugging
+        logger.info('Authentication states updated', {
+            isIBMCloudLoggedIn: isLoggedIn,
+            isGithubLoggedIn
+        });
+
+        // Force a UI refresh
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.forceRefresh', Date.now());
+        logger.debug('Forced UI refresh');
+    } catch (error) {
+        logger.error('Failed to update login states', { error });
+        // Set both states to false on error
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+        // Force a UI refresh
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.forceRefresh', Date.now());
+    }
 }
