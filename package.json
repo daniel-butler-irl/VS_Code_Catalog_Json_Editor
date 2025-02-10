@@ -335,7 +335,7 @@
     "watch": "tsc -watch -p ./tsconfig.json",
     "pretest": "npm run compile && npm run compile:tests",
     "lint": "eslint . --config eslint.config.mjs",
-    "test": "node ./out/test/runTest.js",
+    "test": "node --force-node-api-uncaught-exceptions-policy=true --unhandled-rejections=strict ./out/test/runTest.js",
     "vscode:prepublish": "node esbuild.mjs --production",
     "esbuild-base": "node esbuild.mjs",
     "esbuild": "node esbuild.mjs",

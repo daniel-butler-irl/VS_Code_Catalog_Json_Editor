@@ -3,9 +3,43 @@ import { runTests } from '@vscode/test-electron';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 
-async function main() {
+/**
+ * Cleanup function to handle process termination
+ */
+function setupCleanup() {
+  // Handle normal exits
+  process.on('exit', () => {
+    cleanup();
+  });
+
+  // Handle CTRL+C
+  process.on('SIGINT', () => {
+    console.log('\nCaught interrupt signal');
+    cleanup();
+    process.exit(0);
+  });
+
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    cleanup();
+    process.exit(1);
+  });
+
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    cleanup();
+    process.exit(1);
+  });
+}
+
+/**
+ * Cleanup function to remove temporary files and processes
+ */
+function cleanup() {
   try {
-    // Kill any existing VS Code instances
+    // Kill any remaining VS Code processes
     try {
       execSync('taskkill /F /IM Code.exe 2>nul');
       execSync('taskkill /F /IM "Code - Insiders.exe" 2>nul');
@@ -21,6 +55,18 @@ async function main() {
         fs.rmSync(dirPath, { recursive: true, force: true });
       }
     }
+  } catch (err) {
+    console.error('Error during cleanup:', err);
+  }
+}
+
+async function main() {
+  try {
+    // Set up cleanup handlers
+    setupCleanup();
+
+    // Clean up before starting
+    cleanup();
 
     // The folder containing the Extension Manifest package.json
     const extensionDevelopmentPath = path.resolve(__dirname, '../../');
@@ -62,7 +108,9 @@ async function main() {
   }
 }
 
+// Handle errors in the main process
 main().catch(err => {
   console.error('Failed to run tests:', err);
+  cleanup();
   process.exit(1);
 }); 
