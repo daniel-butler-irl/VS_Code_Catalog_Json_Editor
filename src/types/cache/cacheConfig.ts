@@ -14,7 +14,8 @@ export enum CacheKeys {
     FLAVOR_VALIDATION = 'flavorValidation',
     OFFERING_VALIDATION = 'offeringValidation',
     OFFERING_DETAILS = 'offeringDetails',
-    API_RESPONSE = 'apiResponse'
+    API_RESPONSE = 'apiResponse',
+    CATALOG_OFFERINGS = 'CATALOG_OFFERINGS'
 }
 
 /**
@@ -88,6 +89,11 @@ export const CacheConfigurations: Record<CacheKeys, CacheConfig> = {
         ttlSeconds: 12 * 60 * 60, // 12 hours
         persistent: true,
         storagePrefix: 'catalog_validation_'
+    },
+    [CacheKeys.CATALOG_OFFERINGS]: {
+        ttlSeconds: 21600000, // 6 hours
+        persistent: true,
+        storagePrefix: 'catalog_offerings_cache_'
     }
 };
 
@@ -102,6 +108,13 @@ export const DynamicCacheKeys = {
      * @returns The cache key for the offerings of the specified catalog.
      */
     OFFERINGS: (catalogId: string) => `offerings:${catalogId}`,
+
+    /**
+     * Generates a key for caching catalog offerings.
+     * @param catalogId - The ID of the catalog.
+     * @returns The cache key for the catalog offerings.
+     */
+    CATALOG_OFFERINGS: (catalogId: string) => `${CacheKeys.CATALOG_OFFERINGS}:${catalogId}`,
 
     /**
      * Generates a key for caching flavors of a specific offering in a catalog.
