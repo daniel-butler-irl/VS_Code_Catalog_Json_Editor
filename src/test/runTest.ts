@@ -40,7 +40,7 @@ async function main() {
       fs.mkdirSync(testResultsPath, { recursive: true });
     }
 
-    // Run the tests
+    // Download VS Code, unzip it and run the integration test
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath,
@@ -48,20 +48,13 @@ async function main() {
         testWorkspacePath,
         '--disable-extensions',
         '--disable-gpu',
-        '--no-sandbox',
         '--disable-updates',
         '--skip-welcome',
         '--skip-release-notes',
         '--disable-telemetry',
         '--disable-workspace-trust',
         '--user-data-dir=.vscode-test/user-data'
-      ],
-      extensionTestsEnv: {
-        VSCODE_DEBUG_MODE: 'true',
-        NODE_ENV: 'test',
-        FORCE_COLOR: '1',
-        NODE_OPTIONS: '--force-node-api-uncaught-exceptions-policy=true'
-      }
+      ]
     });
   } catch (err) {
     console.error('Failed to run tests:', err);
@@ -69,4 +62,7 @@ async function main() {
   }
 }
 
-main(); 
+main().catch(err => {
+  console.error('Failed to run tests:', err);
+  process.exit(1);
+}); 

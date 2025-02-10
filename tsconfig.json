@@ -8,15 +8,18 @@
     "skipLibCheck": true,/* Skip type checking of declaration files to avoid lru-cache issues */
     "forceConsistentCasingInFileNames": true,
     "outDir": "out",
-    "rootDir": ".",
+    "rootDir": "src",
+    "sourceMap": true,
     "types": ["node", "vscode"],
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
   },
-  "exclude": ["node_modules", ".vscode-test"],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "out"
+  ],
   "include": [
-    "src/**/*.ts",
-    "src/test/**/*.ts",
-    "src/test/suite/**/*.ts"
+    "src/**/*"
   ]
 }

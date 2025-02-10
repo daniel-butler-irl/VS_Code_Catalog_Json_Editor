@@ -7,74 +7,108 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const baseConfig = {
-  entryPoints: ['./src/extension.ts'],
-  bundle: true,
-  external: [
-    'vscode',
-    '@ibm-cloud/platform-services',
-    'ibm-cloud-sdk-core',
-    'jsonc-parser',
-    'semver'
-  ],
-  format: 'cjs',
-  platform: 'node',
-  target: ['node16'],
-  outfile: 'dist/extension.js',
-  sourcemap: true,
-  sourcesContent: false,
-  loader: {
-    '.json': 'json'
-  },
-  mainFields: ['module', 'main'],
-  metafile: true,
-  define: {
-    'process.env.NODE_ENV': '"production"'
-  }
+const production = process.argv.includes('--production');
+const watch = process.argv.includes('--watch');
+const test = process.argv.includes('--test');
+const sourcemap = !production;
+
+/**
+ * @type {import('esbuild').Plugin}
+ */
+const esbuildProblemMatcherPlugin = {
+    name: 'esbuild-problem-matcher',
+    setup(build) {
+        build.onStart(() => {
+            console.log('[watch] build started');
+        });
+        build.onEnd((result) => {
+            result.errors.forEach(({ text, location }) => {
+                console.error(`✘ [ERROR] ${text}`);
+                console.error(`    ${location.file}:${location.line}:${location.column}:`);
+            });
+            console.log('[watch] build finished');
+        });
+    },
 };
 
-const watch = process.argv.includes('--watch');
-const minify = process.argv.includes('--minify');
+const baseConfig = {
+    bundle: true,
+    format: 'cjs',
+    minify: production,
+    sourcemap,
+    sourcesContent: sourcemap,
+    platform: 'node',
+    logLevel: 'silent',
+    plugins: [esbuildProblemMatcherPlugin],
+    define: {
+        'process.env.NODE_ENV': production ? '"production"' : '"development"'
+    }
+};
 
-async function copyMediaFiles() {
-  try {
-    await copy('media', 'dist/media');
-    console.log('Media files copied successfully');
-  } catch (err) {
-    console.error('Error copying media files:', err);
-  }
+async function copyAssets() {
+    try {
+        // Only copy assets for main extension build
+        if (!test) {
+            await copy('media', 'dist/media', { overwrite: true }).catch(() => {});
+            await copy('schemas', 'dist/schemas', { overwrite: true }).catch(() => {});
+            console.log('Assets copied successfully');
+        }
+    } catch (err) {
+        console.error('Warning: Error copying assets:', err);
+        // Don't throw - allow build to continue even if assets are missing
+    }
 }
 
 async function buildExtension() {
-  try {
-    // Ensure dist directory exists and is clean
-    await copy('media', 'dist/media', { overwrite: true });
-    
-    if (watch) {
-      const ctx = await esbuild.context({
-        ...baseConfig,
-        minify
-      });
-      
-      await ctx.watch();
-      console.log('Watching for changes...');
-    } else {
-      const result = await esbuild.build({
-        ...baseConfig,
-        minify
-      });
-      
-      if (result.metafile) {
-        console.log('Build completed successfully');
-        // Optionally analyze the build
-        const text = await esbuild.analyzeMetafile(result.metafile);
-        console.log(text);
-      }
+    try {
+        await copyAssets();
+
+        let configs = [];
+
+        // Main extension build
+        if (!test) {
+            configs.push({
+                ...baseConfig,
+                entryPoints: ['src/extension.ts'],
+                outfile: 'dist/extension.js',
+                external: [
+                    'vscode',
+                    'jsonc-parser',
+                    '@ibm-cloud/platform-services',
+                    'ibm-cloud-sdk-core',
+                    'semver'
+                ],
+            });
+        }
+
+        // Test build
+        if (test) {
+            configs.push({
+                ...baseConfig,
+                entryPoints: ['src/test/runTest.ts'],
+                outfile: 'out/test/runTest.js',
+                external: ['vscode', 'mocha', 'jsonc-parser', 'chai', 'sinon'],
+            });
+        }
+
+        for (const config of configs) {
+            const ctx = await esbuild.context(config);
+            if (watch) {
+                await ctx.watch();
+                console.log(`Watching ${config.entryPoints[0]}...`);
+            } else {
+                const result = await ctx.rebuild();
+                if (result.metafile) {
+                    const text = await esbuild.analyzeMetafile(result.metafile);
+                    console.log(text);
+                }
+                await ctx.dispose();
+            }
+        }
+    } catch (err) {
+        console.error('Build failed:', err);
+        process.exit(1);
     }
-  } catch (err) {
-    console.error('Build failed:', err);
-    process.exit(1);
-  }
 }
 
 buildExtension(); 

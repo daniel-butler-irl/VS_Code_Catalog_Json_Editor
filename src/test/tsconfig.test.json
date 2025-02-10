@@ -1,12 +1,11 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "outDir": "../../out",
-    "rootDir": "../..",
+    "outDir": "../../out/test",
+    "rootDir": "..",
     "types": ["node", "vscode", "mocha"]
   },
   "include": [
-    "**/*.ts",
-    "../**/*.ts"
+    "**/*.ts"
   ]
 } 
