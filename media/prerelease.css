@@ -19,14 +19,18 @@ body {
 }
 
 .container {
-    max-width: 800px;
+    min-width: 200px;
+    max-width: 400px;
+    width: 100%;
     margin: 0 auto;
     padding: 16px 0;
+    overflow-x: auto;
 }
 
 .section {
+    min-width: 190px;
     margin-bottom: 24px;
-    padding: 16px;
+    padding: 12px;
     background-color: var(--vscode-sideBar-background, var(--vscode-editor-background));
     border: 1px solid var(--vscode-panel-border);
     border-radius: var(--border-radius);
@@ -50,7 +54,7 @@ h2 {
 }
 
 .form-group {
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 
 label {
@@ -64,17 +68,17 @@ label {
 
 input[type="text"], select {
     width: 100%;
-    max-width: 300px;
-    height: 28px;
-    padding: 0 10px;
-    margin: var(--input-margin-vertical) var(--input-margin-horizontal);
+    height: 24px;
+    padding: 0 8px;
+    margin: 2px 0;
+    font-size: 0.9em;
+    box-sizing: border-box;
     border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
     background-color: var(--vscode-dropdown-background, var(--vscode-input-background));
     color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
     outline: none;
     border-radius: var(--border-radius);
     font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
     transition: border-color var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
 }
 
@@ -302,13 +306,23 @@ button:hover {
     padding: 16px;
     font-size: 0.9em;
     opacity: 0.8;
-    animation: pulse 1.5s ease-in-out infinite;
+    font-style: italic;
+    position: relative;
+    padding-right: 24px;
 }
 
-@keyframes pulse {
-    0% { opacity: 0.6; }
-    50% { opacity: 0.9; }
-    100% { opacity: 0.6; }
+.loading::after {
+    content: "...";
+    position: absolute;
+    right: 8px;
+    animation: loadingDots 1.5s infinite;
+}
+
+@keyframes loadingDots {
+    0% { content: "."; }
+    33% { content: ".."; }
+    66% { content: "..."; }
+    100% { content: "."; }
 }
 
 .has-error {
@@ -406,10 +420,9 @@ select:disabled {
 }
 
 @keyframes ellipsis {
-    0% { content: "."; }
-    33% { content: ".."; }
-    66% { content: "..."; }
-    100% { content: "."; }
+    0% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+    100% { opacity: 0.6; }
 }
 
 .versions-table {
@@ -601,6 +614,7 @@ button.danger-button:hover:not(:disabled) {
 }
 
 .terminal-section {
+    min-width: 230px;
     margin: 16px 0;
     padding: 12px;
     background-color: var(--vscode-editor-background);
@@ -634,16 +648,19 @@ button.danger-button:hover:not(:disabled) {
 }
 
 .version-table {
+    min-width: 210px;
     width: 100%;
-    border-collapse: collapse;
-    margin: 8px 0;
-    font-family: var(--vscode-editor-font-family);
+    table-layout: fixed;
 }
 
 .version-table th,
 .version-table td {
+    width: 50%;
     padding: 4px 8px;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .version-table th {
@@ -693,6 +710,31 @@ button.danger-button:hover:not(:disabled) {
     cursor: not-allowed;
 }
 
+.release-button.loading {
+    position: relative;
+    padding-right: 32px;
+    cursor: wait;
+}
+
+.release-button.loading::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--vscode-button-foreground);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: translateY(-50%) rotate(0deg); }
+    to { transform: translateY(-50%) rotate(360deg); }
+}
+
 .catalog-select {
     width: 100%;
     max-width: none;
@@ -707,13 +749,14 @@ button.danger-button:hover:not(:disabled) {
 
 .form-row {
     display: flex;
-    gap: 12px;
+    flex-direction: column;
+    gap: 8px;
     margin-bottom: 8px;
 }
 
 .form-row .form-group {
-    flex: 1;
-    min-width: 0; /* Prevents flex items from overflowing */
+    min-width: 0;
+    width: 100%;
 }
 
 .form-group {
@@ -730,18 +773,6 @@ button.danger-button:hover:not(:disabled) {
     margin-top: 2px;
     font-size: 0.8em;
     opacity: 0.7;
-}
-
-input[type="text"], select {
-    width: 100%;
-    height: 24px;
-    padding: 0 8px;
-    margin: 2px 0;
-    font-size: 0.9em;
-}
-
-select {
-    padding-right: 24px; /* Space for the dropdown arrow */
 }
 
 /* Ensure long text in inputs and selects doesn't overflow */
@@ -768,4 +799,219 @@ input[type="text"], select, option {
 .catalog-quick-info div {
     margin: 2px 0;
     font-size: 0.9em;
+}
+
+/* Remove version date styles since we no longer use them */
+.version-date {
+    display: none;
+}
+
+.loading-state {
+    position: relative;
+    opacity: 0.7;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.loading-state::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--vscode-editor-background);
+    opacity: 0.3;
+    z-index: 1;
+    transition: opacity 0.3s ease;
+}
+
+.loading-text {
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.8;
+    font-style: italic;
+    position: relative;
+    padding-right: 24px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+    100% { opacity: 0.6; }
+}
+
+.loading-text::after {
+    content: "...";
+    position: absolute;
+    right: 8px;
+    animation: loadingDots 1.5s infinite steps(4, end);
+}
+
+@keyframes loadingDots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+    100% { content: ""; }
+}
+
+input[type="text"]:disabled::placeholder,
+select:disabled {
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.7;
+}
+
+.refresh-button {
+    position: relative;
+    margin-top: 8px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    background-color: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+    color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+    border: 1px solid var(--vscode-button-border, transparent);
+    transition: all 0.3s ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    transform: translateY(-1px);
+}
+
+.refresh-button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.refresh-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.refresh-button.refreshing {
+    position: relative;
+    padding-right: 24px;
+}
+
+.refresh-button.refreshing::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--vscode-button-foreground);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.loading-state {
+    opacity: 0.7;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.loading-state.loaded {
+    opacity: 1;
+}
+
+.loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    color: var(--vscode-foreground);
+    font-style: italic;
+}
+
+.error-container {
+    display: none;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 3px;
+    background-color: var(--vscode-inputValidation-errorBackground);
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
+}
+
+.error-container.visible {
+    display: block;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Add smooth transitions for inputs and selects */
+input, select {
+    transition: opacity 0.3s ease-in-out, background-color 0.3s ease-in-out;
+}
+
+input:disabled, select:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Add loading indicator for catalog details */
+#catalogDetails .loading::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: 8px;
+    border: 2px solid var(--vscode-foreground);
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.timestamp-info {
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+    margin: 8px 0;
+    padding: 4px 0;
+    opacity: 0.8;
+    font-style: italic;
+    cursor: help;
+    transition: opacity 0.3s ease;
+}
+
+.timestamp-info:hover {
+    opacity: 1;
+}
+
+/* Update refresh button styles to work with timestamp */
+.refresh-button {
+    margin-top: 4px;
+}
+
+/* Add styles for the cache indicator */
+.timestamp-info.cached {
+    color: var(--vscode-notificationsWarningIcon-foreground);
+}
+
+/* Adjust catalog select container spacing */
+.form-group {
+    margin-bottom: 4px;
 } 
