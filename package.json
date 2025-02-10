@@ -21,7 +21,9 @@
   "activationEvents": [
     "workspaceContains:**/ibm_catalog.json",
     "onCommand:ibmCatalog.openPreReleasePanel",
-    "onCommand:ibmCatalog.createPreRelease"
+    "onCommand:ibmCatalog.createPreRelease",
+    "onCommand:ibmCatalog.login",
+    "onCommand:ibmCatalog.loginGithub"
   ],
   "contributes": {
     "configuration": {
@@ -29,7 +31,7 @@
       "properties": {
         "ibmCatalog.enableDebugLogging": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable debug level logging for the IBM Catalog extension"
         }
       }
@@ -331,17 +333,17 @@
     "vscode:prepublish": "npm run package",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
-    "lint": "eslint src/**/*.ts",
-    "test": "node ./out/src/test/runTest.js",
-    "test:unit": "node ./out/src/test/runTest.js \"**/*.test.js\"",
-    "test:perf": "node ./out/src/test/runTest.js \"**/*.perf.test.js\"",
-    "test:all": "node ./out/src/test/runTest.js \"**/*.{test,perf.test}.js\"",
-    "test:auth": "node ./out/src/test/runTest.js \"**/authentication.test.js\"",
-    "package": "webpack --mode production --devtool hidden-source-map",
-    "compile-tests": "tsc -p ./src/test/tsconfig.test.json",
-    "watch-tests": "tsc -p ./src/test/tsconfig.test.json -w",
-    "clean": "rimraf dist out test-workspace .vscode-test"
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean",
+    "package": "node esbuild.mjs --minify",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "build": "npm run clean && npm run compile && npm run package",
+    "dev": "node esbuild.mjs",
+    "watch-esbuild": "node esbuild.mjs --watch"
   },
   "devDependencies": {
     "@types/chai": "^5.0.1",
@@ -349,10 +351,10 @@
     "@types/glob": "^8.1.0",
     "@types/lodash": "^4.17.12",
     "@types/mocha": "^10.0.9",
-    "@types/node": "^18.19.0",
+    "@types/node": "^18.19.75",
     "@types/sinon": "^17.0.3",
     "@types/source-map-support": "^0.5.10",
-    "@types/vscode": "^1.87.0",
+    "@types/vscode": "^1.97.0",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
     "@vscode/test-cli": "^0.0.10",
@@ -370,12 +372,13 @@
     "sinon": "^19.0.2",
     "source-map-support": "^0.5.21",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.2"
+    "typescript": "^5.7.3"
   },
   "dependencies": {
     "@ibm-cloud/platform-services": "^0.67.0",
-    "@octokit/plugin-rest-endpoint-methods": "^13.3.0",
-    "@octokit/rest": "^21.1.0",
+    "@octokit/core": "^5.1.0",
+    "@octokit/plugin-rest-endpoint-methods": "^10.2.0",
+    "@octokit/rest": "^20.0.2",
     "ibm-cloud-sdk-core": "^5.1.0",
     "jsonc-parser": "^3.3.1",
     "semver": "^7.5.4"
