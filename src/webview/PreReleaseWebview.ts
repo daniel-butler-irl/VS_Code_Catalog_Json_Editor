@@ -368,11 +368,14 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                         </div>
                     </div>
                     <div class="button-container">
-                        <button id="githubBtn" class="github-button" disabled title="Login to GitHub to create releases">
-                            Pre-Release GitHub
+                        <button id="githubBtn" class="action-button" disabled>
+                            Create GitHub Release
                         </button>
-                        <button id="catalogBtn" class="catalog-button" disabled title="Login to IBM Cloud to publish to catalog">
-                            Pre-Release Catalog
+                        <button id="catalogBtn" class="action-button" disabled>
+                            Import to Catalog
+                        </button>
+                        <button id="getLatestBtn" class="action-button">
+                            Get Latest Releases
                         </button>
                     </div>
                 </div>

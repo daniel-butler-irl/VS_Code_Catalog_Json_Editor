@@ -33,6 +33,7 @@
     const catalogBtn = /** @type {HTMLButtonElement} */ (document.getElementById('catalogBtn'));
     const catalogDetailsDiv = document.getElementById('catalogDetails');
     const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
+    const getLatestBtn = /** @type {HTMLButtonElement} */ (document.getElementById('getLatestBtn'));
 
     // Initial state setup
     function initializeUI() {
@@ -139,6 +140,7 @@
     // Add button event listeners
     githubBtn?.addEventListener('click', () => handleCreateClick('github'));
     catalogBtn?.addEventListener('click', () => handleCreateClick('catalog'));
+    getLatestBtn?.addEventListener('click', handleGetLatestClick);
 
     catalogSelect?.addEventListener('change', () => {
         const selectedCatalogId = catalogSelect.value;
@@ -1034,5 +1036,39 @@
                     <span class="version-value">${catalogNext || 'Not available'}</span>
                 </div>
             </div>`;
+    }
+
+    // Add the handler function
+    async function handleGetLatestClick() {
+        // Show loading state
+        if (mainContent) {
+            mainContent.classList.add('loading-state');
+        }
+        if (catalogDetailsDiv) {
+            catalogDetailsDiv.innerHTML = '<p class="loading">Fetching latest releases...</p>';
+        }
+
+        // Disable the button during refresh
+        const getLatestBtn = /** @type {HTMLButtonElement} */ (document.getElementById('getLatestBtn'));
+        if (getLatestBtn) {
+            getLatestBtn.disabled = true;
+        }
+
+        try {
+            // Request a force refresh from the extension
+            vscode.postMessage({
+                command: 'forceRefresh',
+                catalogId: catalogSelect?.value
+            });
+        } catch (error) {
+            if (catalogDetailsDiv) {
+                catalogDetailsDiv.innerHTML = '<p class="error">Failed to fetch latest releases. Please try again.</p>';
+            }
+        } finally {
+            // Re-enable the button
+            if (getLatestBtn) {
+                getLatestBtn.disabled = false;
+            }
+        }
     }
 })(); 
