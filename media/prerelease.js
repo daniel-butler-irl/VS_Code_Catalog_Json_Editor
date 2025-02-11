@@ -258,7 +258,7 @@
                 handleRefreshComplete();
                 break;
             case 'releaseComplete':
-                handleReleaseComplete(message.success, message.error);
+                handleReleaseComplete(message.success, message.error, message.cancelled);
                 break;
             case 'showLoading':
                 showLoading(message.message || 'Loading...');
@@ -897,33 +897,32 @@
         }
     }
 
-    function handleReleaseComplete(success, error) {
-        // Re-enable buttons
+    function handleReleaseComplete(success, error, cancelled) {
+        // Re-enable buttons and reset their state
         if (githubBtn) {
             githubBtn.disabled = false;
-            githubBtn.textContent = 'Pre-Release GitHub';
+            githubBtn.textContent = 'Create Pre-Release';
             githubBtn.classList.remove('loading');
         }
         if (catalogBtn) {
             catalogBtn.disabled = false;
-            catalogBtn.textContent = 'Pre-Release Catalog';
+            catalogBtn.textContent = 'Import to Catalog';
             catalogBtn.classList.remove('loading');
         }
 
-        if (success) {
-            // Clear inputs on success
-            if (versionInput) versionInput.value = '';
-            if (postfixInput) postfixInput.value = '';
-            // Clear any existing error state
-            showError(undefined, true);
-            
-            // Force refresh of version history
-            vscode.postMessage({
-                command: 'forceRefresh',
-                catalogId: catalogSelect?.value
-            });
+        // Only show error if it's not a cancellation
+        if (error && !cancelled) {
+            showError(error);
         }
-        // Don't show error in the red box for release errors
+
+        // Reset loading states
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
+        }
+        hideLoading();
+
+        // Update button states based on current auth status
+        updateButtonStates();
     }
 
     // Add function to update timestamp display
@@ -989,7 +988,7 @@
         // Update GitHub-related UI elements
         if (githubBtn instanceof HTMLButtonElement) {
             githubBtn.disabled = !isGithubAuthenticated;
-            githubBtn.title = isGithubAuthenticated ? 'Create GitHub pre-release' : 'Login to GitHub to create releases';
+            githubBtn.title = isGithubAuthenticated ? 'Create GitHub pre-release' : 'Login to GitHub to create pre-releases';
         }
 
         // Update catalog-related UI elements

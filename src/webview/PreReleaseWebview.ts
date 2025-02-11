@@ -258,23 +258,35 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       this.logger.info('Creating pre-release', { version: `v${data.version}-${data.postfix}` }, 'preRelease');
 
       try {
-        await this.preReleaseService.createPreRelease(data);
+        const success = await this.preReleaseService.createPreRelease(data);
 
-        this.logger.debug('Refreshing panel after pre-release creation', {}, 'preRelease');
-        await this.refresh();
+        if (success) {
+          this.logger.debug('Refreshing panel after pre-release creation', {}, 'preRelease');
+          await this.refresh();
 
-        this.logger.info('Pre-release created successfully', {
-          version: `v${data.version}-${data.postfix}`,
-          publishToCatalog: data.publishToCatalog
-        }, 'preRelease');
+          this.logger.info('Pre-release created successfully', {
+            version: `v${data.version}-${data.postfix}`,
+            publishToCatalog: data.publishToCatalog
+          }, 'preRelease');
 
-        vscode.window.showInformationMessage('Pre-release created successfully');
+          // Notify webview of success
+          this.view?.webview.postMessage({
+            command: 'releaseComplete',
+            success: true
+          });
+        } else {
+          // Operation was cancelled by user, reset the UI state
+          this.logger.info('Pre-release creation cancelled by user', {
+            version: `v${data.version}-${data.postfix}`
+          }, 'preRelease');
 
-        // Notify webview of success
-        this.view?.webview.postMessage({
-          command: 'releaseComplete',
-          success: true
-        });
+          // Tell webview to reset button state
+          this.view?.webview.postMessage({
+            command: 'releaseComplete',
+            success: false,
+            cancelled: true // Add this flag to distinguish from errors
+          });
+        }
       } catch (error) {
         let errorMessage = 'Failed to create pre-release';
 

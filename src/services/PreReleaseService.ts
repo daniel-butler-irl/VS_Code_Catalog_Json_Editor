@@ -474,8 +474,9 @@ export class PreReleaseService {
   /**
    * Creates a new pre-release
    * @param details Pre-release details
+   * @returns boolean indicating if the release was created
    */
-  public async createPreRelease(details: PreReleaseDetails): Promise<void> {
+  public async createPreRelease(details: PreReleaseDetails): Promise<boolean> {
     try {
       const branch = await this.getCurrentBranch();
 
@@ -497,6 +498,71 @@ export class PreReleaseService {
       const releaseExists = existingReleases.some(release => release.tag_name === tagName);
       if (releaseExists) {
         throw new Error(`A release with tag ${tagName} already exists. Please choose a different version or postfix.`);
+      }
+
+      let confirmMessage: string;
+      let confirmButtons: { title: string; isCloseAffordance: boolean }[];
+
+      if (details.releaseGithub) {
+        // GitHub release confirmation
+        confirmMessage = `Create the following GitHub pre-release?\n\n` +
+          `Version: ${details.version}\n` +
+          `Postfix: ${details.postfix}\n` +
+          `Tag: ${tagName}\n` +
+          `Branch: ${branch}\n` +
+          `${hasUnpushedChanges ? '⚠️ Warning: Branch has unpushed changes\n' : ''}`;
+
+        confirmButtons = [
+          { title: 'Create Pre-Release', isCloseAffordance: false },
+          { title: 'Cancel', isCloseAffordance: true }
+        ];
+      } else if (details.publishToCatalog) {
+        // Get catalog details for confirmation
+        const catalogId = await this.getSelectedCatalogId();
+        if (!catalogId) {
+          throw new Error('No catalog selected');
+        }
+        const catalogDetails = await this.getSelectedCatalogDetails(catalogId);
+
+        // Get the GitHub release for the tag
+        const githubRelease = await this.getGitHubRelease(tagName);
+        if (!githubRelease) {
+          throw new Error(`GitHub release ${tagName} not found. Cannot publish to catalog without a GitHub release.`);
+        }
+
+        // Get available flavors from catalog details
+        const availableFlavors = catalogDetails.versions
+          .filter(v => v.flavor?.label)
+          .map(v => v.flavor!.label)
+          .filter((label, index, self) => self.indexOf(label) === index);
+
+        // Catalog import confirmation
+        confirmMessage = `Import the following to the IBM Cloud Catalog?\n\n` +
+          `Catalog: ${catalogDetails.label}\n` +
+          `Offering Name: ${catalogDetails.name}\n` +
+          `Offering Label: ${catalogDetails.label}\n` +
+          `GitHub Release Tag: ${tagName}\n` +
+          `Catalog Version: ${details.version}\n` +
+          `Flavors to Import:\n${availableFlavors.map(f => `  • ${f}`).join('\n')}\n\n` +
+          `Note: A separate version will be imported for each flavor.`;
+
+        confirmButtons = [
+          { title: 'Import to Catalog', isCloseAffordance: false },
+          { title: 'Cancel', isCloseAffordance: true }
+        ];
+      } else {
+        throw new Error('Invalid operation: Must specify either GitHub release or catalog import');
+      }
+
+      const confirmation = await vscode.window.showWarningMessage(
+        confirmMessage,
+        { modal: true },
+        ...confirmButtons
+      );
+
+      if (!confirmation || confirmation.title.includes('Cancel')) {
+        this.logger.info('Pre-release creation cancelled by user', { tagName });
+        return false;
       }
 
       // If only publishing to catalog, verify GitHub release exists and get tarball URL
@@ -540,6 +606,7 @@ export class PreReleaseService {
       }
 
       vscode.window.showInformationMessage(`Successfully created pre-release ${tagName}`);
+      return true;
     } catch (error) {
       this.logger.error('Failed to create pre-release', { error }, 'preRelease');
       throw error;
@@ -945,9 +1012,11 @@ export class PreReleaseService {
 
   private async handleCreatePreRelease(data: PreReleaseDetails): Promise<void> {
     try {
-      await this.createPreRelease(data);
-      await this.refresh(); // Refresh data after creation
-      vscode.window.showInformationMessage('Pre-release created successfully');
+      const success = await this.createPreRelease(data);
+      if (success) {
+        await this.refresh(); // Refresh data after creation
+        vscode.window.showInformationMessage('Pre-release created successfully');
+      }
     } catch (error) {
       this.logger.error('Failed to create pre-release', { error }, 'preRelease');
       throw error;
