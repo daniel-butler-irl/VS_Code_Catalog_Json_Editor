@@ -392,10 +392,16 @@
         // Check if on main/master branch
         isMainOrMaster = ['main', 'master'].includes(branch.toLowerCase());
 
-        // Always update postfix with branch name suggestion
+        // Only update postfix if it's empty or matches the previous branch-beta pattern
         if (postfixInput) {
             const suggestedPostfix = `${branch}-beta`;
-            postfixInput.value = suggestedPostfix;
+            const currentValue = postfixInput.value;
+            const previousBranchPattern = currentBranch ? `${currentBranch}-beta` : '';
+            
+            // Only update if empty or matches previous pattern
+            if (!currentValue || currentValue === previousBranchPattern) {
+                postfixInput.value = suggestedPostfix;
+            }
             postfixInput.placeholder = suggestedPostfix;
             updateTagPreview();
         }
@@ -910,6 +916,12 @@
             if (postfixInput) postfixInput.value = '';
             // Clear any existing error state
             showError(undefined, true);
+            
+            // Force refresh of version history
+            vscode.postMessage({
+                command: 'forceRefresh',
+                catalogId: catalogSelect?.value
+            });
         }
         // Don't show error in the red box for release errors
     }
@@ -930,74 +942,74 @@
         timestampDiv.title = isCacheUsed ? 'Using cached data' : 'Using fresh data';
     }
 
-    function updateAuthStatus(githubAuth, catalogAuth) {
+    function updateAuthStatus(githubAuthenticated, catalogAuthenticated) {
         const githubStatus = document.getElementById('githubAuthStatus');
         const catalogStatus = document.getElementById('catalogAuthStatus');
 
-        if (githubAuth) {
-            githubStatus.classList.add('authenticated');
-            githubStatus.classList.remove('not-authenticated');
-            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Logged in';
-            if (githubBtn) {
-                githubBtn.title = 'Create GitHub pre-release';
-            }
-        } else {
-            githubStatus.classList.add('not-authenticated');
-            githubStatus.classList.remove('authenticated');
-            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Not logged in';
-            if (githubBtn) {
-                githubBtn.title = 'Login to GitHub to create releases';
+        if (githubStatus) {
+            const authText = githubStatus.querySelector('.auth-text');
+            if (githubAuthenticated) {
+                authText.textContent = 'GitHub: Logged in';
+                githubStatus.classList.add('authenticated');
+                githubStatus.classList.remove('not-authenticated');
+                githubStatus.onclick = null;
+            } else {
+                authText.textContent = 'GitHub: Not logged in (click to login)';
+                githubStatus.classList.remove('authenticated');
+                githubStatus.classList.add('not-authenticated');
+                githubStatus.style.cursor = 'pointer';
+                githubStatus.onclick = () => {
+                    vscode.postMessage({ command: 'loginGitHub' });
+                };
             }
         }
 
-        if (catalogAuth) {
-            catalogStatus.classList.add('authenticated');
-            catalogStatus.classList.remove('not-authenticated');
-            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Logged in';
-            if (catalogBtn) {
-                catalogBtn.title = 'Create catalog pre-release';
-            }
-            if (catalogSelect) {
-                catalogSelect.title = 'Select a catalog';
-            }
-        } else {
-            catalogStatus.classList.add('not-authenticated');
-            catalogStatus.classList.remove('authenticated');
-            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Not logged in';
-            if (catalogBtn) {
-                catalogBtn.title = 'Login to IBM Cloud to publish to catalog';
-            }
-            if (catalogSelect) {
-                catalogSelect.title = 'Login to IBM Cloud to view catalogs';
-            }
+        if (catalogStatus) {
+            const authText = catalogStatus.querySelector('.auth-text');
+            authText.textContent = catalogAuthenticated ? 'IBM Cloud: Logged in' : 'IBM Cloud: Not logged in';
+            catalogStatus.classList.toggle('authenticated', catalogAuthenticated);
+            catalogStatus.classList.toggle('not-authenticated', !catalogAuthenticated);
         }
 
         // Store the authentication states
-        isGithubAuthenticated = githubAuth;
-        isCatalogAuthenticated = catalogAuth;
+        isGithubAuthenticated = githubAuthenticated;
+        isCatalogAuthenticated = catalogAuthenticated;
 
-        // Update button states based on new auth status
+        // Update UI state based on authentication
         updateButtonStates();
     }
 
     function updateButtonStates() {
-        if (!githubBtn || !catalogBtn) {
-            return;
+        const githubBtn = document.getElementById('githubBtn');
+        const catalogBtn = document.getElementById('catalogBtn');
+        const catalogSelect = document.getElementById('catalogSelect');
+        const versionInput = document.getElementById('version');
+        const postfixInput = document.getElementById('postfix');
+
+        // Update GitHub-related UI elements
+        if (githubBtn instanceof HTMLButtonElement) {
+            githubBtn.disabled = !isGithubAuthenticated;
+            githubBtn.title = isGithubAuthenticated ? 'Create GitHub pre-release' : 'Login to GitHub to create releases';
         }
 
-        const hasVersion = versionInput?.value?.trim();
-        const hasPostfix = postfixInput?.value?.trim();
-        const hasCatalog = catalogSelect?.value;
+        // Update catalog-related UI elements
+        if (catalogBtn instanceof HTMLButtonElement) {
+            catalogBtn.disabled = !isCatalogAuthenticated;
+            catalogBtn.title = isCatalogAuthenticated ? 'Create catalog pre-release' : 'Login to IBM Cloud to publish to catalog';
+        }
 
-        // GitHub button requires version and postfix
-        githubBtn.disabled = !hasVersion || !hasPostfix || !isGithubAuthenticated;
-
-        // Catalog button requires version, postfix, catalog selection and authentication
-        catalogBtn.disabled = !hasVersion || !hasPostfix || !hasCatalog || !isCatalogAuthenticated;
-
-        // Update catalog select state
-        if (catalogSelect) {
+        if (catalogSelect instanceof HTMLSelectElement) {
             catalogSelect.disabled = !isCatalogAuthenticated;
+            catalogSelect.title = isCatalogAuthenticated ? 'Select a catalog' : 'Login to IBM Cloud to view catalogs';
+        }
+
+        // Enable version and postfix inputs if either authentication is present
+        const shouldEnable = isGithubAuthenticated || isCatalogAuthenticated;
+        if (versionInput instanceof HTMLInputElement) {
+            versionInput.disabled = !shouldEnable;
+        }
+        if (postfixInput instanceof HTMLInputElement) {
+            postfixInput.disabled = !shouldEnable;
         }
     }
 

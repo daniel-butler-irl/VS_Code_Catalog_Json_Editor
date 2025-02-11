@@ -41,14 +41,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         statusBarItem.show();
         context.subscriptions.push(statusBarItem);
 
-        // Check authentication status early
-        const [isLoggedIn, isGithubLoggedIn] = await Promise.all([
-            AuthService.isLoggedIn(context),
-            AuthService.isGitHubLoggedIn(context)
-        ]);
-
+        // Only check IBM Cloud authentication status on startup
+        const isLoggedIn = await AuthService.isLoggedIn(context);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', isGithubLoggedIn);
 
         // Initialize schema service in the background
         const schemaService = new SchemaService();
@@ -122,22 +117,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         // Register logout commands
         context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.logoutGithub', async () => {
-                // Show instructions for built-in GitHub logout
-                const signOutAction = 'How to Sign Out';
-                const response = await vscode.window.showInformationMessage(
-                    'To sign out of GitHub:',
-                    signOutAction
-                );
-
-                if (response === signOutAction) {
-                    await vscode.window.showInformationMessage(
-                        'Click the account icon in the bottom left corner of VS Code, then click "Sign out" next to your GitHub account.',
-                        { modal: true }
-                    );
-                }
-            }),
-
             vscode.commands.registerCommand('ibmCatalog.logout', async () => {
                 try {
                     // Clear IBM Cloud API key
@@ -185,6 +164,46 @@ function registerEssentialCommands(
                 treeProvider.refresh();
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        }),
+        // Register GitHub login command
+        vscode.commands.registerCommand('ibmCatalog.loginGithub', async () => {
+            try {
+                const preReleaseView = PreReleaseWebview.getInstance();
+                if (preReleaseView) {
+                    await preReleaseView.handleGitHubLogin();
+                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', true);
+                    vscode.window.showInformationMessage('Successfully logged in to GitHub');
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to login to GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        }),
+        // Register GitHub logout command
+        vscode.commands.registerCommand('ibmCatalog.logoutGithub', async () => {
+            try {
+                // Show instructions for built-in GitHub logout
+                const signOutAction = 'How to Sign Out';
+                const response = await vscode.window.showInformationMessage(
+                    'To sign out of GitHub:',
+                    signOutAction
+                );
+
+                if (response === signOutAction) {
+                    await vscode.window.showInformationMessage(
+                        'Click the account icon in the bottom left corner of VS Code, then click "Sign out" next to your GitHub account.',
+                        { modal: true }
+                    );
+                }
+
+                // Update context and UI after user acknowledges
+                await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+                const preReleaseView = PreReleaseWebview.getInstance();
+                if (preReleaseView) {
+                    await preReleaseView.sendAuthenticationStatus();
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to logout from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
         })
     );

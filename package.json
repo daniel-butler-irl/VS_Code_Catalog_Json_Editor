@@ -188,14 +188,12 @@
         {
           "command": "ibmCatalog.loginGithub",
           "when": "view == ibmCatalogPreRelease && !ibmCatalog.isGithubLoggedIn",
-          "group": "navigation@1",
-          "icon": "$(sign-in)"
+          "group": "navigation@1"
         },
         {
           "command": "ibmCatalog.logoutGithub",
           "when": "view == ibmCatalogPreRelease && ibmCatalog.isGithubLoggedIn",
-          "group": "navigation@1",
-          "icon": "$(sign-out)"
+          "group": "navigation@1"
         },
         {
           "command": "ibmCatalog.clearCache",

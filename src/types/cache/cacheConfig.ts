@@ -13,9 +13,10 @@ export enum CacheKeys {
     FLAVOR_DETAILS = 'flavorDetails',
     FLAVOR_VALIDATION = 'flavorValidation',
     OFFERING_VALIDATION = 'offeringValidation',
-    OFFERING_DETAILS = 'offeringDetails',
+    OFFERING_DETAILS = 'offering_details',
     API_RESPONSE = 'apiResponse',
-    CATALOG_OFFERINGS = 'CATALOG_OFFERINGS'
+    CATALOG_OFFERINGS = 'CATALOG_OFFERINGS',
+    GITHUB_RELEASES = 'github_releases'
 }
 
 /**
@@ -91,9 +92,14 @@ export const CacheConfigurations: Record<CacheKeys, CacheConfig> = {
         storagePrefix: 'catalog_validation_'
     },
     [CacheKeys.CATALOG_OFFERINGS]: {
-        ttlSeconds: 21600000, // 6 hours
+        ttlSeconds: 300,  // 5 minutes
         persistent: true,
-        storagePrefix: 'catalog_offerings_cache_'
+        storagePrefix: 'catalog_offerings'
+    },
+    [CacheKeys.GITHUB_RELEASES]: {
+        ttlSeconds: 60,  // 1 minute
+        persistent: false,  // Don't persist GitHub releases
+        storagePrefix: 'github_releases'
     }
 };
 

@@ -34,12 +34,20 @@ export class PreReleaseService {
       this.logger.debug('Workspace root set to', { path: this.workspaceRoot }, 'preRelease');
     }
     this.cacheService = CacheService.getInstance();
-    void this.initializeGitHub();
+
+    // Initialize GitHub authentication
+    void this.initializeGitHub().catch(error => {
+      this.logger.warn('Failed to initialize GitHub authentication', { error }, 'preRelease');
+    });
   }
 
   private async initializeGitHub(): Promise<void> {
     try {
-      const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: false });
+      // Only check for existing session, don't create one
+      const session = await vscode.authentication.getSession('github', ['repo', 'write:packages'], {
+        createIfNone: false,
+        clearSessionPreference: false
+      });
 
       if (session) {
         this.octokit = new Octokit({
@@ -50,8 +58,8 @@ export class PreReleaseService {
           scopes: session.scopes
         }, 'preRelease');
       } else {
-        this.logger.warn('No GitHub session found, authentication will be requested when needed', {
-          status: 'warning'
+        this.logger.debug('No GitHub session found, will authenticate when needed', {
+          status: 'pending'
         }, 'preRelease');
       }
     } catch (error) {
@@ -69,7 +77,7 @@ export class PreReleaseService {
 
     try {
       this.logger.debug('Requesting GitHub authentication', {}, 'preRelease');
-      const session = await vscode.authentication.getSession('github', ['repo'], {
+      const session = await vscode.authentication.getSession('github', ['repo', 'write:packages'], {
         createIfNone: true,
         clearSessionPreference: true
       });
@@ -511,6 +519,9 @@ export class PreReleaseService {
           }
           details.targetVersion = newRelease.tarball_url;
         }
+
+        // Clear any cached GitHub releases
+        this.cacheService.delete(CacheKeys.GITHUB_RELEASES);
       }
 
       // Import to catalog if requested
@@ -616,19 +627,63 @@ export class PreReleaseService {
         throw new Error(`Tag ${tagName} already exists. Please choose a different version or postfix.`);
       } catch (error) {
         // Tag doesn't exist, which is what we want
+        this.logger.debug('Tag does not exist, proceeding with creation', { tagName });
+      }
+
+      // Verify GitHub authentication and permissions
+      if (!this.octokit) {
+        const authenticated = await this.ensureGitHubAuth();
+        if (!authenticated) {
+          throw new Error('GitHub authentication required. Please sign in first.');
+        }
+      }
+
+      // Get repository info and verify permissions
+      const { stdout: repoUrl } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
+      const httpsMatch = repoUrl.trim().match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const sshMatch = repoUrl.trim().match(/git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const match = httpsMatch || sshMatch;
+
+      if (!match) {
+        throw new Error('Could not parse GitHub repository URL');
+      }
+
+      const [, owner, repo] = match;
+
+      // Verify repository permissions
+      try {
+        if (!this.octokit) {
+          throw new Error('GitHub client not initialized');
+        }
+        const { data: repository } = await this.octokit.repos.get({ owner, repo });
+        this.logger.debug('Checking repository permissions', {
+          permissions: repository.permissions,
+          isPrivate: repository.private,
+          owner,
+          repo
+        }, 'preRelease');
+
+        if (!repository.permissions?.push) {
+          throw new Error(`You don't have write access to ${owner}/${repo}. Please check your repository permissions.`);
+        }
+      } catch (error) {
+        this.logger.error('Failed to verify repository permissions', { error, owner, repo });
+        throw new Error('Failed to verify repository permissions. Please ensure you have write access.');
       }
 
       // Create tag
       try {
         await execAsync(`git tag ${tagName}`, this.workspaceRoot);
+        this.logger.debug('Local tag created successfully', { tagName });
       } catch (error) {
-        this.logger.error('Failed to create tag', { tagName, error });
-        throw new Error(`Failed to create tag ${tagName}. Please ensure you have write permissions.`);
+        this.logger.error('Failed to create local tag', { tagName, error });
+        throw new Error(`Failed to create tag ${tagName}. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
       // Push tag
       try {
         await execAsync(`git push origin ${tagName}`, this.workspaceRoot);
+        this.logger.debug('Tag pushed successfully', { tagName });
       } catch (error) {
         // If push fails, try to delete the local tag
         try {
@@ -638,24 +693,6 @@ export class PreReleaseService {
         }
         this.logger.error('Failed to push tag', { tagName, error });
         throw new Error(`Failed to push tag ${tagName}. Please ensure you have push access to the repository.`);
-      }
-
-      // Get repository info
-      const { stdout } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
-      const repoUrl = stdout.trim();
-
-      const httpsMatch = repoUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
-      const sshMatch = repoUrl.match(/git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
-      const match = httpsMatch || sshMatch;
-
-      if (!match) {
-        throw new Error('Could not parse GitHub repository URL');
-      }
-
-      const [, owner, repo] = match;
-
-      if (!this.octokit) {
-        throw new Error('GitHub client not initialized');
       }
 
       // Create GitHub release through API
@@ -1045,8 +1082,19 @@ export class PreReleaseService {
 
   public async isGitHubAuthenticated(): Promise<boolean> {
     try {
-      const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: false });
-      return !!session;
+      const session = await vscode.authentication.getSession('github', ['repo', 'write:packages'], {
+        createIfNone: false,
+        silent: true
+      });
+
+      if (session) {
+        // Initialize Octokit if we have a valid session
+        this.octokit = new Octokit({
+          auth: session.accessToken
+        });
+        return true;
+      }
+      return false;
     } catch (error) {
       this.logger.warn('GitHub authentication check failed', { error }, 'preRelease');
       return false;

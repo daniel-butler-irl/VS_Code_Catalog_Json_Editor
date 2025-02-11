@@ -87,8 +87,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
 
   private async initialize(): Promise<void> {
     try {
-      await this.handleSetup();
-
+      // Remove automatic setup call
       // Get the webview state to restore the previously selected catalog
       if (this.view?.webview) {
         const state = await this.getWebviewState();
@@ -96,6 +95,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           await this.handleCatalogSelection(state.selectedCatalogId);
         }
       }
+
+      // Initial refresh without auth check
+      await this.refresh();
 
       this.isInitialized = true;
     } catch (error) {
@@ -454,6 +456,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         case 'checkAuthentication':
           await this.sendAuthenticationStatus();
           break;
+        case 'loginGitHub':
+          await this.handleGitHubLogin();
+          break;
         case 'selectCatalog':
           if (message.catalogId) {
             this.logger.info('Selecting catalog', { catalogId: message.catalogId }, 'preRelease');
@@ -519,22 +524,53 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
 
   public async sendAuthenticationStatus(): Promise<void> {
     try {
-      const [githubAuth, catalogAuth] = await Promise.all([
-        this.preReleaseService.isGitHubAuthenticated(),
-        this.preReleaseService.isCatalogAuthenticated()
-      ]);
+      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
+      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
 
+      // Update VS Code context
+      await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', githubAuth);
+
+      // Send status to webview
       this.view?.webview.postMessage({
         command: 'authenticationStatus',
         githubAuthenticated: githubAuth,
         catalogAuthenticated: catalogAuth
       });
+
+      // Update UI elements based on auth status
+      this.updateButtonStates(githubAuth, catalogAuth);
     } catch (error) {
       this.logger.error('Failed to get authentication status', { error }, 'preRelease');
       this.view?.webview.postMessage({
         command: 'showError',
         error: 'Failed to check authentication status'
       });
+    }
+  }
+
+  private updateButtonStates(githubAuth: boolean, catalogAuth: boolean): void {
+    if (this.view?.webview) {
+      this.view.webview.postMessage({
+        command: 'updateButtonStates',
+        data: {
+          githubAuth,
+          catalogAuth
+        }
+      });
+    }
+  }
+
+  public async handleGitHubLogin(): Promise<void> {
+    try {
+      const authenticated = await this.preReleaseService.ensureGitHubAuth();
+      if (authenticated) {
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', true);
+        await this.sendAuthenticationStatus();
+        await this.refresh();
+      }
+    } catch (error) {
+      this.logger.error('GitHub login failed', { error }, 'preRelease');
+      throw error; // Let the command handler show the error message
     }
   }
 
