@@ -191,19 +191,30 @@ Pre-releases in the VS Code Marketplace:
 
 ### Version Guidelines
 
-Follow semantic versioning (MAJOR.MINOR.PATCH):
+Follow semantic versioning (MAJOR.MINOR.PATCH) with an odd/even strategy:
 
 - MAJOR: Breaking changes
-- MINOR: New features (backward compatible)
+- MINOR:
+  - Even numbers (x.2.x, x.4.x) for stable releases
+  - Odd numbers (x.1.x, x.3.x) for preview releases
 - PATCH: Bug fixes (backward compatible)
 
-Example version sequence with preview:
+Example version sequence:
 
 ```
-1.2.0 (preview: true) -> 1.2.0 (preview: false)
+1.1.0 (preview) -> 1.1.1 (preview) -> 1.2.0 (stable) -> 1.3.0 (preview) -> 1.4.0 (stable)
 ```
 
-For preview releases, we use the preview flag in package.json instead of version suffixes.
+The preview flag in package.json must be:
+
+- `true` for odd minor versions (pre-releases)
+- `false` for even minor versions (stable releases)
+
+This versioning strategy ensures:
+
+- Clear distinction between preview and stable releases
+- Smooth upgrade path from preview to stable
+- Compatibility with VS Code's extension versioning requirements
 
 ## License
 
