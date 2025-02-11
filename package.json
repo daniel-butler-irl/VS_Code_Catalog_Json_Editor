@@ -146,13 +146,23 @@
     "viewsWelcome": [
       {
         "view": "ibmCatalogTree",
+        "contents": "$(sync~spin) Loading IBM Catalog...\n\nPlease wait while we initialize the catalog view.",
+        "when": "!ibmCatalog.hasWorkspace"
+      },
+      {
+        "view": "ibmCatalogTree",
         "contents": "Create IBM Catalog JSON\n\nNo IBM Catalog JSON file found in your workspace.\n\n[Create IBM Catalog JSON](command:ibmCatalog.createCatalogFile)",
-        "when": "!ibmCatalog.catalogFileExists"
+        "when": "ibmCatalog.hasWorkspace && !ibmCatalog.catalogFileExists"
+      },
+      {
+        "view": "ibmCatalogPreRelease",
+        "contents": "$(sync~spin) Loading Pre-Release Manager...\n\nPlease wait while we initialize the pre-release functionality.",
+        "when": "!ibmCatalog.hasWorkspace"
       },
       {
         "view": "ibmCatalogPreRelease",
         "contents": "No IBM Catalog JSON file found in your workspace.\n\nPre-release functionality is only available when an IBM Catalog JSON file exists.",
-        "when": "!ibmCatalog.catalogFileExists"
+        "when": "ibmCatalog.hasWorkspace && !ibmCatalog.catalogFileExists"
       }
     ],
     "menus": {

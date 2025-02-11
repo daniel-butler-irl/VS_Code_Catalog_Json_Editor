@@ -22,20 +22,40 @@ jobs:
         id: check_version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
-          if [[ "$IS_PREVIEW" == "true" ]]; then
+          MINOR_VERSION=$(node -p "require('semver').minor(require('./package.json').version)")
+          IS_ODD=$((MINOR_VERSION % 2))
+          
+          if [[ $IS_ODD == 1 ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Validate No Preview on Main
+      - name: Validate Version Strategy
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          MINOR_VERSION=$(node -p "require('semver').minor(require('./package.json').version)")
+          IS_ODD=$((MINOR_VERSION % 2))
+          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
+          
+          if [[ $IS_ODD == 1 && "$IS_PREVIEW" != "true" ]]; then
+            echo "Error: Odd minor versions (x.1.x, x.3.x, etc.) must have preview flag set to true"
+            exit 1
+          fi
+          
+          if [[ $IS_ODD == 0 && "$IS_PREVIEW" == "true" ]]; then
+            echo "Error: Even minor versions (x.2.x, x.4.x, etc.) cannot have preview flag set to true"
+            exit 1
+          fi
+
+      - name: Block Preview on Main
         if: github.ref == 'refs/heads/main'
         run: |
-          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
-          if [[ "$IS_PREVIEW" == "true" ]]; then
-            echo "Error: Preview flag must be false on main branch"
+          MINOR_VERSION=$(node -p "require('semver').minor(require('./package.json').version)")
+          IS_ODD=$((MINOR_VERSION % 2))
+          if [[ $IS_ODD == 1 ]]; then
+            echo "Error: Main branch can only contain stable releases (even minor versions)"
             exit 1
           fi
 
