@@ -1,4 +1,6 @@
 // @ts-check
+/// <reference path="../src/types/catalog/prerelease.ts" />
+/// <reference path="../src/types/ibmCloud/index.ts" />
 
 (function() {
     // @ts-ignore
@@ -408,7 +410,7 @@
 
     /**
      * Updates the catalog details in the UI
-     * @param {{ catalogId: string, offeringId: string, name: string, label: string, versions: string[], offeringNotFound?: boolean }} details
+     * @param {import('../src/types/catalog/prerelease').CatalogDetails} details
      */
     function updateCatalogDetails(details) {
         // Clear any pending timeout
@@ -474,6 +476,7 @@
 
         // Then update versions when they're available
         if (details.versions) {
+            /** @type {import('../src/types/catalog/prerelease').CatalogVersion[]} */
             const catalogVersions = details.versions;
             const isVersionInvalid = proposedVersion && catalogVersions.some(v => v.version === proposedVersion);
 
@@ -487,7 +490,7 @@
             }
 
             // Update the version table with the loaded versions
-            renderCatalogDetails(details, versionInput?.value || '', proposedPostfix, githubReleases, catalogVersions);
+            renderCatalogDetails(details, versionInput?.value || '', proposedPostfix, githubReleases, details.versions);
         } else {
             // Show loading state for versions
             const versionTable = catalogDetailsDiv.querySelector('.version-table tbody');
@@ -510,11 +513,11 @@
 
     /**
      * Renders the catalog details UI
-     * @param {*} details Catalog details
-     * @param {string} proposedVersion Proposed version
-     * @param {string} proposedPostfix Proposed postfix
-     * @param {Array<{tag: string}>} githubReleases GitHub releases
-     * @param {string[]} catalogVersions Catalog versions
+     * @param {import('../src/types/catalog/prerelease').CatalogDetails} details
+     * @param {string} proposedVersion
+     * @param {string} proposedPostfix
+     * @param {Array<{tag: string}>} githubReleases
+     * @param {import('../src/types/catalog/prerelease').CatalogVersion[]} catalogVersions
      */
     function renderCatalogDetails(details, proposedVersion, proposedPostfix, githubReleases, catalogVersions) {
         console.debug('Rendering catalog details', {
@@ -648,7 +651,7 @@
                             ${catalogEntries.map(entry => `
                                 <div class="version-tag" ${entry.tgz_url ? `title="${entry.tgz_url}"` : ''}>
                                     <div class="version-number">${entry.version}</div>
-                                    <div class="version-flavor">${entry.flavor.label}</div>
+                                    <div class="version-flavor">${entry.flavor?.label || entry.flavor?.name || 'Unknown'}</div>
                                 </div>
                             `).join('')}
                         </td>
@@ -791,9 +794,15 @@
         const catalogId = catalogSelect?.value || '';
 
         if (!version || !postfix) {
-            showError('Please fill in all required fields');
+            vscode.postMessage({
+                command: 'showError',
+                error: 'Please fill in all required fields'
+            });
             return;
         }
+
+        // Clear any existing error state
+        showError(undefined, true);
 
         // Disable buttons during operation
         if (githubBtn) githubBtn.disabled = true;
@@ -891,9 +900,10 @@
             // Clear inputs on success
             if (versionInput) versionInput.value = '';
             if (postfixInput) postfixInput.value = '';
-        } else if (error) {
-            showError(error);
+            // Clear any existing error state
+            showError(undefined, true);
         }
+        // Don't show error in the red box for release errors
     }
 
     // Add function to update timestamp display

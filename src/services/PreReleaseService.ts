@@ -11,52 +11,8 @@ import { CacheService } from '../services/CacheService';
 import { DynamicCacheKeys } from '../types/cache/cacheConfig';
 import { CacheKeys } from '../types/cache/cacheConfig';
 import { CacheConfigurations } from '../types/cache/cacheConfig';
+import { PreReleaseDetails, GitHubRelease, CatalogVersion, CatalogDetails, WebviewMessage } from '../types/catalog/prerelease';
 import * as fs from 'fs';
-
-interface PreReleaseDetails {
-  version: string;
-  postfix: string;
-  publishToCatalog: boolean;
-  releaseGithub: boolean;
-  targetVersion?: string;
-}
-
-interface GitHubRelease {
-  tag_name: string;
-  name: string;
-  created_at: string;
-  tarball_url: string;
-}
-
-interface CatalogVersion {
-  version: string;
-  flavor: {
-    name: string;
-    label: string;
-  };
-  tgz_url: string;
-}
-
-interface CatalogDetails {
-  catalogId: string;
-  offeringId: string;
-  name: string;
-  label: string;
-  versions: CatalogVersion[];
-  offeringNotFound?: boolean;
-}
-
-interface WebviewMessage {
-  command: string;
-  data?: PreReleaseDetails;
-  catalogId?: string;
-  message?: string;
-}
-
-interface OfferingVersion {
-  version: string;
-  tgz_url?: string;  // Make tgz_url optional
-}
 
 export class PreReleaseService {
   private static instance: PreReleaseService;
@@ -440,12 +396,14 @@ export class PreReleaseService {
 
             // Map the versions to our format
             const mappedVersions = kindVersions.versions.map(version => ({
+              id: version.id || `${version.version}-${Date.now()}`,  // Generate an ID if not present
               version: version.version,
               flavor: {
                 name: version.flavor?.name || kind.target_kind || kind.install_kind || 'terraform',
                 label: version.flavor?.label || kind.target_kind || kind.install_kind || 'Terraform'
               },
-              tgz_url: version.tgz_url || ''
+              tgz_url: version.tgz_url || '',
+              created: version.created || new Date().toISOString()
             }));
 
             allVersions.push(...mappedVersions);
