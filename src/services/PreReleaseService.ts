@@ -11,6 +11,7 @@ import { CacheService } from '../services/CacheService';
 import { DynamicCacheKeys } from '../types/cache/cacheConfig';
 import { CacheKeys } from '../types/cache/cacheConfig';
 import { CacheConfigurations } from '../types/cache/cacheConfig';
+import * as fs from 'fs';
 
 interface PreReleaseDetails {
   version: string;
@@ -50,6 +51,11 @@ interface WebviewMessage {
   data?: PreReleaseDetails;
   catalogId?: string;
   message?: string;
+}
+
+interface OfferingVersion {
+  version: string;
+  tgz_url?: string;  // Make tgz_url optional
 }
 
 export class PreReleaseService {
@@ -193,51 +199,38 @@ export class PreReleaseService {
    * Gets the last 5 pre-releases from both GitHub and the catalog
    * @returns Array of pre-release details
    */
-  public async getLastPreReleases(): Promise<GitHubRelease[]> {
-    if (!this.workspaceRoot) {
-      throw new Error('No workspace root found');
-    }
-
+  public async getLastPreReleases(): Promise<any[]> {
     try {
-      // Get GitHub releases
-      const githubReleases = await this.getGitHubReleases();
-
-      // Get catalog releases if we have a selected catalog
-      const selectedCatalogId = await this.getSelectedCatalogId();
-      let catalogReleases: GitHubRelease[] = [];
-
-      if (selectedCatalogId) {
-        try {
-          const catalogDetails = await this.getSelectedCatalogDetails(selectedCatalogId);
-          catalogReleases = catalogDetails.versions.map(version => ({
-            tag_name: `catalog-${version.version}`,
-            name: `Catalog Release ${version.version}`,
-            created_at: new Date().toISOString(), // Catalog doesn't provide dates
-            tarball_url: ''
-          }));
-        } catch (error) {
-          this.logger.warn('Failed to fetch catalog releases', { error }, 'preRelease');
-        }
+      // Try to get repository info even if not authenticated
+      const repoInfo = await this.getRepositoryInfo();
+      if (!repoInfo) {
+        this.logger.debug('No repository info available', {}, 'preRelease');
+        return [];
       }
 
-      // Combine and sort all releases
-      const allReleases = [...githubReleases, ...catalogReleases]
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 5);
+      // Create an anonymous Octokit instance for public repos if not authenticated
+      const octokit = this.octokit || new Octokit();
 
-      this.logger.debug('Fetched combined releases', {
-        githubCount: githubReleases.length,
-        catalogCount: catalogReleases.length,
-        totalCount: allReleases.length
-      }, 'preRelease');
+      try {
+        const releases = await octokit.rest.repos.listReleases({
+          owner: repoInfo.owner,
+          repo: repoInfo.name,
+          per_page: 5
+        });
 
-      return allReleases;
+        return releases.data;
+      } catch (error) {
+        // If it fails and we're not authenticated, log it as debug (expected for private repos)
+        if (!this.octokit) {
+          this.logger.debug('Failed to fetch releases (possibly private repository)', { error }, 'preRelease');
+        } else {
+          this.logger.error('Failed to fetch releases', { error }, 'preRelease');
+        }
+        return [];
+      }
     } catch (error) {
       this.logger.error('Failed to get pre-releases', { error }, 'preRelease');
-      if (error instanceof Error) {
-        throw new Error(`Failed to get pre-releases: ${error.message}`);
-      }
-      throw new Error('Failed to get pre-releases');
+      return [];
     }
   }
 
@@ -532,6 +525,13 @@ export class PreReleaseService {
       }
 
       const tagName = `v${details.version}-${details.postfix}`;
+
+      // Check if release already exists
+      const existingReleases = await this.getLastPreReleases();
+      const releaseExists = existingReleases.some(release => release.tag_name === tagName);
+      if (releaseExists) {
+        throw new Error(`A release with tag ${tagName} already exists. Please choose a different version or postfix.`);
+      }
 
       // If only publishing to catalog, verify GitHub release exists and get tarball URL
       if (!details.releaseGithub && details.publishToCatalog) {
@@ -1102,6 +1102,32 @@ export class PreReleaseService {
     } catch (error) {
       this.logger.warn('IBM Cloud authentication check failed', { error }, 'preRelease');
       return false;
+    }
+  }
+
+  private async getRepositoryInfo(): Promise<{ owner: string; name: string } | undefined> {
+    try {
+      if (!this.workspaceRoot) {
+        return undefined;
+      }
+
+      // Get the remote URL from git config
+      const gitConfigPath = path.join(this.workspaceRoot, '.git', 'config');
+      const configContent = await fs.promises.readFile(gitConfigPath, 'utf8');
+
+      // Parse the remote URL
+      const remoteUrlMatch = configContent.match(/url\s*=\s*.*github\.com[:/]([^/]+)\/([^.]+)\.git/);
+      if (!remoteUrlMatch) {
+        return undefined;
+      }
+
+      return {
+        owner: remoteUrlMatch[1],
+        name: remoteUrlMatch[2]
+      };
+    } catch (error) {
+      this.logger.debug('Failed to get repository info', { error }, 'preRelease');
+      return undefined;
     }
   }
 }

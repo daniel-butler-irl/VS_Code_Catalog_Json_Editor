@@ -15,530 +15,348 @@ import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
 import { PreReleaseWebview } from './webview/PreReleaseWebview';
 import { AuthenticationSession } from 'vscode';
+import { PreReleaseService } from './services/PreReleaseService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    const isDebugMode = process.env.VSCODE_DEBUG_MODE === 'true';
-
-    if (isDebugMode) {
-        const config = vscode.workspace.getConfiguration('ibmCatalog');
-        config.update('enableDebugLogging', true, vscode.ConfigurationTarget.Global)
-            .then(
-                () => {
-                    console.log('Debug logging enabled');
-                    // Get the existing output channel
-                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
-                    outputChannel.show();
-                    outputChannel.appendLine('Debug logging enabled');
-                },
-                (error) => {
-                    console.error('Error enabling debug logging:', error);
-                    const outputChannel = vscode.window.createOutputChannel('IBM Catalog Extension');
-                    outputChannel.show();
-                    outputChannel.appendLine(`Error enabling debug logging: ${error}`);
-                }
-            );
-    }
-
-    // Initialize and configure logging
     const logger = LoggingService.getInstance();
-
-    // Set log level based on configuration or environment
-    const config = vscode.workspace.getConfiguration('ibmCatalog');
-    const debugMode = config.get<boolean>('enableDebugLogging', false);
-    logger.setLogLevel(debugMode ? LogLevel.DEBUG : LogLevel.INFO);
-
-    logger.info('Activating IBM Catalog Extension');
+    logger.info('Starting IBM Catalog Extension activation');
 
     try {
-        // Initialize services
-        // Set up CacheService early
+        // Set initial loading state
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', false);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+
+        // Initialize core services first
         const cacheService = CacheService.getInstance();
-        cacheService.setContext(context); // Set the context before any cache operations
+        cacheService.setContext(context);
 
         const uiStateService = UIStateService.getInstance(context);
         context.subscriptions.push(uiStateService);
 
-        const schemaService = new SchemaService();
-        await schemaService.initialize();
+        // Create status bar item early to show activation progress
+        const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+        statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
+        statusBarItem.show();
+        context.subscriptions.push(statusBarItem);
 
+        // Check authentication status early
+        const [isLoggedIn, isGithubLoggedIn] = await Promise.all([
+            AuthService.isLoggedIn(context),
+            AuthService.isGitHubLoggedIn(context)
+        ]);
+
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', isGithubLoggedIn);
+
+        // Initialize schema service in the background
+        const schemaService = new SchemaService();
+        const schemaInitPromise = schemaService.initialize();
+
+        // Initialize catalog service with basic setup
         logger.debug('Initializing CatalogService');
         const catalogService = new CatalogService(context);
-        const initialized = await catalogService.initialize();
+        const catalogInitPromise = catalogService.initialize();
 
-        if (!initialized) {
-            throw new Error('Failed to initialize CatalogService');
-        }
+        // Initialize PreReleaseService and PreReleaseWebview
+        const preReleaseService = PreReleaseService.getInstance(context);
+        const preReleaseWebview = PreReleaseWebview.initialize(context, logger, preReleaseService);
 
-        // Create tree provider even if no workspace (will show welcome view)
+        // Register the PreReleaseWebview provider
+        context.subscriptions.push(
+            vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
+                webviewOptions: {
+                    retainContextWhenHidden: true
+                }
+            })
+        );
+
+        // Create tree provider with minimal initial state
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
-
-        // Register the tree view with title buttons
         const treeView = vscode.window.createTreeView('ibmCatalogTree', {
             treeDataProvider: treeProvider,
             showCollapseAll: true
         });
 
-        // Connect the tree provider to the FileSystemService
+        // Connect the tree provider to the FileSystemService early
         const fileSystemService = FileSystemService.getInstance(context);
         fileSystemService.setTreeProvider(treeProvider);
 
-        // Track tree view selection changes - simplified for performance
-        let selectionDebounceTimer: NodeJS.Timeout | undefined;
-        let lastSelection: string | undefined;
+        // Register essential commands immediately
+        registerEssentialCommands(context, treeProvider, catalogService, statusBarItem);
 
-        treeView.onDidChangeSelection(async e => {
-            if (selectionDebounceTimer) {
-                clearTimeout(selectionDebounceTimer);
-            }
+        // Wait for critical services to initialize
+        const [catalogInitialized] = await Promise.all([
+            catalogInitPromise,
+            schemaInitPromise
+        ]);
 
-            if (e.selection.length > 0) {
-                const selectedItem = e.selection[0];
-                // Skip if same item
-                if (lastSelection === selectedItem.jsonPath) {
-                    return;
-                }
-                lastSelection = selectedItem.jsonPath;
-
-                // Queue the reveal operation
-                selectionDebounceTimer = setTimeout(() => {
-                    // Use setImmediate to yield to the event loop
-                    setImmediate(async () => {
-                        await treeView.reveal(selectedItem, {
-                            select: true,
-                            focus: false,
-                            expand: true
-                        });
-                    });
-                }, 150);
-            }
-        });
-
-        // Set tree view title
-        treeView.title = 'IBM Catalog';
-
-        // Only create file watcher if we have a workspace
-        let fileWatcher: CatalogFileSystemWatcher | undefined;
-        if (catalogService.hasWorkspace()) {
-            fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
-            context.subscriptions.push(fileWatcher);
-        }
-        const highlightService = new EditorHighlightService();
-
-        // Create status bar item
-        logger.debug('Creating status bar items');
-        const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-        statusBarItem.command = 'ibmCatalog.login'; // Default command
-        statusBarItem.show();
-        context.subscriptions.push(statusBarItem);
-
-        // Function to update the status bar based on login status
-        async function updateStatusBar() {
-            const isLoggedIn = await AuthService.isLoggedIn(context);
-            if (isLoggedIn) {
-                statusBarItem.text = '$(account) Logged in to IBM Cloud';
-                statusBarItem.tooltip = 'Click to logout';
-                statusBarItem.command = 'ibmCatalog.logout';
-            } else {
-                statusBarItem.text = '$(account) Not logged in to IBM Cloud';
-                statusBarItem.tooltip = 'Click to login';
-                statusBarItem.command = 'ibmCatalog.login';
-            }
-        }
-
-        // Call the function to set the initial status
-        updateStatusBar();
-
-        // Initialize catalog service
-        await catalogService.initialize();
-
-        // Use custom command for tree item clicks
-        let lastClickTime: number | null = null;
-        let lastClickedItemId: string | null = null;
-        let singleClickTimer: NodeJS.Timeout | null = null;
-
-        function handleTreeItemClick(item: CatalogTreeItem): void {
-            const now = Date.now();
-            const DOUBLE_CLICK_THRESHOLD = 500; // milliseconds
-            const clickedItemId = item.id || item.jsonPath;
-
-            if (
-                lastClickTime &&
-                lastClickedItemId === clickedItemId &&
-                now - lastClickTime < DOUBLE_CLICK_THRESHOLD
-            ) {
-                // Double-click detected
-                logger.debug('Double-click detected');
-
-                if (singleClickTimer) {
-                    clearTimeout(singleClickTimer);
-                    singleClickTimer = null;
-                }
-
-                if (item.isEditable()) {
-                    vscode.commands.executeCommand('ibmCatalog.editElement', item);
-                }
-
-                // Reset after double-click
-                lastClickTime = null;
-                lastClickedItemId = null;
-            } else {
-                // Single-click detected
-                logger.debug('Single-click detected');
-
-                if (singleClickTimer) {
-                    clearTimeout(singleClickTimer);
-                }
-
-                // Delay single-click action to distinguish from double-click
-                singleClickTimer = setTimeout(() => {
-                    vscode.commands.executeCommand('ibmCatalog.selectElement', item);
-                    singleClickTimer = null;
-                }, DOUBLE_CLICK_THRESHOLD);
-
-                lastClickTime = now;
-                lastClickedItemId = clickedItemId;
-            }
-        }
-
-        // Pass the treeView to the treeProvider
-        treeProvider.setTreeView(treeView);
-
-        // Pass the treeView to the highlight service
-        highlightService.setTreeView(treeView);
-
-        // Register commands
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.refresh', () => treeProvider.refresh()),
-            vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
-                logger.show();
-            }),
-            vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
-                const cacheService = CacheService.getInstance();
-                void cacheService.clearAll();
-                void schemaService.refreshSchema();
-                treeProvider.refresh();
-                vscode.window.showInformationMessage('IBM Catalog cache cleared');
-            }),
-            vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
-                const catalogFilePath = catalogService.getCatalogFilePath();
-                if (catalogFilePath) {
-                    const document = await vscode.workspace.openTextDocument(catalogFilePath);
-                    const editor = await vscode.window.showTextDocument(document, { preview: false });
-                    await catalogService.editElement(node);
-
-                    // Re-highlight the element after editing
-                    await highlightService.highlightJsonPath(node.jsonPath, editor);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.triggerEdit', async () => {
-                const selection = treeView.selection;
-                if (selection.length > 0) {
-                    const item = selection[0];
-                    logger.debug('Keyboard edit triggered', { itemPath: item.jsonPath });
-                    if (item.isEditable()) {
-                        await vscode.commands.executeCommand('ibmCatalog.editElement', item);
-                    }
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.addElement', async (parentNode: CatalogTreeItem) => {
-                try {
-                    if (!catalogService.isInitialized()) {
-                        const initialized = await catalogService.initialize();
-                        if (!initialized) {
-                            throw new Error('No IBM Catalog file found. Please create one first.');
-                        }
-                    }
-                    await catalogService.addElement(parentNode, schemaService);
-                    treeProvider.refresh();
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : 'Unknown error';
-                    vscode.window.showErrorMessage(`Failed to add element: ${message}`);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.login', async () => {
-                try {
-                    logger.info('Starting IBM Cloud login process');
-                    await AuthService.login(context);
-                    await updateStatusBar();
-                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', true);
-                    vscode.window.showInformationMessage('Successfully logged in to IBM Cloud');
-                    treeProvider.refresh(); // Refresh the tree view after login
-                } catch (error) {
-                    logger.error('Failed to login to IBM Cloud', { error });
-                    vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.selectElement', async (item: CatalogTreeItem) => {
-                const catalogFilePath = catalogService.getCatalogFilePath();
-                if (!catalogFilePath) { return; }
-
-                // Queue document operations
-                const document = await vscode.workspace.openTextDocument(catalogFilePath);
-                const editor = await vscode.window.showTextDocument(document, {
-                    preview: false,
-                    preserveFocus: true
-                });
-
-                // Use setImmediate for highlight operations
-                setImmediate(async () => {
-                    highlightService.clearHighlight();
-                    await highlightService.highlightJsonPath(item.jsonPath, editor);
-
-                    const range = highlightService.getCurrentHighlightRange();
-                    if (range) {
-                        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
-                    }
-                });
-            }),
-            vscode.commands.registerCommand('ibmCatalog.logout', async () => {
-                try {
-                    logger.info('Starting IBM Cloud logout process');
-                    await AuthService.logout(context);
-                    await updateStatusBar();
-                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
-                    vscode.window.showInformationMessage('Successfully logged out from IBM Cloud');
-                    treeProvider.refresh(); // Refresh the tree view after logout
-                } catch (error) {
-                    logger.error('Failed to logout from IBM Cloud', { error });
-                    vscode.window.showErrorMessage(`Failed to logout: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.loginGithub', async () => {
-                try {
-                    logger.info('Starting GitHub login process');
-                    const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
-                    if (session) {
-                        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', true);
-                        vscode.window.showInformationMessage('Successfully logged in to GitHub');
-                        treeProvider.refresh(); // Refresh the tree view after GitHub login
-                    }
-                } catch (error) {
-                    logger.error('Failed to login to GitHub', { error });
-                    vscode.window.showErrorMessage(`Failed to login to GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.logoutGithub', async () => {
-                try {
-                    logger.info('Starting GitHub logout process');
-                    await vscode.authentication.getSession('github', ['repo'], {
-                        clearSessionPreference: true,
-                        createIfNone: false
-                    });
-                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
-                    vscode.window.showInformationMessage('Successfully logged out from GitHub');
-                    treeProvider.refresh(); // Refresh the tree view after GitHub logout
-                } catch (error) {
-                    logger.error('Failed to logout from GitHub', { error });
-                    vscode.window.showErrorMessage(`Failed to logout from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.locateCatalogFile', async () => {
-                const files = await vscode.workspace.findFiles('**/ibm_catalog.json', '**/node_modules/**');
-                if (files.length > 0) {
-                    await catalogService.initialize();
-                    treeProvider.refresh();
-                    vscode.window.showInformationMessage('IBM Catalog file found and loaded');
-                } else {
-                    vscode.window.showInformationMessage('No ibm_catalog.json file found in workspace');
-                }
-            }),
-            // Register the custom tree item click command
-            vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
-            treeView,
-            ...(fileWatcher ? [fileWatcher] : []),
-            vscode.commands.registerCommand('ibmCatalogTree.revealJsonPath', async (jsonPath: string, options?: { select?: boolean; focus?: boolean }) => {
-                // Skip if same path
-                if (lastSelection === jsonPath) {
-                    return;
-                }
-                lastSelection = jsonPath;
-
-                // Use setImmediate to yield to the event loop for the search operation
-                const items = await new Promise<CatalogTreeItem[]>(resolve => {
-                    setImmediate(async () => {
-                        const result = await treeProvider.findItemsByJsonPath(jsonPath);
-                        resolve(result);
-                    });
-                });
-
-                if (items.length > 0) {
-                    const targetItem = items[0];
-
-                    // Queue parent expansion
-                    const parent = targetItem.parent;
-                    if (parent) {
-                        await new Promise<void>(resolve => {
-                            setImmediate(async () => {
-                                await treeView.reveal(parent, {
-                                    select: false,
-                                    focus: false,
-                                    expand: true
-                                });
-                                resolve();
-                            });
-                        });
-                    }
-
-                    // Queue item reveal - always default to not taking focus
-                    await new Promise<void>(resolve => {
-                        setImmediate(async () => {
-                            await treeView.reveal(targetItem, {
-                                select: options?.select ?? true,
-                                focus: options?.focus ?? false,
-                                expand: true
-                            });
-                            resolve();
-                        });
-                    });
-
-                    // Queue highlight update without taking focus
-                    setImmediate(() => {
-                        targetItem.setHighlighted(true);
-                        setTimeout(() => targetItem.setHighlighted(false), 1000);
-                    });
-                }
-            }),
-            vscode.commands.registerCommand('ibmCatalog.openPreReleasePanel', () => {
-                vscode.commands.executeCommand('ibmCatalogPreRelease.focus');
-            }),
-            vscode.commands.registerCommand('ibmCatalog.createPreRelease', () => {
-                vscode.commands.executeCommand('ibmCatalogPreRelease.focus');
-            }),
-            vscode.commands.registerCommand('ibmCatalog.showPreReleaseLogs', () => {
-                const logger = LoggingService.getInstance();
-                logger.show('preRelease');
-            })
-        );
-
-        // Connect the tree view to the highlight service for reverse highlighting
-        highlightService.setTreeView(treeView);
-
-        // Function to get the root path
-        function getRootPath(): string | undefined {
-            return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        }
-
-        // Function to check if ibm_catalog.json exists
-        async function updateCatalogFileContext() {
-            const rootPath = getRootPath();
-            if (!rootPath) {
-                vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
-                return;
-            }
-            const catalogFilePath = path.join(rootPath, 'ibm_catalog.json');
-            const fileExists = await fileExistsAsync(catalogFilePath);
-            vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', fileExists);
-        }
-
-        // Utility function to check file existence
-        function fileExistsAsync(filePath: string): Promise<boolean> {
-            return new Promise((resolve) => {
-                fs.access(filePath, fs.constants.F_OK, (err) => {
-                    resolve(!err);
-                });
-            });
-        }
-
-        // Call the function initially and whenever the workspace changes
-        await updateCatalogFileContext();
-
-        // Implement the createCatalogFile command
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.createCatalogFile', async () => {
-                const rootPath = getRootPath();
-                if (!rootPath) {
-                    vscode.window.showErrorMessage('No workspace folder is open.');
-                    return;
-                }
-
-                const catalogFilePath = path.join(rootPath, 'ibm_catalog.json');
-                const fileExists = await fileExistsAsync(catalogFilePath);
-                if (fileExists) {
-                    vscode.window.showInformationMessage('ibm_catalog.json already exists.');
-                    return;
-                }
-
-                const emptyCatalog = {
-                    products: [
-                        {
-                            label: '',
-                            name: '',
-                            product_kind: '',
-                            tags: [],
-                            offering_icon_url: '',
-                            flavors: []
-                        }
-                    ]
-                };
-
-                fs.writeFile(catalogFilePath, JSON.stringify(emptyCatalog, null, 4), (err) => {
-                    if (err) {
-                        vscode.window.showErrorMessage(`Failed to create ibm_catalog.json: ${err.message}`);
-                    } else {
-                        vscode.window.showInformationMessage('Created ibm_catalog.json');
-                        updateCatalogFileContext();
-
-                        // Optionally open the file
-                        const openPath = vscode.Uri.file(catalogFilePath);
-                        vscode.workspace.openTextDocument(openPath).then((doc) => {
-                            vscode.window.showTextDocument(doc);
-                        });
-
-                        // Refresh the tree view
-                        treeProvider.refresh();
-                    }
-                });
-            })
-        );
-
-        vscode.workspace.onDidDeleteFiles(() => {
-            updateCatalogFileContext();
-            treeProvider.refresh();
-        }, null, context.subscriptions);
-
-        // Also update the handlers for file creation and renaming
-        vscode.workspace.onDidCreateFiles(() => {
-            updateCatalogFileContext();
-            treeProvider.refresh();
-        }, null, context.subscriptions);
-
-        vscode.workspace.onDidRenameFiles(() => {
-            updateCatalogFileContext();
-            treeProvider.refresh();
-        }, null, context.subscriptions);
-
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', catalogService.hasWorkspace());
+        // Update workspace context after initialization
+        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', true);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
 
-        // Only register the pre-release webview provider if catalog file exists
-        if (catalogService.getCatalogFilePath()) {
-            const preReleaseWebview = PreReleaseWebview.getInstance(context);
-            context.subscriptions.push(
-                vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
-                    webviewOptions: {
-                        retainContextWhenHidden: true
-                    }
-                })
-            );
+        if (!catalogInitialized) {
+            logger.warn('CatalogService initialization incomplete');
         }
 
-        // Set initial login states
-        await updateStatusBar();
+        // Initialize remaining services and features asynchronously
+        initializeRemainingFeatures(context, catalogService, treeProvider, treeView, statusBarItem);
 
-        // Watch for authentication changes
+        // Add authentication state change listener
         context.subscriptions.push(
             vscode.authentication.onDidChangeSessions(async e => {
                 if (e.provider.id === 'github') {
-                    await updateStatusBar();
+                    // Check current GitHub auth state
+                    const isGithubLoggedIn = await AuthService.isGitHubLoggedIn(context);
+                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', isGithubLoggedIn);
+
+                    // Update PreReleaseWebview auth status if it exists
+                    const preReleaseView = PreReleaseWebview.getInstance();
+                    if (preReleaseView) {
+                        await preReleaseView.sendAuthenticationStatus();
+                    }
+                }
+            })
+        );
+
+        // Register logout commands
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ibmCatalog.logoutGithub', async () => {
+                // Show instructions for built-in GitHub logout
+                const signOutAction = 'How to Sign Out';
+                const response = await vscode.window.showInformationMessage(
+                    'To sign out of GitHub:',
+                    signOutAction
+                );
+
+                if (response === signOutAction) {
+                    await vscode.window.showInformationMessage(
+                        'Click the account icon in the bottom left corner of VS Code, then click "Sign out" next to your GitHub account.',
+                        { modal: true }
+                    );
+                }
+            }),
+
+            vscode.commands.registerCommand('ibmCatalog.logout', async () => {
+                try {
+                    // Clear IBM Cloud API key
+                    await AuthService.logout(context);
+                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+
+                    // Get PreReleaseWebview instance and update auth status
+                    const preReleaseView = PreReleaseWebview.getInstance();
+                    if (preReleaseView) {
+                        await preReleaseView.sendAuthenticationStatus();
+                    }
+
+                    vscode.window.showInformationMessage('Successfully logged out from IBM Cloud');
+                } catch (error) {
+                    logger.error('Failed to logout from IBM Cloud', { error });
+                    vscode.window.showErrorMessage('Failed to logout from IBM Cloud');
                 }
             })
         );
 
         logger.info('IBM Catalog Extension activated successfully');
+        statusBarItem.text = '$(check) IBM Catalog Extension Ready';
+        setTimeout(() => updateStatusBar(statusBarItem, context), 2000);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
     }
+}
+
+function registerEssentialCommands(
+    context: vscode.ExtensionContext,
+    treeProvider: CatalogTreeProvider,
+    catalogService: CatalogService,
+    statusBarItem: vscode.StatusBarItem
+): void {
+    // Register only essential commands for initial activation
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ibmCatalog.refresh', () => treeProvider.refresh()),
+        vscode.commands.registerCommand('ibmCatalog.login', async () => {
+            try {
+                await AuthService.login(context);
+                await updateStatusBar(statusBarItem, context);
+                await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', true);
+                vscode.window.showInformationMessage('Successfully logged in to IBM Cloud');
+                treeProvider.refresh();
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        })
+    );
+}
+
+async function initializeRemainingFeatures(
+    context: vscode.ExtensionContext,
+    catalogService: CatalogService,
+    treeProvider: CatalogTreeProvider,
+    treeView: vscode.TreeView<CatalogTreeItem>,
+    statusBarItem: vscode.StatusBarItem
+): Promise<void> {
+    const logger = LoggingService.getInstance();
+    const schemaService = new SchemaService();
+    await schemaService.initialize();
+
+    // Initialize file watcher if workspace exists
+    let fileWatcher: CatalogFileSystemWatcher | undefined;
+    if (catalogService.hasWorkspace()) {
+        fileWatcher = new CatalogFileSystemWatcher(catalogService, treeProvider);
+        context.subscriptions.push(fileWatcher);
+    }
+
+    // Register remaining commands
+    registerRemainingCommands(context, catalogService, treeProvider, treeView, schemaService, fileWatcher);
+
+    // Set up workspace change handlers
+    setupWorkspaceHandlers(context, catalogService, treeProvider);
+
+    // Update status bar and contexts
+    await updateStatusBar(statusBarItem, context);
+    await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', catalogService.hasWorkspace());
+    await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
+}
+
+async function updateStatusBar(statusBarItem: vscode.StatusBarItem, context: vscode.ExtensionContext): Promise<void> {
+    const isLoggedIn = await AuthService.isLoggedIn(context);
+    if (isLoggedIn) {
+        statusBarItem.text = '$(account) Logged in to IBM Cloud';
+        statusBarItem.tooltip = 'Click to logout';
+        statusBarItem.command = 'ibmCatalog.logout';
+    } else {
+        statusBarItem.text = '$(account) Not logged in to IBM Cloud';
+        statusBarItem.tooltip = 'Click to login';
+        statusBarItem.command = 'ibmCatalog.login';
+    }
+}
+
+function setupWorkspaceHandlers(
+    context: vscode.ExtensionContext,
+    catalogService: CatalogService,
+    treeProvider: CatalogTreeProvider
+): void {
+    const workspaceHandlers = [
+        vscode.workspace.onDidDeleteFiles,
+        vscode.workspace.onDidCreateFiles,
+        vscode.workspace.onDidRenameFiles
+    ].map(event =>
+        event(() => {
+            void updateCatalogFileContext(catalogService);
+            treeProvider.refresh();
+        }, null, context.subscriptions)
+    );
+
+    context.subscriptions.push(...workspaceHandlers);
+}
+
+async function updateCatalogFileContext(catalogService: CatalogService): Promise<void> {
+    await vscode.commands.executeCommand(
+        'setContext',
+        'ibmCatalog.catalogFileExists',
+        Boolean(catalogService.getCatalogFilePath())
+    );
+}
+
+function registerRemainingCommands(
+    context: vscode.ExtensionContext,
+    catalogService: CatalogService,
+    treeProvider: CatalogTreeProvider,
+    treeView: vscode.TreeView<CatalogTreeItem>,
+    schemaService: SchemaService,
+    fileWatcher?: CatalogFileSystemWatcher
+): void {
+    const logger = LoggingService.getInstance();
+    const highlightService = new EditorHighlightService();
+    highlightService.setTreeView(treeView);
+
+    // Track tree view selection
+    let lastClickTime: number | null = null;
+    let lastClickedItemId: string | null = null;
+    let singleClickTimer: NodeJS.Timeout | null = null;
+
+    function handleTreeItemClick(item: CatalogTreeItem): void {
+        const now = Date.now();
+        const DOUBLE_CLICK_THRESHOLD = 500;
+        const clickedItemId = item.id || item.jsonPath;
+
+        if (lastClickTime && lastClickedItemId === clickedItemId && now - lastClickTime < DOUBLE_CLICK_THRESHOLD) {
+            if (singleClickTimer) {
+                clearTimeout(singleClickTimer);
+                singleClickTimer = null;
+            }
+            if (item.isEditable()) {
+                void vscode.commands.executeCommand('ibmCatalog.editElement', item);
+            }
+            lastClickTime = null;
+            lastClickedItemId = null;
+        } else {
+            if (singleClickTimer) {
+                clearTimeout(singleClickTimer);
+            }
+            singleClickTimer = setTimeout(() => {
+                void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
+                singleClickTimer = null;
+            }, DOUBLE_CLICK_THRESHOLD);
+            lastClickTime = now;
+            lastClickedItemId = clickedItemId;
+        }
+    }
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
+            logger.show();
+        }),
+        vscode.commands.registerCommand('ibmCatalog.clearCache', () => {
+            const cacheService = CacheService.getInstance();
+            void cacheService.clearAll();
+            void schemaService.refreshSchema();
+            treeProvider.refresh();
+            vscode.window.showInformationMessage('IBM Catalog cache cleared');
+        }),
+        vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
+            const catalogFilePath = catalogService.getCatalogFilePath();
+            if (catalogFilePath) {
+                const document = await vscode.workspace.openTextDocument(catalogFilePath);
+                const editor = await vscode.window.showTextDocument(document, { preview: false });
+                await catalogService.editElement(node);
+                await highlightService.highlightJsonPath(node.jsonPath, editor);
+            }
+        }),
+        vscode.commands.registerCommand('ibmCatalog.triggerEdit', async () => {
+            const selection = treeView.selection;
+            if (selection.length > 0) {
+                const item = selection[0];
+                logger.debug('Keyboard edit triggered', { itemPath: item.jsonPath });
+                if (item.isEditable()) {
+                    await vscode.commands.executeCommand('ibmCatalog.editElement', item);
+                }
+            }
+        }),
+        vscode.commands.registerCommand('ibmCatalog.selectElement', async (item: CatalogTreeItem) => {
+            const catalogFilePath = catalogService.getCatalogFilePath();
+            if (!catalogFilePath) { return; }
+
+            const document = await vscode.workspace.openTextDocument(catalogFilePath);
+            const editor = await vscode.window.showTextDocument(document, {
+                preview: false,
+                preserveFocus: true
+            });
+
+            setImmediate(async () => {
+                highlightService.clearHighlight();
+                await highlightService.highlightJsonPath(item.jsonPath, editor);
+                const range = highlightService.getCurrentHighlightRange();
+                if (range) {
+                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                }
+            });
+        }),
+        vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
+        ...(fileWatcher ? [fileWatcher] : [])
+    );
 }
 
 export function deactivate(): void {
