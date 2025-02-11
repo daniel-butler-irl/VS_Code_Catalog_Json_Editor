@@ -63,6 +63,7 @@ export interface OfferingVersion {
     offering_id?: string;
     kind_id?: string;
     tags?: string[];
+    tgz_url?: string;
     configuration?: Configuration[];
     outputs?: Output[];
 }
