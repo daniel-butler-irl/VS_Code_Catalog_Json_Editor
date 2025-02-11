@@ -88,6 +88,15 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   private async initialize(): Promise<void> {
     try {
       await this.handleSetup();
+
+      // Get the webview state to restore the previously selected catalog
+      if (this.view?.webview) {
+        const state = await this.getWebviewState();
+        if (state?.selectedCatalogId) {
+          await this.handleCatalogSelection(state.selectedCatalogId);
+        }
+      }
+
       this.isInitialized = true;
     } catch (error) {
       this.logger.error('Failed to initialize Pre-Release webview', error);
@@ -99,6 +108,33 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       // Hide loading state after initialization attempt
       this.view?.webview.postMessage({ command: 'hideLoading' });
     }
+  }
+
+  private getWebviewState(): Promise<{ selectedCatalogId: string } | undefined> {
+    return new Promise((resolve) => {
+      if (!this.view?.webview) {
+        resolve(undefined);
+        return;
+      }
+
+      let disposable: vscode.Disposable | undefined;
+
+      const handler = (e: any) => {
+        if (e.data.command === 'stateResponse') {
+          disposable?.dispose();  // Remove the handler
+          resolve(e.data.state);
+        }
+      };
+
+      disposable = this.view.webview.onDidReceiveMessage(handler);
+      this.view.webview.postMessage({ command: 'getState' });
+
+      // Add timeout to prevent hanging
+      setTimeout(() => {
+        disposable?.dispose();  // Remove the handler
+        resolve(undefined);
+      }, 5000);
+    });
   }
 
   public async refresh(): Promise<void> {

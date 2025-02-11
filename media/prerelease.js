@@ -222,6 +222,12 @@
         const message = event.data;
 
         switch (message.command) {
+            case 'getState':
+                vscode.postMessage({
+                    command: 'stateResponse',
+                    state: vscode.getState() || { selectedCatalogId: '' }
+                });
+                break;
             case 'authenticationStatus':
                 isGithubAuthenticated = message.githubAuthenticated;
                 isCatalogAuthenticated = message.catalogAuthenticated;
