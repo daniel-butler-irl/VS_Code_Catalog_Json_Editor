@@ -19,22 +19,36 @@ interface PreReleaseDetails {
 }
 
 export class PreReleaseWebview implements vscode.WebviewViewProvider {
-  private static instance: PreReleaseWebview;
+  private static instance?: PreReleaseWebview;
+  private readonly logger: LoggingService;
+  private readonly preReleaseService: PreReleaseService;
+  private readonly context: vscode.ExtensionContext;
   private view?: vscode.WebviewView;
-  private preReleaseService: PreReleaseService;
-  private logger = LoggingService.getInstance();
-  private context: vscode.ExtensionContext;
+  private disposables: vscode.Disposable[] = [];
+  private isInitialized: boolean = false;
 
-  private constructor(context: vscode.ExtensionContext) {
+  private constructor(
+    context: vscode.ExtensionContext,
+    logger: LoggingService,
+    preReleaseService: PreReleaseService
+  ) {
     this.context = context;
-    this.preReleaseService = PreReleaseService.getInstance(context);
-    this.logger.debug('Initializing PreReleaseWebview', { service: 'PreReleaseWebview' }, 'preRelease');
+    this.logger = logger;
+    this.preReleaseService = preReleaseService;
   }
 
-  public static getInstance(context: vscode.ExtensionContext): PreReleaseWebview {
+  public static initialize(
+    context: vscode.ExtensionContext,
+    logger: LoggingService,
+    preReleaseService: PreReleaseService
+  ): PreReleaseWebview {
     if (!PreReleaseWebview.instance) {
-      PreReleaseWebview.instance = new PreReleaseWebview(context);
+      PreReleaseWebview.instance = new PreReleaseWebview(context, logger, preReleaseService);
     }
+    return PreReleaseWebview.instance;
+  }
+
+  public static getInstance(): PreReleaseWebview | undefined {
     return PreReleaseWebview.instance;
   }
 
@@ -44,58 +58,63 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ): Promise<void> {
     this.view = webviewView;
-
-    webviewView.webview.options = {
+    this.view.webview.options = {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'media')
       ]
     };
 
-    const styleUri = webviewView.webview.asWebviewUri(
+    const styleUri = this.view.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.css')
     );
-    const scriptUri = webviewView.webview.asWebviewUri(
+    const scriptUri = this.view.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.js')
     );
 
-    this.logger.debug('Loading webview resources', {
-      styleUri: styleUri.toString(),
-      scriptUri: scriptUri.toString()
-    }, 'preRelease');
+    this.view.webview.html = this.getWebviewContent(styleUri, scriptUri);
 
-    // Set initial HTML
-    webviewView.webview.html = this.getWebviewContent(styleUri, scriptUri);
+    // Show loading state immediately
+    this.view.webview.postMessage({ command: 'showLoading', message: 'Initializing Pre-Release Manager...' });
 
-    // Handle theme changes
-    this.context.subscriptions.push(
-      vscode.window.onDidChangeActiveColorTheme(() => {
-        if (this.view) {
-          this.view.webview.html = this.getWebviewContent(styleUri, scriptUri);
-        }
-      })
-    );
+    // Initialize the webview
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
 
-    webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
-      try {
-        await this.handleMessage(message);
-      } catch (error) {
-        this.logger.error('Error handling webview message', { error }, 'preRelease');
-        vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    });
-
-    // Initial data load
-    await this.refresh();
+    this.registerMessageHandlers();
   }
 
-  private async refresh(): Promise<void> {
+  private async initialize(): Promise<void> {
+    try {
+      await this.handleSetup();
+      this.isInitialized = true;
+    } catch (error) {
+      this.logger.error('Failed to initialize Pre-Release webview', error);
+      this.view?.webview.postMessage({
+        command: 'showError',
+        error: 'Failed to initialize Pre-Release Manager. Please try refreshing.'
+      });
+    } finally {
+      // Hide loading state after initialization attempt
+      this.view?.webview.postMessage({ command: 'hideLoading' });
+    }
+  }
+
+  public async refresh(): Promise<void> {
     if (!this.view) {
       return;
     }
 
     try {
-      this.logger.debug('Starting pre-release panel refresh', {}, 'preRelease');
+      // Show loading state
+      this.view.webview.postMessage({ command: 'showLoading' });
+
+      // Clear any existing error state during refresh
+      this.view.webview.postMessage({
+        command: 'showError',
+        error: undefined
+      });
 
       const [releases, catalogData] = await Promise.allSettled([
         this.preReleaseService.getLastPreReleases().catch(error => {
@@ -116,6 +135,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           };
         })
       ]);
+
+      // Hide loading state
+      this.view.webview.postMessage({ command: 'hideLoading' });
 
       this.logger.debug('Updating UI with fetched data', {
         releasesStatus: releases.status,
@@ -140,6 +162,12 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       this.logger.info('Pre-release panel refresh complete', {}, 'preRelease');
     } catch (error) {
       this.logger.error('Error refreshing pre-release data', error, 'preRelease');
+      this.view?.webview.postMessage({
+        command: 'showError',
+        error: 'Failed to refresh data. Please try again.'
+      });
+      // Hide loading state even on error
+      this.view.webview.postMessage({ command: 'hideLoading' });
     }
   }
 
@@ -264,8 +292,20 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         <title>Pre-Release Manager</title>
     </head>
     <body>
-        <div class="container">
+        <div id="loadingView" class="loading-view">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Initializing Pre-Release Manager...</div>
+        </div>
+        <div id="mainContainer" class="container" style="display: none;">
             <div id="errorContainer" class="error-container"></div>
+            <div id="authStatus" class="auth-status">
+                <div id="githubAuthStatus" class="auth-item">
+                    <span class="auth-text">GitHub: Not logged in</span>
+                </div>
+                <div id="catalogAuthStatus" class="auth-item">
+                    <span class="auth-text">IBM Cloud: Not logged in</span>
+                </div>
+            </div>
             <div id="mainContent">
                 <div class="section">
                     <h2>Create Pre-Release</h2>
@@ -292,10 +332,10 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                         </div>
                     </div>
                     <div class="button-container">
-                        <button id="githubBtn" class="github-button" disabled>
+                        <button id="githubBtn" class="github-button" disabled title="Login to GitHub to create releases">
                             Pre-Release GitHub
                         </button>
-                        <button id="catalogBtn" class="catalog-button" disabled>
+                        <button id="catalogBtn" class="catalog-button" disabled title="Login to IBM Cloud to publish to catalog">
                             Pre-Release Catalog
                         </button>
                     </div>
@@ -304,7 +344,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                     <h2>Catalog Details</h2>
                     <div class="form-group">
                         <label for="catalogSelect">Select Catalog</label>
-                        <select id="catalogSelect" disabled>
+                        <select id="catalogSelect" disabled title="Login to IBM Cloud to view catalogs">
                             <option value="">Loading catalogs...</option>
                         </select>
                     </div>
@@ -438,7 +478,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     }
   }
 
-  private async sendAuthenticationStatus(): Promise<void> {
+  public async sendAuthenticationStatus(): Promise<void> {
     try {
       const [githubAuth, catalogAuth] = await Promise.all([
         this.preReleaseService.isGitHubAuthenticated(),
@@ -457,5 +497,24 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         error: 'Failed to check authentication status'
       });
     }
+  }
+
+  private registerMessageHandlers(): void {
+    this.disposables.push(
+      vscode.window.onDidChangeActiveColorTheme(() => {
+        if (this.view) {
+          this.view.webview.html = this.getWebviewContent(this.getMediaUri('prerelease.css'), this.getMediaUri('prerelease.js'));
+        }
+      })
+    );
+
+    this.view?.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+      try {
+        await this.handleMessage(message);
+      } catch (error) {
+        this.logger.error('Error handling webview message', { error }, 'preRelease');
+        vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
   }
 } 

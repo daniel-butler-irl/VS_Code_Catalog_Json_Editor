@@ -13,11 +13,14 @@ import {
     CatalogItem,
     OfferingItem,
     Kind,
-    OfferingVersion,
+    OfferingVersion as IBMCloudOfferingVersion,
     OfferingFlavor,
 } from '../types/ibmCloud';
 import { deduplicateRequest } from '../decorators/requestDeduplication';
 import { execAsync } from '../utils/execAsync';
+
+// Update type references in the code
+type OfferingVersion = IBMCloudOfferingVersion;
 
 interface ImportVersionOptions {
     zipurl: string;

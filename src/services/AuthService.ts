@@ -125,4 +125,13 @@ export class AuthService {
     public static async logout(context: vscode.ExtensionContext): Promise<void> {
         await this.clearApiKey(context);
     }
+
+    public static async isGitHubLoggedIn(context: vscode.ExtensionContext): Promise<boolean> {
+        try {
+            const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: false });
+            return !!session;
+        } catch (error) {
+            return false;
+        }
+    }
 }
