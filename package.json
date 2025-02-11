@@ -148,6 +148,11 @@
         "view": "ibmCatalogTree",
         "contents": "Create IBM Catalog JSON\n\nNo IBM Catalog JSON file found in your workspace.\n\n[Create IBM Catalog JSON](command:ibmCatalog.createCatalogFile)",
         "when": "!ibmCatalog.catalogFileExists"
+      },
+      {
+        "view": "ibmCatalogPreRelease",
+        "contents": "No IBM Catalog JSON file found in your workspace.\n\nPre-release functionality is only available when an IBM Catalog JSON file exists.",
+        "when": "!ibmCatalog.catalogFileExists"
       }
     ],
     "menus": {

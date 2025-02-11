@@ -510,15 +510,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', catalogService.hasWorkspace());
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
 
-        // Register the pre-release webview provider
-        const preReleaseWebview = PreReleaseWebview.getInstance(context);
-        context.subscriptions.push(
-            vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
-                webviewOptions: {
-                    retainContextWhenHidden: true
-                }
-            })
-        );
+        // Only register the pre-release webview provider if catalog file exists
+        if (catalogService.getCatalogFilePath()) {
+            const preReleaseWebview = PreReleaseWebview.getInstance(context);
+            context.subscriptions.push(
+                vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
+                    webviewOptions: {
+                        retainContextWhenHidden: true
+                    }
+                })
+            );
+        }
 
         // Set initial login states
         await updateStatusBar();
