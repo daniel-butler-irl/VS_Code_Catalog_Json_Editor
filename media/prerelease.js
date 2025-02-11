@@ -21,6 +21,8 @@
     let isCatalogAuthenticated = false;
 
     // DOM Elements
+    const loadingView = /** @type {HTMLElement} */ (document.getElementById('loadingView'));
+    const mainContainer = /** @type {HTMLElement} */ (document.getElementById('mainContainer'));
     const errorContainer = /** @type {HTMLElement} */ (document.getElementById('errorContainer'));
     const mainContent = /** @type {HTMLElement} */ (document.getElementById('mainContent'));
     const postfixInput = /** @type {HTMLInputElement} */ (document.getElementById('postfix'));
@@ -32,10 +34,12 @@
 
     // Initial state setup
     function initializeUI() {
-        // Start with version input disabled until we have version info
+        showLoading('Initializing Pre-Release Manager...');
+        
+        // Initialize inputs - version should be enabled from start
         if (versionInput) {
-            versionInput.disabled = true;
-            versionInput.placeholder = 'Select a catalog first';
+            versionInput.disabled = false;
+            versionInput.placeholder = 'Enter version number';
         }
 
         // Postfix should be enabled from start and not depend on catalog
@@ -47,23 +51,59 @@
         // Catalog select should always be enabled
         if (catalogSelect) {
             catalogSelect.disabled = false;
-            catalogSelect.innerHTML = '<option value="">Loading catalogs...</option>';
+            catalogSelect.innerHTML = '<option value="">Select a catalog...</option>';
         }
 
         // Show initial states for sections
         if (catalogDetailsDiv) {
-            catalogDetailsDiv.innerHTML = '<div class="section"><h2>Next Release</h2><div class="next-version loading">Loading version information...</div></div>';
+            catalogDetailsDiv.innerHTML = '<div class="section"><h2>Next Release</h2><div class="next-version"><div class="next-version-info"><div class="version-row"><span class="version-label">GitHub:</span><span class="version-value">Please select a catalog</span></div><div class="version-row"><span class="version-label">Catalog:</span><span class="version-value">Please select a catalog</span></div></div></div></div>';
+        }
+
+        // Initialize auth status display
+        const githubStatus = document.getElementById('githubAuthStatus');
+        const catalogStatus = document.getElementById('catalogAuthStatus');
+        if (githubStatus) {
+            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Checking...';
+        }
+        if (catalogStatus) {
+            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Checking...';
         }
 
         // Restore previous catalog selection if available
         const previousState = vscode.getState();
         if (previousState?.selectedCatalogId && catalogSelect) {
             catalogSelect.value = previousState.selectedCatalogId;
-            // Trigger catalog selection
-            vscode.postMessage({ 
-                command: 'selectCatalog',
-                catalogId: previousState.selectedCatalogId
-            });
+            // If we have a previous catalog selection and we're not on main/master,
+            // enable the version input
+            if (!isMainOrMaster && versionInput) {
+                versionInput.disabled = false;
+                versionInput.placeholder = 'Enter version number';
+            }
+        }
+
+        // Request initial authentication status
+        vscode.postMessage({ command: 'checkAuthentication' });
+    }
+
+    function showLoading(message = 'Loading...') {
+        if (loadingView) {
+            const loadingText = loadingView.querySelector('.loading-text');
+            if (loadingText) {
+                loadingText.textContent = message;
+            }
+            loadingView.style.display = 'flex';
+        }
+        if (mainContainer) {
+            mainContainer.style.display = 'none';
+        }
+    }
+
+    function hideLoading() {
+        if (loadingView) {
+            loadingView.style.display = 'none';
+        }
+        if (mainContainer) {
+            mainContainer.style.display = 'block';
         }
     }
 
@@ -74,11 +114,12 @@
         
         // Immediately request branch name
         vscode.postMessage({ command: 'getBranchName' });
-        vscode.postMessage({ command: 'checkAuthentication' });
         
         // Set up polling for branch changes
         branchCheckInterval = setInterval(() => {
             vscode.postMessage({ command: 'getBranchName' });
+            // Also periodically check auth status
+            vscode.postMessage({ command: 'checkAuthentication' });
         }, 2000); // Check every 2 seconds
     });
 
@@ -113,11 +154,19 @@
                 mainContent.classList.add('loading-state');
             }
 
+            // Enable version and postfix inputs if not on main/master branch
+            if (!isMainOrMaster) {
+                if (versionInput) {
+                    versionInput.disabled = false;
+                    versionInput.placeholder = 'Enter version number';
+                }
+                if (postfixInput) {
+                    postfixInput.disabled = false;
+                }
+            }
+
             // Temporarily disable controls during load
             if (catalogSelect) {catalogSelect.disabled = true;}
-            if (versionInput) {versionInput.disabled = true;}
-            if (githubBtn) {githubBtn.disabled = true;}
-            if (catalogBtn) {catalogBtn.disabled = true;}
             if (refreshButton) {refreshButton.disabled = true;}
 
             // Clear any existing timeout
@@ -131,6 +180,7 @@
                 if (!isMainOrMaster) {
                     if (catalogSelect) {catalogSelect.disabled = false;}
                     if (versionInput) {versionInput.disabled = false;}
+                    if (postfixInput) {postfixInput.disabled = false;}
                     updateButtonStates();
                     if (refreshButton) {refreshButton.disabled = !selectedCatalogId;}
                 }
@@ -155,7 +205,10 @@
             // Re-enable controls if not on main/master
             if (!isMainOrMaster) {
                 if (catalogSelect) {catalogSelect.disabled = false;}
-                if (versionInput) {versionInput.disabled = false;}
+                if (versionInput) {
+                    versionInput.disabled = true;
+                    versionInput.placeholder = 'Select a catalog first';
+                }
                 updateButtonStates();
                 if (refreshButton) {refreshButton.disabled = true;} // Disable refresh when no catalog selected
             }
@@ -170,7 +223,7 @@
             case 'authenticationStatus':
                 isGithubAuthenticated = message.githubAuthenticated;
                 isCatalogAuthenticated = message.catalogAuthenticated;
-                updateButtonStates();
+                updateAuthStatus(isGithubAuthenticated, isCatalogAuthenticated);
                 break;
             case 'updateData':
                 handleUpdateData(message);
@@ -197,6 +250,12 @@
             case 'releaseComplete':
                 handleReleaseComplete(message.success, message.error);
                 break;
+            case 'showLoading':
+                showLoading(message.message || 'Loading...');
+                break;
+            case 'hideLoading':
+                hideLoading();
+                break;
         }
     });
 
@@ -216,9 +275,11 @@
         // Store releases for later use
         lastReleases = message.releases || [];
         
-        // Only disable version input until catalog is selected
-        versionInput.disabled = true;
-        versionInput.placeholder = 'Select a catalog first';
+        // Version input should always be enabled unless on main/master
+        if (!isMainOrMaster) {
+            versionInput.disabled = false;
+            versionInput.placeholder = 'Enter version number';
+        }
         
         // Postfix should remain enabled and keep its value
         if (postfixInput && !postfixInput.value && currentBranch) {
@@ -252,8 +313,8 @@
         
         // Only enable version and postfix inputs if we're not on main/master
         if (!isMainOrMaster) {
-            if (versionInput) {versionInput.disabled = false;}
-            if (postfixInput) {postfixInput.disabled = false;}
+            if (versionInput) { versionInput.disabled = false; }
+            if (postfixInput) { postfixInput.disabled = false; }
         }
         
         // Remove loading state
@@ -336,11 +397,9 @@
             if (catalogSelect) catalogSelect.disabled = true;
             showError('Pre-releases cannot be created from main/master branch. Please switch to another branch.');
         } else {
-            // Only enable catalog select initially
+            // Enable all inputs by default
             if (catalogSelect) catalogSelect.disabled = false;
-            // Keep version disabled until catalog is selected
-            if (versionInput) versionInput.disabled = true;
-            // Enable postfix input
+            if (versionInput) versionInput.disabled = false;
             if (postfixInput) postfixInput.disabled = false;
         }
 
@@ -853,105 +912,76 @@
         timestampDiv.title = isCacheUsed ? 'Using cached data' : 'Using fresh data';
     }
 
+    function updateAuthStatus(githubAuth, catalogAuth) {
+        const githubStatus = document.getElementById('githubAuthStatus');
+        const catalogStatus = document.getElementById('catalogAuthStatus');
+
+        if (githubAuth) {
+            githubStatus.classList.add('authenticated');
+            githubStatus.classList.remove('not-authenticated');
+            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Logged in';
+            if (githubBtn) {
+                githubBtn.title = 'Create GitHub pre-release';
+            }
+        } else {
+            githubStatus.classList.add('not-authenticated');
+            githubStatus.classList.remove('authenticated');
+            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Not logged in';
+            if (githubBtn) {
+                githubBtn.title = 'Login to GitHub to create releases';
+            }
+        }
+
+        if (catalogAuth) {
+            catalogStatus.classList.add('authenticated');
+            catalogStatus.classList.remove('not-authenticated');
+            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Logged in';
+            if (catalogBtn) {
+                catalogBtn.title = 'Create catalog pre-release';
+            }
+            if (catalogSelect) {
+                catalogSelect.title = 'Select a catalog';
+            }
+        } else {
+            catalogStatus.classList.add('not-authenticated');
+            catalogStatus.classList.remove('authenticated');
+            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Not logged in';
+            if (catalogBtn) {
+                catalogBtn.title = 'Login to IBM Cloud to publish to catalog';
+            }
+            if (catalogSelect) {
+                catalogSelect.title = 'Login to IBM Cloud to view catalogs';
+            }
+        }
+
+        // Store the authentication states
+        isGithubAuthenticated = githubAuth;
+        isCatalogAuthenticated = catalogAuth;
+
+        // Update button states based on new auth status
+        updateButtonStates();
+    }
+
     function updateButtonStates() {
         if (!githubBtn || !catalogBtn) {
-            console.error('Buttons not found');
             return;
         }
 
-        // Default state is disabled
-        githubBtn.disabled = true;
-        catalogBtn.disabled = true;
+        const hasVersion = versionInput?.value?.trim();
+        const hasPostfix = postfixInput?.value?.trim();
+        const hasCatalog = catalogSelect?.value;
 
-        // Set default tooltips
-        githubBtn.title = 'Pre-Release to GitHub is not available';
-        catalogBtn.title = 'Pre-Release to Catalog is not available';
+        // GitHub button requires version and postfix
+        githubBtn.disabled = !hasVersion || !hasPostfix || !isGithubAuthenticated;
 
-        // Check for blocking conditions in order of priority
-        if (!isGithubAuthenticated) {
-            githubBtn.title = 'Please authenticate with GitHub first';
-            catalogBtn.title = 'Please authenticate with GitHub first';
-            return;
-        }
+        // Catalog button requires version, postfix, catalog selection and authentication
+        catalogBtn.disabled = !hasVersion || !hasPostfix || !hasCatalog || !isCatalogAuthenticated;
 
-        if (!isCatalogAuthenticated) {
-            githubBtn.title = 'Please authenticate with IBM Cloud first';
-            catalogBtn.title = 'Please authenticate with IBM Cloud first';
-            return;
-        }
-
-        if (isMainOrMaster) {
-            githubBtn.title = 'Cannot create releases from main/master branch';
-            catalogBtn.title = 'Cannot create releases from main/master branch';
-            return;
-        }
-
-        if (hasUnpushedChanges) {
-            githubBtn.title = 'Please push your changes first';
-            catalogBtn.title = 'Please push your changes first';
-            return;
-        }
-
-        // Check for required inputs
-        const hasVersion = versionInput && versionInput.value.trim() !== '';
-        const hasPostfix = postfixInput && postfixInput.value.trim() !== '';
-        const hasCatalog = catalogSelect && catalogSelect.value !== '';
-
-        // Enable GitHub button only if we have version and postfix
-        if (hasVersion && hasPostfix) {
-            githubBtn.disabled = false;
-            githubBtn.title = 'Create a GitHub pre-release';
-        } else {
-            githubBtn.title = 'Please enter version and postfix';
-        }
-
-        // Enable catalog button only if we have version, postfix, and catalog
-        if (hasVersion && hasPostfix && hasCatalog) {
-            catalogBtn.disabled = false;
-            catalogBtn.title = 'Create a catalog pre-release';
-        } else if (!hasCatalog) {
-            catalogBtn.title = 'Please select a catalog first';
-        } else {
+        // Update catalog select state
+        if (catalogSelect) {
+            catalogSelect.disabled = !isCatalogAuthenticated;
         }
     }
-
-    // Add input event listeners for version and postfix to update button states
-    versionInput?.addEventListener('input', updateButtonStates);
-    postfixInput?.addEventListener('input', updateButtonStates);
-
-    // Update button states when catalog selection changes
-    catalogSelect?.addEventListener('change', () => {
-        updateButtonStates();
-        // ... rest of existing catalog change handler ...
-    });
-
-    // Update button states when branch name changes
-    function updateBranchName(branch, error) {
-        currentBranch = branch;
-        isMainOrMaster = ['main', 'master'].includes(branch);
-        updateButtonStates();
-        // ... rest of existing branch name update handler ...
-    }
-
-    // Update button states when unpushed changes status changes
-    function handleUnpushedChanges(unpushedChanges) {
-        hasUnpushedChanges = unpushedChanges;
-        updateButtonStates();
-        // ... rest of existing unpushed changes handler ...
-    }
-
-    // Call updateButtonStates after authentication status is received
-    window.addEventListener('message', event => {
-        const message = event.data;
-        switch (message.command) {
-            case 'authenticationStatus':
-                isGithubAuthenticated = message.githubAuthenticated;
-                isCatalogAuthenticated = message.catalogAuthenticated;
-                updateButtonStates();
-                break;
-            // ... rest of existing message handler ...
-        }
-    });
 
     function updateBranchInfo(branchInfo) {
         const branchInfoDiv = document.getElementById('branchInfo');
