@@ -347,7 +347,6 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
             <div class="loading-text">Initializing Pre-Release Manager...</div>
         </div>
         <div id="mainContainer" class="container" style="display: none;">
-            <div id="errorContainer" class="error-container"></div>
             <div id="authStatus" class="auth-status">
                 <div id="githubAuthStatus" class="auth-item">
                     <span class="auth-text">GitHub: Not logged in</span>
@@ -383,7 +382,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                     </div>
                     <div class="button-container">
                         <button id="githubBtn" class="action-button" disabled>
-                            Create GitHub Release
+                            Create Pre-Release
                         </button>
                         <button id="catalogBtn" class="action-button" disabled>
                             Import to Catalog
@@ -430,6 +429,14 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   private async handleCatalogSelection(catalogId: string): Promise<void> {
     try {
       this.logger.debug('Fetching catalog details', { catalogId }, 'preRelease');
+
+      // Force a refresh when selecting a catalog to ensure fresh data
+      await this.preReleaseService.handleForceRefresh(catalogId);
+
+      // Do a full refresh to get fresh version mapping data
+      await this.refresh();
+
+      // Then get the catalog details with fresh data
       const catalogDetails = await this.preReleaseService.getSelectedCatalogDetails(catalogId);
 
       this.logger.debug('Updating catalog details in UI', {
@@ -454,10 +461,29 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     }
   }
 
+  private async handleGetLatestClick(): Promise<void> {
+    try {
+      const state = await this.getWebviewState();
+      if (state?.selectedCatalogId) {
+        // Force a full refresh to clear caches and get fresh data
+        await this.preReleaseService.handleForceRefresh(state.selectedCatalogId);
+        await this.refresh();
+      } else {
+        await this.refresh();
+      }
+    } catch (error) {
+      this.logger.error('Failed to get latest releases', { error }, 'preRelease');
+      this.view?.webview.postMessage({
+        command: 'showError',
+        error: error instanceof Error ? error.message : 'Failed to get latest releases'
+      });
+    }
+  }
+
   private async handleMessage(message: WebviewMessage): Promise<void> {
     try {
-      // Only log non-getBranchName messages to avoid noise
-      if (message.command !== 'getBranchName') {
+      // Only log non-getBranchName and non-checkAuthentication messages to avoid noise
+      if (message.command !== 'getBranchName' && message.command !== 'checkAuthentication') {
         this.logger.debug('Handling webview message', { command: message.command }, 'preRelease');
       }
 

@@ -21,6 +21,8 @@
     let isCacheUsed = false;
     let isGithubAuthenticated = false;
     let isCatalogAuthenticated = false;
+    let loadingState = false;
+    let loadingMessage = '';
 
     // DOM Elements
     const loadingView = /** @type {HTMLElement} */ (document.getElementById('loadingView'));
@@ -243,13 +245,16 @@
                 updateTimestampDisplay();
                 break;
             case 'updateBranchName':
-                updateBranchName(message.branch, message.error);
-                break;
-            case 'showError':
-                handleError(message.error);
+                updateBranchName(message.branch);
                 break;
             case 'updateCatalogDetails':
                 updateCatalogDetails(message.catalogDetails);
+                break;
+            case 'updateNextVersion':
+                if (versionInput && !versionInput.value) {
+                    versionInput.value = message.version;
+                    updateTagPreview();
+                }
                 break;
             case 'hasUnpushedChanges':
                 handleUnpushedChanges(message.hasUnpushedChanges);
@@ -261,10 +266,13 @@
                 handleReleaseComplete(message.success, message.error, message.cancelled);
                 break;
             case 'showLoading':
-                showLoading(message.message || 'Loading...');
+                handleSetLoadingState(message);
                 break;
             case 'hideLoading':
                 hideLoading();
+                break;
+            case 'showError':
+                handleError(message.error);
                 break;
         }
     });
@@ -333,59 +341,67 @@
     }
 
     function handleError(error) {
-        const errorContainer = document.getElementById('errorContainer');
-        const errorText = document.getElementById('errorText');
+        // Instead of showing error, just log it
+        console.log('Operation could not be completed:', error);
         
-        if (!errorContainer || !errorText) {
-            console.error('Error elements not found');
-            return;
+        // Ensure UI stays functional
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
         }
+        hideLoading();
         
-        if (error) {
-            errorText.textContent = error;
-            errorContainer.classList.add('visible');
-        } else {
-            errorContainer.classList.remove('visible');
-        }
+        // Re-enable all controls
+        enableAllControls();
     }
 
-    /**
-     * Shows or hides the error container
-     * @param {string} [errorMessage] 
-     * @param {boolean} [force] Whether to force clearing the error even on main/master
-     */
-    function showError(errorMessage, force = false) {
-        // Don't clear error if we're on main/master unless forced
-        if (!errorMessage && isMainOrMaster && !force) {
-            return;
+    function enableAllControls() {
+        // Re-enable all interactive elements
+        if (catalogSelect) {
+            catalogSelect.disabled = false;
+        }
+        if (versionInput) {
+            versionInput.disabled = false;
+        }
+        if (postfixInput) {
+            postfixInput.disabled = false;
+        }
+        if (githubBtn) {
+            githubBtn.disabled = false;
+            githubBtn.textContent = 'Create Pre-Release';
+            githubBtn.classList.remove('loading');
+        }
+        if (catalogBtn) {
+            catalogBtn.disabled = false;
+            catalogBtn.textContent = 'Import to Catalog';
+            catalogBtn.classList.remove('loading');
+        }
+        if (getLatestBtn) {
+            getLatestBtn.disabled = false;
         }
 
+        // Update button states based on current auth status
+        updateButtonStates();
+    }
+
+    // Update showError function to not show the red box
+    function showError(errorMessage, force = false) {
+        // Don't show errors, just log them
         if (errorMessage) {
-            const errorText = /** @type {HTMLElement} */ (document.getElementById('errorText'));
-            if (errorText) {
-                errorText.textContent = errorMessage;
-            }
-            errorContainer?.classList.add('show');
-            mainContent?.classList.add('has-error');
-            hasErrors = true;
-        } else {
-            errorContainer?.classList.remove('show');
-            mainContent?.classList.remove('has-error');
-            hasErrors = false;
+            console.log('Operation message:', errorMessage);
         }
+        
+        // Always ensure UI is functional
+        if (mainContent) {
+            mainContent.classList.remove('has-error');
+        }
+        enableAllControls();
     }
 
     /**
      * Updates the branch name and suggests a postfix
      * @param {string} branch
-     * @param {string} [error]
      */
-    function updateBranchName(branch, error) {
-        if (error) {
-            showError(error);
-            return;
-        }
-
+    function updateBranchName(branch) {
         // Update current branch
         currentBranch = branch;
 
@@ -595,79 +611,65 @@
                         </thead>
                         <tbody>`;
 
-            // Create a map of catalog versions with their GitHub tags
-            const catalogVersionMap = new Map();
+            // Create a map of GitHub tags to catalog versions
+            const versionMap = new Map();
             details.versions.forEach(version => {
-                const tagMatch = version.tgz_url?.match(/\/tags\/([^/]+)\.tar\.gz/);
-                if (tagMatch) {
-                    catalogVersionMap.set(tagMatch[1], version);
+                if (version.githubTag) {
+                    if (!versionMap.has(version.githubTag)) {
+                        versionMap.set(version.githubTag, []);
+                    }
+                    versionMap.get(version.githubTag).push(version);
                 }
             });
 
-            // Sort GitHub releases by version (newest first)
-            const sortedGitHubReleases = [...githubReleases].sort((a, b) => {
-                const aTag = String('tag_name' in a ? a.tag_name : a.tag);
-                const bTag = String('tag_name' in b ? b.tag_name : b.tag);
-                const aVersion = aTag.replace(/^v/, '').split('-')[0];
-                const bVersion = bTag.replace(/^v/, '').split('-')[0];
-                return -semverCompare(aVersion, bVersion);
-            });
+            // Create a set of processed GitHub tags
+            const processedTags = new Set();
 
-            // First, show any GitHub releases that aren't in the catalog
-            sortedGitHubReleases.forEach(release => {
-                const releaseTag = 'tag_name' in release ? release.tag_name : release.tag;
-                if (!catalogVersionMap.has(releaseTag)) {
-                    content += `
-                        <tr>
-                            <td class="github-version">
-                                <div class="version-tag">${releaseTag}</div>
-                            </td>
-                            <td class="catalog-version">
-                                <div class="version-tag not-published">
-                                    <div class="version-number">Not published</div>
-                                </div>
-                            </td>
-                        </tr>`;
-                }
-            });
-
-            // Get unique versions from catalog (based on version number)
-            const uniqueVersions = Array.from(new Set(details.versions.map(v => v.version)))
-                .sort((a, b) => -semverCompare(a, b))
-                .slice(0, 5);
-
-            console.debug('Unique versions for display', {
-                uniqueVersions,
-                count: uniqueVersions.length
-            });
-
-            // Then show catalog versions with their matching GitHub releases
-            uniqueVersions.forEach(version => {
-                const catalogEntries = details.versions.filter(v => v.version === version);
-                
-                // Get GitHub tag from any entry that has a tgz_url
-                const githubTag = catalogEntries.find(entry => {
-                    const tagMatch = entry.tgz_url?.match(/\/tags\/([^/]+)\.tar\.gz/);
-                    return tagMatch;
-                })?.tgz_url?.match(/\/tags\/([^/]+)\.tar\.gz/)?.[1];
+            // First, process GitHub releases
+            githubReleases.forEach(release => {
+                const tag = 'tag_name' in release ? release.tag_name : release.tag;
+                const catalogEntries = versionMap.get(tag) || [];
+                processedTags.add(tag);
 
                 content += `
                     <tr>
                         <td class="github-version">
-                            ${githubTag ? 
-                                `<div class="version-tag">${githubTag}</div>` :
+                            <div class="version-tag">${tag}</div>
+                        </td>
+                        <td class="catalog-version">
+                            ${catalogEntries.length > 0 ? 
+                                catalogEntries.map(entry => `
+                                    <div class="version-tag" title="${entry.tgz_url || ''}">
+                                        <div class="version-number">${entry.version}</div>
+                                        <div class="version-flavor">${entry.flavor?.label || entry.flavor?.name || 'Unknown'}</div>
+                                    </div>
+                                `).join('') :
                                 `<div class="version-tag not-published">
                                     <div class="version-number">Not published</div>
                                 </div>`
                             }
                         </td>
+                    </tr>`;
+            });
+
+            // Then, process any catalog versions that don't have a matching GitHub release
+            details.versions.forEach(version => {
+                if (!version.githubTag || processedTags.has(version.githubTag)) {
+                    return;
+                }
+
+                content += `
+                    <tr>
+                        <td class="github-version">
+                            <div class="version-tag not-published">
+                                <div class="version-number">Not published</div>
+                            </div>
+                        </td>
                         <td class="catalog-version">
-                            ${catalogEntries.map(entry => `
-                                <div class="version-tag" ${entry.tgz_url ? `title="${entry.tgz_url}"` : ''}>
-                                    <div class="version-number">${entry.version}</div>
-                                    <div class="version-flavor">${entry.flavor?.label || entry.flavor?.name || 'Unknown'}</div>
-                                </div>
-                            `).join('')}
+                            <div class="version-tag" title="${version.tgz_url || ''}">
+                                <div class="version-number">${version.version}</div>
+                                <div class="version-flavor">${version.flavor?.label || version.flavor?.name || 'Unknown'}</div>
+                            </div>
                         </td>
                     </tr>`;
             });
@@ -815,6 +817,12 @@
             return;
         }
 
+        // For catalog imports, verify a catalog is selected
+        if (type === 'catalog' && !catalogId) {
+            // Just return without showing error - the button should be disabled anyway
+            return;
+        }
+
         // Clear any existing error state
         showError(undefined, true);
 
@@ -847,7 +855,6 @@
         const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
         
         if (!refreshButton || !mainContent || !catalogSelect) {
-            console.error('Required elements not found');
             return;
         }
 
@@ -864,19 +871,6 @@
             // Add loading state to main content
             mainContent.classList.add('loading-state');
             
-            // Disable all interactive elements during refresh
-            catalogSelect.disabled = true;
-            if (versionInput) {versionInput.disabled = true;}
-            if (postfixInput) {postfixInput.disabled = true;}
-
-            // Show loading state in catalog details
-            if (catalogDetailsDiv) {
-                catalogDetailsDiv.innerHTML = '<p class="loading">Refreshing catalog data...</p>';
-            }
-
-            // Clear any existing error
-            showError(undefined, true);
-
             // Save the current catalog selection before refresh
             const currentCatalogId = catalogSelect.value;
             vscode.setState({ ...state, selectedCatalogId: currentCatalogId });
@@ -888,12 +882,11 @@
             });
 
         } catch (error) {
-            showError('Failed to refresh catalog data. Please try again.');
-            // Reset button state
-            refreshButton.disabled = !catalogSelect.value;
-            refreshButton.textContent = 'Get Latest Versions';
-            refreshButton.classList.remove('refreshing');
-            mainContent.classList.remove('loading-state');
+            // Just reset the UI state without showing error
+            enableAllControls();
+            if (mainContent) {
+                mainContent.classList.remove('loading-state');
+            }
         }
     }
 
@@ -908,11 +901,6 @@
             catalogBtn.disabled = false;
             catalogBtn.textContent = 'Import to Catalog';
             catalogBtn.classList.remove('loading');
-        }
-
-        // Only show error if it's not a cancellation
-        if (error && !cancelled) {
-            showError(error);
         }
 
         // Reset loading states
@@ -984,31 +972,40 @@
         const catalogSelect = document.getElementById('catalogSelect');
         const versionInput = document.getElementById('version');
         const postfixInput = document.getElementById('postfix');
+        const getLatestBtn = document.getElementById('getLatestBtn');
+
+        const hasCatalogSelected = catalogSelect instanceof HTMLSelectElement && catalogSelect.value;
 
         // Update GitHub-related UI elements
         if (githubBtn instanceof HTMLButtonElement) {
-            githubBtn.disabled = !isGithubAuthenticated;
-            githubBtn.title = isGithubAuthenticated ? 'Create GitHub pre-release' : 'Login to GitHub to create pre-releases';
+            githubBtn.disabled = !isGithubAuthenticated || !hasCatalogSelected;
+            githubBtn.title = !isGithubAuthenticated ? 'Login to GitHub to create pre-releases' : 
+                            !hasCatalogSelected ? 'Select a catalog first' :
+                            'Create GitHub pre-release';
         }
 
         // Update catalog-related UI elements
         if (catalogBtn instanceof HTMLButtonElement) {
-            catalogBtn.disabled = !isCatalogAuthenticated;
-            catalogBtn.title = isCatalogAuthenticated ? 'Create catalog pre-release' : 'Login to IBM Cloud to publish to catalog';
+            catalogBtn.disabled = !isCatalogAuthenticated || !hasCatalogSelected;
+            catalogBtn.title = !isCatalogAuthenticated ? 'Login to IBM Cloud to publish to catalog' : 
+                             !hasCatalogSelected ? 'Select a catalog first' : 
+                             'Import to catalog';
         }
 
-        if (catalogSelect instanceof HTMLSelectElement) {
-            catalogSelect.disabled = !isCatalogAuthenticated;
-            catalogSelect.title = isCatalogAuthenticated ? 'Select a catalog' : 'Login to IBM Cloud to view catalogs';
+        if (getLatestBtn instanceof HTMLButtonElement) {
+            getLatestBtn.disabled = !hasCatalogSelected;
+            getLatestBtn.title = !hasCatalogSelected ? 'Select a catalog first' : 'Get latest releases';
         }
 
-        // Enable version and postfix inputs if either authentication is present
-        const shouldEnable = isGithubAuthenticated || isCatalogAuthenticated;
+        // Enable version and postfix inputs if authenticated and catalog selected
+        const shouldEnable = (isGithubAuthenticated || isCatalogAuthenticated) && hasCatalogSelected;
         if (versionInput instanceof HTMLInputElement) {
             versionInput.disabled = !shouldEnable;
+            versionInput.placeholder = !hasCatalogSelected ? 'Select a catalog first' : 'Enter version number';
         }
         if (postfixInput instanceof HTMLInputElement) {
             postfixInput.disabled = !shouldEnable;
+            postfixInput.placeholder = !hasCatalogSelected ? 'Select a catalog first' : 'Enter postfix';
         }
     }
 
@@ -1079,6 +1076,29 @@
             // Re-enable the button
             if (getLatestBtn) {
                 getLatestBtn.disabled = false;
+            }
+        }
+    }
+
+    function handleSetLoadingState(data) {
+        loadingState = data.loading;
+        loadingMessage = data.message || '';
+        
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const errorText = document.getElementById('error-text');
+        
+        if (loadingState) {
+            loadingOverlay.style.display = 'flex';
+            loadingText.textContent = loadingMessage;
+            errorText.style.display = 'none';
+        } else {
+            loadingOverlay.style.display = 'none';
+            if (data.error) {
+                errorText.textContent = data.error;
+                errorText.style.display = 'block';
+            } else {
+                errorText.style.display = 'none';
             }
         }
     }

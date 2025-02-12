@@ -34,6 +34,14 @@ export class LoggingService {
     }
 
     /**
+     * Gets the current logging level
+     * @returns The current LogLevel
+     */
+    public getLogLevel(): LogLevel {
+        return this.logLevel;
+    }
+
+    /**
      * Sets the logging level
      * @param level The minimum level to log
      */

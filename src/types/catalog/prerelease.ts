@@ -6,6 +6,7 @@ export interface PreReleaseDetails {
   publishToCatalog: boolean;
   releaseGithub: boolean;
   targetVersion?: string;
+  catalogId?: string;
 }
 
 export interface GitHubRelease {
@@ -19,6 +20,7 @@ export interface GitHubRelease {
 export interface CatalogVersion extends Omit<IBMCloudOfferingVersion, 'flavor'> {
   tgz_url: string;
   flavor: OfferingFlavor;  // Make flavor required for our use case
+  githubTag?: string;  // Optional GitHub tag associated with this version
 }
 
 export interface CatalogDetails {

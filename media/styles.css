@@ -60,4 +60,49 @@
     display: flex;
     gap: 8px;
     margin-top: 16px;
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--vscode-editor-background);
+    opacity: 0.9;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 1000;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--vscode-editor-foreground);
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+.loading-text {
+    color: var(--vscode-editor-foreground);
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.error-text {
+    color: var(--vscode-errorForeground);
+    font-size: 14px;
+    margin-top: 8px;
+    display: none;
+    text-align: center;
+    padding: 0 16px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 } 

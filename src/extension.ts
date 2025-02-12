@@ -9,7 +9,8 @@ import { EditorHighlightService } from './services/EditorHighlightService';
 import { SchemaService } from './services/SchemaService';
 import { CatalogTreeItem } from './models/CatalogTreeItem';
 import { AuthService } from './services/AuthService';
-import { LoggingService, LogLevel } from './services/core/LoggingService';
+import { LoggingService } from './services/core/LoggingService';
+import { LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
 import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
@@ -133,6 +134,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 } catch (error) {
                     logger.error('Failed to logout from IBM Cloud', { error });
                     vscode.window.showErrorMessage('Failed to logout from IBM Cloud');
+                }
+            })
+        );
+
+        // Register setLogLevel command
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ibmCatalog.setLogLevel', async () => {
+                const logger = LoggingService.getInstance();
+                const currentLevel = logger.getLogLevel();
+
+                const levels = [
+                    { label: `DEBUG${currentLevel === LogLevel.DEBUG ? ' ✓' : ''}`, level: LogLevel.DEBUG },
+                    { label: `INFO${currentLevel === LogLevel.INFO ? ' ✓' : ''}`, level: LogLevel.INFO },
+                    { label: `WARN${currentLevel === LogLevel.WARN ? ' ✓' : ''}`, level: LogLevel.WARN },
+                    { label: `ERROR${currentLevel === LogLevel.ERROR ? ' ✓' : ''}`, level: LogLevel.ERROR }
+                ];
+
+                const selectedItem = await vscode.window.showQuickPick(levels, {
+                    placeHolder: 'Select log level',
+                    title: `Set Log Level (Current: ${LogLevel[currentLevel]})`,
+                });
+
+                if (selectedItem) {
+                    logger.setLogLevel(selectedItem.level);
+                    vscode.window.showInformationMessage(`Log level set to: ${selectedItem.label.replace(' ✓', '')}`);
+
+                    // Log a test message at the new level
+                    logger.debug('Debug logging test message', {
+                        previousLevel: LogLevel[currentLevel],
+                        newLogLevel: LogLevel[selectedItem.level],
+                        timestamp: new Date().toISOString()
+                    }, 'preRelease');
+
+                    // Show channel selection prompt
+                    const channels = [
+                        { label: 'IBM Catalog', value: 'main' },
+                        { label: 'IBM Catalog Pre-release', value: 'preRelease' }
+                    ];
+
+                    const selectedChannel = await vscode.window.showQuickPick(channels, {
+                        placeHolder: 'Select log channel to show',
+                        title: 'Show Log Channel'
+                    });
+
+                    if (selectedChannel) {
+                        logger.show(selectedChannel.value as 'main' | 'preRelease');
+                    }
                 }
             })
         );

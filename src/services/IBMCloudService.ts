@@ -18,31 +18,46 @@ import {
 } from '../types/ibmCloud';
 import { deduplicateRequest } from '../decorators/requestDeduplication';
 import { execAsync } from '../utils/execAsync';
+import * as path from 'path';
+import * as fs from 'fs';
 
 // Update type references in the code
 type OfferingVersion = IBMCloudOfferingVersion;
 
 interface ImportVersionOptions {
     zipurl: string;
-    targetVersion?: string;
+    targetVersion: string;
+    repotype: string;
+    catalogIdentifier: string;
     includeConfig?: boolean;
     isVSI?: boolean;
-    repotype?: 'public_git' | 'enterprise_git';
     tags?: string[];
     keywords?: string[];
     name?: string;
     label?: string;
     install_kind?: string;
-    target_kinds?: string[];
-    format_kind?: string;
-    product_kind?: 'software' | 'module' | 'solution';
+    target_kinds: string[];
+    format_kind: string;
+    product_kind: string;
     product_kind_label?: string;
     sha?: string;
-    version?: string;
-    flavor?: {
-        metadata: Record<string, unknown>;
-    };
-    working_directory?: string;
+    version: string;
+    flavor: {
+        metadata: {
+            name: string;
+            label: string;
+            index: number;
+            working_directory?: string;
+        }
+    } | Array<{
+        metadata: {
+            name: string;
+            label: string;
+            index: number;
+            working_directory?: string;
+        }
+    }>;
+    working_directory: string;
     install_type?: 'extension' | 'fullstack';
 }
 
@@ -57,18 +72,74 @@ export class IBMCloudService {
     private isProcessingQueue: boolean = false;
     private readonly apiUrl = 'https://cm.globalcatalog.cloud.ibm.com/api/v1-beta';
     private readonly CACHE_DURATION_MS = 6 * 60 * 60 * 1000; // 6 hours
+    private apiKey: string;
+    private authenticator: IamAuthenticator;
+    private workspaceRoot?: string;
 
     /**
      * Constructor for IBMCloudService.
      * Initializes the service with API credentials and sets up logging and caching.
      * @param apiKey - API key for IBM Cloud.
      */
-    constructor(private apiKey: string) {
+    constructor(apiKey: string) {
+        this.apiKey = apiKey;
         this.logger = LoggingService.getInstance();
         this.logger.debug('Initializing IBMCloudService');
-        const authenticator = new IamAuthenticator({ apikey: apiKey });
-        this.catalogManagement = new CatalogManagementV1({ authenticator });
+        this.authenticator = new IamAuthenticator({ apikey: apiKey });
+        this.catalogManagement = new CatalogManagementV1({ authenticator: this.authenticator });
         this.cacheService = CacheService.getInstance();
+
+        // Clear all caches when initializing with new API key
+        this.clearAllCaches();
+
+        // Initialize workspace root
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            this.workspaceRoot = workspaceFolders[0].uri.fsPath;
+            this.logger.debug('Workspace root initialized', { path: this.workspaceRoot }, 'preRelease');
+        } else {
+            this.logger.warn('No workspace root found', {}, 'preRelease');
+        }
+    }
+
+    /**
+     * Clears all caches related to IBM Cloud services
+     * Should be called when authentication changes (new API key or GitHub login)
+     */
+    public async clearAllCaches(): Promise<void> {
+        this.logger.debug('Starting clear of all caches', {
+            timestamp: new Date().toISOString()
+        }, 'preRelease');
+
+        try {
+            // Clear the main catalog cache
+            this.cacheService.delete(CacheKeys.CATALOG);
+
+            // Get all catalog IDs from the cache configuration
+            const catalogIds = Object.values(CacheConfigurations)
+                .filter(config => typeof config === 'object' && 'catalogId' in config)
+                .map(config => (config as { catalogId: string }).catalogId);
+
+            // Clear caches for each catalog ID
+            for (const catalogId of catalogIds) {
+                await this.clearOfferingCache(catalogId);
+            }
+
+            this.logger.info('Successfully cleared all caches', {
+                clearedCatalogs: catalogIds.length,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+        } catch (error) {
+            this.logger.error('Error clearing caches', {
+                error,
+                errorDetails: error instanceof Error ? {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                } : 'Unknown error type'
+            }, 'preRelease');
+            throw error;
+        }
     }
 
     /**
@@ -314,30 +385,60 @@ export class IBMCloudService {
         },
     })
     public async getOfferingsForCatalog(catalogId: string, skipCache: boolean = false): Promise<OfferingItem[]> {
-        this.logger.debug('Getting offerings for catalog', { catalogId, skipCache }, 'preRelease');
+        this.logger.debug('Getting offerings for catalog', {
+            catalogId,
+            skipCache,
+            timestamp: new Date().toISOString()
+        }, 'preRelease');
 
         const cacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
 
         // If skipCache is true, delete the cache entry first
         if (skipCache) {
-            this.logger.debug('Skipping cache, clearing existing data', { catalogId }, 'preRelease');
+            this.logger.debug('Skipping cache, clearing existing data', {
+                catalogId,
+                cacheKey
+            }, 'preRelease');
             this.cacheService.delete(cacheKey);
         }
 
         // Try to get from cache first if not skipping cache
         if (!skipCache) {
             const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
+            this.logger.debug('Cache check result', {
+                catalogId,
+                cacheKey,
+                hasCachedData: !!cached,
+                cachedItemCount: cached?.length,
+                cachedVersions: cached?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+            }, 'preRelease');
+
             if (cached) {
-                this.logger.debug('Returning cached offerings', { catalogId, count: cached.length }, 'preRelease');
+                this.logger.debug('Returning cached offerings', {
+                    catalogId,
+                    count: cached.length,
+                    versions: cached.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+                }, 'preRelease');
                 return cached;
             }
         }
 
         try {
-            this.logger.debug('Fetching fresh offerings from API', { catalogId }, 'preRelease');
+            this.logger.debug('Fetching fresh offerings from API', {
+                catalogId,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+
             const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
                 this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
             );
+
+            this.logger.debug('Raw API response', {
+                catalogId,
+                status: offerings.status,
+                resourceCount: offerings.result.resources?.length,
+                rawVersions: offerings.result.resources?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+            }, 'preRelease');
 
             const resources = offerings.result.resources ?? [];
             const offeringsPage: OfferingItem[] = resources.map((offering) => ({
@@ -351,13 +452,34 @@ export class IBMCloudService {
                 metadata: offering.metadata,
             }));
 
+            // Log the mapped data before caching
+            this.logger.debug('Mapped offerings before caching', {
+                catalogId,
+                count: offeringsPage.length,
+                versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+            }, 'preRelease');
+
             // Cache the result with TTL
             this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
 
-            this.logger.debug('Successfully fetched offerings', { catalogId, count: offeringsPage.length }, 'preRelease');
+            this.logger.debug('Successfully fetched and cached offerings', {
+                catalogId,
+                count: offeringsPage.length,
+                timestamp: new Date().toISOString(),
+                versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+            }, 'preRelease');
+
             return offeringsPage;
         } catch (error) {
-            this.logger.error('Failed to get offerings', { error, catalogId }, 'preRelease');
+            this.logger.error('Failed to get offerings', {
+                error,
+                catalogId,
+                errorDetails: error instanceof Error ? {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                } : 'Unknown error type'
+            }, 'preRelease');
             throw error;
         }
     }
@@ -610,55 +732,42 @@ export class IBMCloudService {
     }
 
     /**
-     * Gets available flavors for an offering
+     * Gets the list of available flavors for an offering
      * @param catalogId The catalog identifier
      * @param offeringId The offering identifier
-     * @param skipCache If true, bypass the cache and force a fresh API call
-     * @returns Promise<string[]> Array of flavor names
+     * @returns Array of flavor names
      */
-    public async getAvailableFlavors(catalogId: string, offeringId: string, skipCache = false): Promise<string[]> {
-        const cacheKey = DynamicCacheKeys.FLAVORS(catalogId, offeringId);
-        const cachedFlavors = this.cacheService.get<string[]>(cacheKey);
-
-        if (!skipCache && Array.isArray(cachedFlavors)) {
-            this.logger.debug('Using cached flavors', { count: cachedFlavors.length });
-            return cachedFlavors;
-        }
-
+    public async getAvailableFlavors(catalogId: string, offeringId: string): Promise<string[]> {
         try {
-            const response = await this.withProgress(`Fetching flavors for offering ${offeringId}`, () =>
-                this.catalogManagement.getOffering({
-                    catalogIdentifier: catalogId,
-                    offeringId: offeringId,
-                })
-            );
+            const offering = await this.catalogManagement.getOffering({
+                catalogIdentifier: catalogId,
+                offeringId: offeringId
+            });
 
-            const offering = response.result;
-            if (!offering?.kinds?.length) {
-                return [];
+            if (!offering.result) {
+                throw new Error('No offering details returned');
             }
 
-            const flavorSet = new Set<string>();
-            offering.kinds.forEach((kind) => {
-                if (kind.versions) {
-                    kind.versions.forEach((version) => {
-                        if (version.flavor?.name) {
-                            flavorSet.add(version.flavor.name);
-                        }
-                    });
+            // Extract flavors from the offering metadata
+            // The API returns an array of versions, each with a flavor property
+            const versions = offering.result.kinds?.[0]?.versions || [];
+            const flavorNames = new Set<string>();
+            versions.forEach(version => {
+                if (version.flavor?.name) {
+                    flavorNames.add(version.flavor.name);
                 }
             });
 
-            const flavors = Array.from(flavorSet);
-            this.cacheService.set(cacheKey, flavors, CacheConfigurations[CacheKeys.DEFAULT]);
-            this.logger.debug('Successfully fetched flavors', { count: flavors.length });
-            return flavors;
-        } catch (error) {
-            this.logger.error('Failed to fetch flavors', {
+            const flavors = Array.from(flavorNames);
+            this.logger.debug('Retrieved available flavors', {
                 catalogId,
                 offeringId,
-                error: this.formatError(error),
-            });
+                flavors
+            }, 'preRelease');
+
+            return flavors;
+        } catch (error) {
+            this.logger.error('Failed to get available flavors', { error });
             throw error;
         }
     }
@@ -822,50 +931,109 @@ export class IBMCloudService {
         options: ImportVersionOptions
     ): Promise<void> {
         try {
-            const token = await this.getAuthToken();
-            if (!token) {
-                throw new Error('Not authenticated with IBM Cloud');
+            // Get all flavors from metadata
+            const flavors = Array.isArray(options.flavor) ? options.flavor : [options.flavor];
+            if (!flavors.length) {
+                throw new Error('No flavors provided in metadata');
             }
 
-            const url = `${this.apiUrl}/catalogs/${catalogId}/offerings/${offeringId}/version`;
+            // Import each flavor
+            for (const flavor of flavors) {
+                const flavorName = flavor.metadata.name;
+                if (!flavorName) {
+                    this.logger.warn('Skipping flavor with no name', { flavor }, 'preRelease');
+                    continue;
+                }
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(options)
-            });
+                // Determine format_kind based on stack definition existence for this flavor's working directory
+                let formatKind = 'terraform';
+                if (flavor.metadata.working_directory) {
+                    try {
+                        const stackDefinitionPath = path.join(this.workspaceRoot || '', flavor.metadata.working_directory, 'stack_definition.json');
+                        await fs.promises.access(stackDefinitionPath);
+                        formatKind = 'stack';
+                        this.logger.debug('Found stack definition file, using format_kind: stack', {
+                            stackDefinitionPath,
+                            flavorName,
+                            workingDirectory: flavor.metadata.working_directory
+                        }, 'preRelease');
+                    } catch (error) {
+                        this.logger.debug('No stack definition file found, using format_kind: terraform', {
+                            workingDirectory: flavor.metadata.working_directory,
+                            flavorName
+                        }, 'preRelease');
+                    }
+                }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Failed to import version: ${errorText}`);
+                // Log the request we're about to make
+                this.logger.info('Making version import request', {
+                    catalogId,
+                    offeringId,
+                    version: options.version,
+                    formatKind,
+                    flavorName,
+                    workingDirectory: flavor.metadata.working_directory
+                }, 'preRelease');
+
+                // Use the SDK to make the request
+                const response = await this.catalogManagement.importOfferingVersion({
+                    catalogIdentifier: catalogId,
+                    offeringId: offeringId,
+                    targetVersion: options.version,
+                    zipurl: options.zipurl,
+                    targetKinds: ['terraform'],
+                    formatKind: formatKind,
+                    productKind: 'solution',
+                    flavor: {
+                        name: flavorName,
+                        label: flavor.metadata.label || flavorName
+                    }
+                });
+
+                this.logger.info('Successfully imported version for flavor', {
+                    catalogId,
+                    offeringId,
+                    version: options.version,
+                    flavorName,
+                    status: response.status
+                }, 'preRelease');
+
+                // Add a small delay between flavor imports to prevent race conditions
+                await this.delay(1000);
             }
 
-            this.logger.info('Successfully imported version to catalog', {
+            // Clear relevant caches after successful import
+            await this.clearOfferingCache(catalogId);
+            const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
+            this.cacheService.delete(cacheKey);
+
+            // Also clear version-related caches
+            const versionsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
+            this.cacheService.delete(versionsCacheKey);
+
+            // Force a fresh fetch to ensure we have the latest data
+            await this.getOfferingsForCatalog(catalogId, true);
+
+            this.logger.info('Successfully imported all flavors and cleared caches', {
+                catalogId,
+                offeringId,
+                version: options.version,
+                flavorCount: flavors.length
+            }, 'preRelease');
+
+        } catch (error) {
+            this.logger.error('Error importing version', {
+                error,
+                errorDetails: error instanceof Error ? {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                } : 'Unknown error type',
                 catalogId,
                 offeringId,
                 version: options.version
-            });
-        } catch (error) {
-            this.logger.error('Error importing version to catalog', { error });
+            }, 'preRelease');
             throw error;
-        }
-    }
-
-    /**
-     * Gets the authentication token for IBM Cloud API calls
-     * @returns The authentication token or undefined if not authenticated
-     */
-    private async getAuthToken(): Promise<string | undefined> {
-        try {
-            const { stdout } = await execAsync('ibmcloud iam oauth-tokens --output json');
-            const tokens = JSON.parse(stdout);
-            return tokens.iam_token;
-        } catch (error) {
-            this.logger.error('Failed to get IBM Cloud auth token', { error });
-            return undefined;
         }
     }
 
@@ -882,8 +1050,32 @@ export class IBMCloudService {
      * @param catalogId The catalog ID to clear cache for
      */
     public async clearOfferingCache(catalogId: string): Promise<void> {
-        this.logger.debug('Clearing offering cache', { catalogId });
-        const cacheKey = DynamicCacheKeys.OFFERINGS(catalogId);
-        this.cacheService.delete(cacheKey);
+        this.logger.debug('Starting cache clear operation', {
+            catalogId,
+            timestamp: new Date().toISOString()
+        }, 'preRelease');
+
+        // Clear all offering-related caches
+        const cacheKeys = [
+            DynamicCacheKeys.OFFERINGS(catalogId),
+            DynamicCacheKeys.CATALOG_OFFERINGS(catalogId),
+            DynamicCacheKeys.OFFERING_DETAILS(catalogId),
+            DynamicCacheKeys.OFFERING_VALIDATION(catalogId, '*'),
+            `offerings:${catalogId}` // Clear the deduplication cache key
+        ];
+
+        for (const key of cacheKeys) {
+            this.logger.debug('Clearing cache key', {
+                catalogId,
+                key
+            }, 'preRelease');
+            this.cacheService.delete(key);
+        }
+
+        this.logger.info('Cleared all offering-related caches', {
+            catalogId,
+            clearedKeys: cacheKeys,
+            timestamp: new Date().toISOString()
+        }, 'preRelease');
     }
 }
