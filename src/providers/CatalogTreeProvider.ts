@@ -182,91 +182,26 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
 
         const items: CatalogTreeItem[] = [];
 
+        // Handle array items
         if (Array.isArray(value)) {
-            // Handle array items
-            value.forEach((val, index) => {
-                const path = `${parentPath}[${index}]`;
+            value.forEach((item, index) => {
+                const path = this.buildJsonPath(parentPath, index.toString());
                 const schemaMetadata = this.getSchemaMetadata(path);
 
-                // Get a descriptive label for the array item if possible
-                let displayLabel = '';
-                if (typeof val === 'object' && val !== null) {
-                    // Special handling for input_mapping items
-                    if (parentPath.endsWith('input_mapping')) {
-                        const mapping = val as Record<string, unknown>;
-                        const referenceVersion = mapping.reference_version === true;
-
-                        // Determine source and destination with their values
-                        let source = '';
-                        let destination = '';
-                        let sourceValue = '';
-                        let destValue = '';
-
-                        if ('dependency_input' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'dependency_input';
-                            destination = referenceVersion ? 'dependency_input' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_input);
-                            destValue = String(referenceVersion ? mapping.dependency_input : mapping.version_input);
-                        } else if ('dependency_output' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'dependency_output';
-                            destination = referenceVersion ? 'dependency_output' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_output);
-                            destValue = String(referenceVersion ? mapping.dependency_output : mapping.version_input);
-                        } else if ('value' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'value';
-                            destination = referenceVersion ? 'value' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.value);
-                            destValue = String(referenceVersion ? mapping.value : mapping.version_input);
-                        }
-
-                        if (source && destination) {
-                            displayLabel = `${source} → ${destination}`;
-                            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
-                            const cleanValue = (value: string) => {
-                                const match = value.match(/\((.*?)\)/);
-                                return match ? match[1] : value;
-                            };
-                            // Store just the clean values for the description
-                            val._displayValues = `${cleanValue(sourceValue)} → ${cleanValue(destValue)}`;
-                        }
-                    } else {
-                        // Try to find a descriptive field for non-input_mapping items
-                        const descriptiveFields = ['name', 'label', 'title', 'key', 'id'];
-                        for (const field of descriptiveFields) {
-                            if (field in val && typeof val[field] === 'string') {
-                                displayLabel = val[field];
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // If no descriptive label found, use a generic one based on the parent's name
-                if (!displayLabel) {
-                    const parentName = parentPath.split('.').pop()?.replace(/\[\d+\]$/, '') || 'item';
-                    displayLabel = `${parentName} ${index + 1}`;
-                }
-
-                const item = new CatalogTreeItem(
+                const treeItem = new CatalogTreeItem(
                     this.context,
-                    displayLabel,
-                    val,
+                    index.toString(),
+                    item,
                     path,
-                    this.getCollapsibleState(val, this.expandedNodes.has(path)),
-                    this.getContextValue(val),
+                    this.getCollapsibleState(item, this.expandedNodes.has(path)),
+                    this.getContextValue(item),
                     schemaMetadata,
                     parentItem
                 );
 
-                // Set the description for input mapping items
-                if (typeof val === 'object' && val !== null && '_displayValues' in val) {
-                    item.description = val._displayValues;
-                    delete val._displayValues; // Clean up temporary property
-                }
-
-                items.push(item);
+                items.push(treeItem);
             });
-            return items;
+            return this.sortTreeItems(items);
         }
 
         // Handle object properties
@@ -277,10 +212,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
             const catalogId = isIdNode && parentItem?.catalogId ? parentItem.catalogId : undefined;
 
-            // Set initial validation status
-            const initialStatus = (key === 'catalog_id' || isIdNode) ?
-                ValidationStatus.Pending :
-                ValidationStatus.Unknown;
+            // Set initial validation status based on authentication state
+            const initialStatus = (key === 'catalog_id' || isIdNode)
+                ? ValidationStatus.Unknown  // Always start as Unknown
+                : ValidationStatus.Unknown;
 
             const item = new CatalogTreeItem(
                 this.context,
@@ -295,7 +230,8 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 initialStatus
             );
 
-            if (initialStatus === ValidationStatus.Pending) {
+            // Queue validation only if we're authenticated and the item needs validation
+            if ((key === 'catalog_id' || isIdNode) && this.catalogService.hasFullFunctionality()) {
                 void this.queueValidation(item);
             }
 

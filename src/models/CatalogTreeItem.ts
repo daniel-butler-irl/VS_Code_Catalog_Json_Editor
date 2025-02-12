@@ -57,15 +57,30 @@ export class CatalogTreeItem extends vscode.TreeItem {
         this.parent = parent;
         this.catalogId = catalogId;
 
-        // Initialize validation metadata with provided status
-        this._validationMetadata = { status: initialStatus };
+        // Initialize validation metadata with Unknown status by default
+        // Only set Pending status if explicitly requested AND the item requires validation
+        this._validationMetadata = {
+            status: (initialStatus === ValidationStatus.Pending && this.requiresValidation())
+                ? ValidationStatus.Pending
+                : ValidationStatus.Unknown
+        };
 
         this.updateDisplayProperties();
 
-        // Queue validation if needed
-        if (this.needsValidation()) {
+        // Queue validation if needed and if we're in a state that requires validation
+        if (this.requiresValidation() && initialStatus === ValidationStatus.Pending) {
             void this.queueForValidation();
         }
+    }
+
+    /**
+     * Determines if this item requires validation based on its type
+     */
+    private requiresValidation(): boolean {
+        return (
+            this.label === 'catalog_id' ||
+            this.isOfferingIdInDependency()
+        );
     }
 
     /**
