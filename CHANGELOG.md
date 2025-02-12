@@ -1,6 +1,6 @@
-# Pre-release v0.7.4
+# Pre-release v0.7.6
 
 ⚠️ This is a pre-release version for testing purposes.
 
-## Changes since 0.7.3
+## Changes since 0.7.4
 
