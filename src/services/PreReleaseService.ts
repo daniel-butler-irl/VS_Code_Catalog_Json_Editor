@@ -81,6 +81,36 @@ export class PreReleaseService {
     });
   }
 
+  public static async initialize(context: vscode.ExtensionContext): Promise<PreReleaseService> {
+    if (!PreReleaseService.instance) {
+      PreReleaseService.instance = new PreReleaseService(context);
+      try {
+        // Initialize GitHub authentication
+        await PreReleaseService.instance.initializeGitHub();
+
+        // Pre-initialize IBM Cloud Service if already authenticated
+        const apiKey = await AuthService.getApiKey(context);
+        if (apiKey) {
+          PreReleaseService.instance.ibmCloudService = new IBMCloudService(apiKey);
+          PreReleaseService.instance.logger.debug('IBM Cloud service pre-initialized', {}, 'preRelease');
+        }
+
+        PreReleaseService.instance.logger.info('PreReleaseService initialized successfully', {}, 'preRelease');
+      } catch (error) {
+        PreReleaseService.instance.logger.warn('PreReleaseService initialization had non-critical errors', { error }, 'preRelease');
+        // Don't throw - allow the service to initialize with reduced functionality
+      }
+    }
+    return PreReleaseService.instance;
+  }
+
+  public static getInstance(context: vscode.ExtensionContext): PreReleaseService {
+    if (!PreReleaseService.instance) {
+      throw new Error('PreReleaseService not initialized. Call initialize() first.');
+    }
+    return PreReleaseService.instance;
+  }
+
   private async initializeGitHub(): Promise<void> {
     try {
       // Only check for existing session, don't create one
@@ -147,13 +177,6 @@ export class PreReleaseService {
       }, 'preRelease');
       throw new Error('GitHub authentication failed. Please try again.');
     }
-  }
-
-  public static getInstance(context: vscode.ExtensionContext): PreReleaseService {
-    if (!PreReleaseService.instance) {
-      PreReleaseService.instance = new PreReleaseService(context);
-    }
-    return PreReleaseService.instance;
   }
 
   private async getIBMCloudService(): Promise<IBMCloudService> {

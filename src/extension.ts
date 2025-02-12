@@ -42,6 +42,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         statusBarItem.show();
         context.subscriptions.push(statusBarItem);
 
+        // Initialize PreReleaseService early
+        logger.debug('Initializing PreReleaseService');
+        await PreReleaseService.initialize(context);
+        logger.debug('PreReleaseService initialized');
+
         // Only check IBM Cloud authentication status on startup
         const isLoggedIn = await AuthService.isLoggedIn(context);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
@@ -55,18 +60,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const catalogService = new CatalogService(context);
         const catalogInitPromise = catalogService.initialize();
 
-        // Initialize PreReleaseService and PreReleaseWebview
+        // Initialize PreReleaseWebview after PreReleaseService
         const preReleaseService = PreReleaseService.getInstance(context);
         const preReleaseWebview = PreReleaseWebview.initialize(context, logger, preReleaseService);
 
-        // Register the PreReleaseWebview provider
-        context.subscriptions.push(
-            vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
-                webviewOptions: {
-                    retainContextWhenHidden: true
-                }
-            })
-        );
+        // Register the PreReleaseWebview provider with error handling
+        try {
+            context.subscriptions.push(
+                vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
+                    webviewOptions: {
+                        retainContextWhenHidden: true
+                    }
+                })
+            );
+            logger.debug('PreReleaseWebview provider registered successfully');
+        } catch (error) {
+            logger.error('Failed to register PreReleaseWebview provider', { error });
+            // Continue activation - PreRelease feature will be disabled
+        }
 
         // Create tree provider with minimal initial state
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);

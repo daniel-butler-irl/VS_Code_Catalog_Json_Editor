@@ -1,10 +1,36 @@
 // .vscode/launch.json
 {
     "version": "0.2.0",
+    "compounds": [
+        {
+            "name": "Launch in VS Code",
+            "configurations": ["Run Extension in VS Code"]
+        }
+    ],
     "configurations": [
         {
-            // Configuration for launching the extension
-            "name": "Run Extension",
+            "name": "Run Extension in VS Code",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${env:LOCALAPPDATA}/Programs/Microsoft VS Code/Code.exe",
+            "args": [
+                "--disable-extensions",
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--user-data-dir=${workspaceFolder}/.vscode-test/user-data",
+                "${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "npm: build",
+            "env": {
+                "VSCODE_DEBUG_MODE": "true",
+                "DONT_PROMPT_WSL_INSTALL": "true",
+                "VSCODE_EXTENSION_DEV": "1"
+            }
+        },
+        {
+            "name": "Run Extension in Cursor",
             "type": "extensionHost",
             "request": "launch",
             "args": [

@@ -51,6 +51,12 @@ async function copyAssets() {
         if (!test) {
             await copy('media', 'dist/media', { overwrite: true }).catch(() => {});
             await copy('schemas', 'dist/schemas', { overwrite: true }).catch(() => {});
+            // Copy package.json for dependency resolution
+            await copy('package.json', 'dist/package.json', { overwrite: true });
+            // Install production dependencies in dist folder
+            console.log('Installing production dependencies...');
+            const { execSync } = await import('child_process');
+            execSync('npm install --omit=dev', { cwd: 'dist', stdio: 'inherit' });
             console.log('Assets copied successfully');
         }
     } catch (err) {
@@ -71,13 +77,11 @@ async function buildExtension() {
                 ...baseConfig,
                 entryPoints: ['src/extension.ts'],
                 outfile: 'dist/extension.js',
-                external: [
-                    'vscode',
-                    'jsonc-parser',
-                    '@ibm-cloud/platform-services',
-                    'ibm-cloud-sdk-core',
-                    'semver'
-                ],
+                external: ['vscode'], // Only exclude vscode from bundling
+                bundle: true,
+                platform: 'node',
+                mainFields: ['module', 'main'],
+                metafile: true
             });
         }
 
@@ -87,7 +91,7 @@ async function buildExtension() {
                 ...baseConfig,
                 entryPoints: ['src/test/runTest.ts'],
                 outfile: 'out/test/runTest.js',
-                external: ['vscode', 'mocha', 'jsonc-parser', 'chai', 'sinon'],
+                external: ['vscode', 'mocha', 'chai', 'sinon'],
             });
         }
 

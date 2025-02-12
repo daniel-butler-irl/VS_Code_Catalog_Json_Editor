@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "DanielButler",
   "preview": true,
   "repository": {
@@ -16,14 +16,17 @@
   "main": "./dist/extension.js",
   "files": [
     "dist",
-    "media"
+    "media",
+    "schemas"
   ],
   "activationEvents": [
     "workspaceContains:**/ibm_catalog.json",
+    "onStartupFinished",
     "onCommand:ibmCatalog.openPreReleasePanel",
     "onCommand:ibmCatalog.createPreRelease",
     "onCommand:ibmCatalog.login",
-    "onCommand:ibmCatalog.loginGithub"
+    "onCommand:ibmCatalog.loginGithub",
+    "onView:ibmCatalogPreRelease"
   ],
   "contributes": {
     "configuration": {
@@ -366,7 +369,9 @@
     "prebuild": "npm run clean",
     "build": "npm run esbuild",
     "build:test": "npm run esbuild:test",
-    "dev": "npm run esbuild:watch"
+    "dev": "npm run esbuild:watch",
+    "start:vscode": "npm run build && code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}",
+    "start:vscode:watch": "concurrently \"npm run esbuild:watch\" \"code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}\""
   },
   "devDependencies": {
     "@types/chai": "^5.0.1",
@@ -387,6 +392,7 @@
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.2.2",
     "chai": "^5.1.2",
+    "concurrently": "^8.2.2",
     "esbuild": "^0.19.12",
     "eslint": "^8.54.0",
     "fs-extra": "^11.2.0",
