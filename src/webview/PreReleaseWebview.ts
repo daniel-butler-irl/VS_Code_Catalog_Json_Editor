@@ -372,11 +372,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                         <div class="next-version-info">
                             <div class="version-row">
                                 <span class="version-label">GitHub:</span>
-                                <span class="version-value">Loading...</span>
+                                <span class="version-value">Please Select a Catalog...</span>
                             </div>
                             <div class="version-row">
                                 <span class="version-label">Catalog:</span>
-                                <span class="version-value">Loading...</span>
+                                <span class="version-value">Please Select a Catalog...</span>
                             </div>
                         </div>
                     </div>
