@@ -23,6 +23,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger.info('Starting IBM Catalog Extension activation');
 
     try {
+        // Register essential commands immediately before any other initialization
+        registerEssentialCommands(context);
+
         // Set initial loading state
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', false);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
@@ -90,9 +93,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const fileSystemService = FileSystemService.getInstance(context);
         fileSystemService.setTreeProvider(treeProvider);
 
-        // Register essential commands immediately
-        registerEssentialCommands(context, treeProvider, catalogService, statusBarItem);
-
         // Wait for critical services to initialize
         const [catalogInitialized] = await Promise.all([
             catalogInitPromise,
@@ -123,28 +123,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     if (preReleaseView) {
                         await preReleaseView.sendAuthenticationStatus();
                     }
-                }
-            })
-        );
-
-        // Register logout commands
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.logout', async () => {
-                try {
-                    // Clear IBM Cloud API key
-                    await AuthService.logout(context);
-                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
-
-                    // Get PreReleaseWebview instance and update auth status
-                    const preReleaseView = PreReleaseWebview.getInstance();
-                    if (preReleaseView) {
-                        await preReleaseView.sendAuthenticationStatus();
-                    }
-
-                    vscode.window.showInformationMessage('Successfully logged out from IBM Cloud');
-                } catch (error) {
-                    logger.error('Failed to logout from IBM Cloud', { error });
-                    vscode.window.showErrorMessage('Failed to logout from IBM Cloud');
                 }
             })
         );
@@ -206,21 +184,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 function registerEssentialCommands(
-    context: vscode.ExtensionContext,
-    treeProvider: CatalogTreeProvider,
-    catalogService: CatalogService,
-    statusBarItem: vscode.StatusBarItem
+    context: vscode.ExtensionContext
 ): void {
     // Register only essential commands for initial activation
     context.subscriptions.push(
-        vscode.commands.registerCommand('ibmCatalog.refresh', () => treeProvider.refresh()),
         vscode.commands.registerCommand('ibmCatalog.login', async () => {
             try {
                 await AuthService.login(context);
-                await updateStatusBar(statusBarItem, context);
                 await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', true);
                 vscode.window.showInformationMessage('Successfully logged in to IBM Cloud');
-                treeProvider.refresh();
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }

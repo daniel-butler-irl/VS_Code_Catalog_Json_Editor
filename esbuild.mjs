@@ -81,7 +81,13 @@ async function buildExtension() {
                 bundle: true,
                 platform: 'node',
                 mainFields: ['module', 'main'],
-                metafile: true
+                metafile: true,
+                loader: {
+                    '.node': 'file'
+                },
+                define: {
+                    'process.env.NODE_ENV': production ? '"production"' : '"development"'
+                }
             });
         }
 
