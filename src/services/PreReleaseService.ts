@@ -302,23 +302,81 @@ export class PreReleaseService {
         throw new Error('GitHub client not initialized');
       }
 
+      // Get all releases first
       const releases = await this.octokit.repos.listReleases({
         owner,
         repo,
-        per_page: 5
+        per_page: 100 // Get more releases to ensure we don't miss any catalog-referenced ones
       });
 
+      // Get catalog details to check for referenced releases
+      let catalogReferencedTags = new Set<string>();
+      try {
+        if (this.workspaceRoot) {
+          // Get catalog ID directly from ibm_catalog.json
+          const catalogJsonPath = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), 'ibm_catalog.json');
+          const catalogJsonContent = await vscode.workspace.fs.readFile(catalogJsonPath);
+          const catalogJson = JSON.parse(catalogJsonContent.toString());
+          const catalogId = catalogJson.catalogId;
+
+          if (catalogId) {
+            // Get catalog versions directly from IBM Cloud service
+            const ibmCloudService = await this.getIBMCloudService();
+            const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+            const offering = offerings.find((o: { name: string }) => o.name === catalogJson.products?.[0]?.name);
+
+            if (offering) {
+              for (const kind of offering.kinds || []) {
+                const kindVersions = await ibmCloudService.getOfferingKindVersions(
+                  catalogId,
+                  offering.id,
+                  kind.target_kind || kind.install_kind || 'terraform'
+                );
+
+                // Add any GitHub tags referenced in catalog versions
+                kindVersions.versions.forEach((version: { tgz_url?: string }) => {
+                  if (version.tgz_url) {
+                    const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
+                    if (tgzUrlTag) {
+                      catalogReferencedTags.add(tgzUrlTag);
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.warn('Failed to get catalog referenced tags', { error }, 'preRelease');
+        // Continue without catalog filtering if there's an error
+      }
+
+      this.logger.debug('Filtering releases', {
+        totalReleases: releases.data.length,
+        catalogReferencedTags: Array.from(catalogReferencedTags),
+      }, 'preRelease');
+
+      // Filter releases to only include pre-releases and catalog-referenced releases
+      const filteredReleases = releases.data.filter(release =>
+        release.prerelease || catalogReferencedTags.has(release.tag_name)
+      );
+
+      // Take the 5 most recent releases after filtering
+      const latestReleases = filteredReleases.slice(0, 5);
+
       this.logger.debug('Fetched releases from GitHub', {
-        count: releases.data.length,
-        releases: releases.data.map(r => ({
+        count: latestReleases.length,
+        releases: latestReleases.map(r => ({
           tag_name: r.tag_name,
-          created_at: r.created_at
+          created_at: r.created_at,
+          is_prerelease: r.prerelease,
+          is_catalog_referenced: catalogReferencedTags.has(r.tag_name)
         }))
       }, 'preRelease');
 
       // Deduplicate releases by tag_name before returning
       const uniqueReleases = new Map<string, GitHubRelease>();
-      releases.data.forEach(release => {
+      latestReleases.forEach(release => {
         if (!uniqueReleases.has(release.tag_name)) {
           uniqueReleases.set(release.tag_name, {
             tag_name: release.tag_name,
