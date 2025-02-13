@@ -310,7 +310,7 @@ export class PreReleaseService {
       });
 
       // Get catalog details to check for referenced releases
-      let catalogReferencedTags = new Set<string>();
+      let catalogReferencedTags = new Map<string, { tgz_url?: string; version: string }>();
       try {
         if (this.workspaceRoot) {
           // Get catalog ID directly from ibm_catalog.json
@@ -334,11 +334,14 @@ export class PreReleaseService {
                 );
 
                 // Add any GitHub tags referenced in catalog versions
-                kindVersions.versions.forEach((version: { tgz_url?: string }) => {
+                kindVersions.versions.forEach((version: { tgz_url?: string; version: string }) => {
                   if (version.tgz_url) {
                     const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
                     if (tgzUrlTag) {
-                      catalogReferencedTags.add(tgzUrlTag);
+                      catalogReferencedTags.set(tgzUrlTag, {
+                        tgz_url: version.tgz_url,
+                        version: version.version
+                      });
                     }
                   }
                 });
@@ -351,32 +354,46 @@ export class PreReleaseService {
         // Continue without catalog filtering if there's an error
       }
 
-      this.logger.debug('Filtering releases', {
+      this.logger.debug('Processing releases', {
         totalReleases: releases.data.length,
-        catalogReferencedTags: Array.from(catalogReferencedTags),
+        catalogReferencedTags: Array.from(catalogReferencedTags.keys()),
       }, 'preRelease');
 
-      // Filter releases to only include pre-releases and catalog-referenced releases
-      const filteredReleases = releases.data.filter(release =>
-        release.prerelease || catalogReferencedTags.has(release.tag_name)
-      );
+      // First, get all catalog-referenced releases
+      const catalogReleases = releases.data
+        .filter(release => catalogReferencedTags.has(release.tag_name))
+        .sort((a, b) => {
+          // Sort by catalog version number (descending)
+          const versionA = catalogReferencedTags.get(a.tag_name)?.version || '';
+          const versionB = catalogReferencedTags.get(b.tag_name)?.version || '';
+          return semver.rcompare(versionA, versionB);
+        })
+        .slice(0, 5);
 
-      // Take the 5 most recent releases after filtering
-      const latestReleases = filteredReleases.slice(0, 5);
+      // Then, if we have less than 5 catalog releases, add pre-releases until we reach 5
+      const remainingSlots = 5 - catalogReleases.length;
+      const preReleases = remainingSlots > 0 ? releases.data
+        .filter(release => release.prerelease && !catalogReferencedTags.has(release.tag_name))
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, remainingSlots) : [];
 
-      this.logger.debug('Fetched releases from GitHub', {
-        count: latestReleases.length,
-        releases: latestReleases.map(r => ({
+      // Combine and sort all releases by date
+      const combinedReleases = [...catalogReleases, ...preReleases];
+
+      this.logger.debug('Release breakdown', {
+        totalCatalogReleases: catalogReleases.length,
+        totalPreReleases: preReleases.length,
+        combinedReleases: combinedReleases.map(r => ({
           tag_name: r.tag_name,
-          created_at: r.created_at,
+          is_catalog: catalogReferencedTags.has(r.tag_name),
           is_prerelease: r.prerelease,
-          is_catalog_referenced: catalogReferencedTags.has(r.tag_name)
+          created_at: r.created_at
         }))
       }, 'preRelease');
 
       // Deduplicate releases by tag_name before returning
       const uniqueReleases = new Map<string, GitHubRelease>();
-      latestReleases.forEach(release => {
+      combinedReleases.forEach(release => {
         if (!uniqueReleases.has(release.tag_name)) {
           uniqueReleases.set(release.tag_name, {
             tag_name: release.tag_name,
