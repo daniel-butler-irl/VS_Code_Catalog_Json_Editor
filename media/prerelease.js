@@ -88,6 +88,28 @@
 
         // Request initial authentication status
         vscode.postMessage({ command: 'checkAuthentication' });
+
+        // Add click handlers for auth buttons
+        const githubButton = document.getElementById('githubAuthButton');
+        const catalogButton = document.getElementById('catalogAuthButton');
+
+        if (githubButton) {
+            githubButton.addEventListener('click', () => {
+                vscode.postMessage({
+                    command: 'githubAuth',
+                    data: { isLoggedIn: isGithubAuthenticated }
+                });
+            });
+        }
+
+        if (catalogButton) {
+            catalogButton.addEventListener('click', () => {
+                vscode.postMessage({
+                    command: 'catalogAuth',
+                    data: { isLoggedIn: isCatalogAuthenticated }
+                });
+            });
+        }
     }
 
     function showLoading(message = 'Loading...') {
@@ -235,7 +257,16 @@
             case 'authenticationStatus':
                 isGithubAuthenticated = message.githubAuthenticated;
                 isCatalogAuthenticated = message.catalogAuthenticated;
-                updateAuthStatus(isGithubAuthenticated, isCatalogAuthenticated);
+                updateAuthStatus({
+                    github: {
+                        isLoggedIn: isGithubAuthenticated,
+                        text: `GitHub: ${isGithubAuthenticated ? 'Logged in' : 'Not logged in'}`
+                    },
+                    catalog: {
+                        isLoggedIn: isCatalogAuthenticated,
+                        text: `IBM Cloud: ${isCatalogAuthenticated ? 'Logged in' : 'Not logged in'}`
+                    }
+                });
                 break;
             case 'updateData':
                 handleUpdateData(message);
@@ -273,6 +304,9 @@
                 break;
             case 'showError':
                 handleError(message.error);
+                break;
+            case 'updateAuthStatus':
+                updateAuthStatus(message.data);
                 break;
         }
     });
@@ -338,6 +372,18 @@
         // Remove loading state
         mainContent.classList.remove('loading-state');
         mainContent.classList.add('loaded');
+
+        // Update auth status with current state
+        updateAuthStatus({
+            github: {
+                isLoggedIn: isGithubAuthenticated,
+                text: `GitHub: ${isGithubAuthenticated ? 'Logged in' : 'Not logged in'}`
+            },
+            catalog: {
+                isLoggedIn: isCatalogAuthenticated,
+                text: `IBM Cloud: ${isCatalogAuthenticated ? 'Logged in' : 'Not logged in'}`
+            }
+        });
     }
 
     function handleError(error) {
@@ -352,6 +398,18 @@
         
         // Re-enable all controls
         enableAllControls();
+
+        // Update auth status with current state
+        updateAuthStatus({
+            github: {
+                isLoggedIn: isGithubAuthenticated,
+                text: `GitHub: ${isGithubAuthenticated ? 'Logged in' : 'Not logged in'}`
+            },
+            catalog: {
+                isLoggedIn: isCatalogAuthenticated,
+                text: `IBM Cloud: ${isCatalogAuthenticated ? 'Logged in' : 'Not logged in'}`
+            }
+        });
     }
 
     function enableAllControls() {
@@ -929,40 +987,24 @@
         timestampDiv.title = isCacheUsed ? 'Using cached data' : 'Using fresh data';
     }
 
-    function updateAuthStatus(githubAuthenticated, catalogAuthenticated) {
+    function updateAuthStatus(data) {
         const githubStatus = document.getElementById('githubAuthStatus');
         const catalogStatus = document.getElementById('catalogAuthStatus');
+        const githubButton = document.getElementById('githubAuthButton');
+        const catalogButton = document.getElementById('catalogAuthButton');
 
-        if (githubStatus) {
-            const authText = githubStatus.querySelector('.auth-text');
-            if (githubAuthenticated) {
-                authText.textContent = 'GitHub: Logged in';
-                githubStatus.classList.add('authenticated');
-                githubStatus.classList.remove('not-authenticated');
-                githubStatus.onclick = null;
-            } else {
-                authText.textContent = 'GitHub: Not logged in (click to login)';
-                githubStatus.classList.remove('authenticated');
-                githubStatus.classList.add('not-authenticated');
-                githubStatus.style.cursor = 'pointer';
-                githubStatus.onclick = () => {
-                    vscode.postMessage({ command: 'loginGitHub' });
-                };
-            }
+        if (githubStatus && githubButton) {
+            githubStatus.querySelector('.auth-text').textContent = data.github.text;
+            githubButton.textContent = data.github.isLoggedIn ? 'Logout' : 'Login';
         }
 
-        if (catalogStatus) {
-            const authText = catalogStatus.querySelector('.auth-text');
-            authText.textContent = catalogAuthenticated ? 'IBM Cloud: Logged in' : 'IBM Cloud: Not logged in';
-            catalogStatus.classList.toggle('authenticated', catalogAuthenticated);
-            catalogStatus.classList.toggle('not-authenticated', !catalogAuthenticated);
+        if (catalogStatus && catalogButton) {
+            catalogStatus.querySelector('.auth-text').textContent = data.catalog.text;
+            catalogButton.textContent = data.catalog.isLoggedIn ? 'Logout' : 'Login';
         }
 
-        // Store the authentication states
-        isGithubAuthenticated = githubAuthenticated;
-        isCatalogAuthenticated = catalogAuthenticated;
-
-        // Update UI state based on authentication
+        isGithubAuthenticated = data.github.isLoggedIn;
+        isCatalogAuthenticated = data.catalog.isLoggedIn;
         updateButtonStates();
     }
 

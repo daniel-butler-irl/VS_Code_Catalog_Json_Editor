@@ -6,6 +6,7 @@ interface WebviewMessage {
   command: string;
   data?: PreReleaseDetails & {
     message?: string;
+    isLoggedIn?: boolean;
   };
   catalogId?: string;
 }
@@ -350,9 +351,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
             <div id="authStatus" class="auth-status">
                 <div id="githubAuthStatus" class="auth-item">
                     <span class="auth-text">GitHub: Not logged in</span>
+                    <button id="githubAuthButton" class="auth-button">Login</button>
                 </div>
                 <div id="catalogAuthStatus" class="auth-item">
                     <span class="auth-text">IBM Cloud: Not logged in</span>
+                    <button id="catalogAuthButton" class="auth-button">Login</button>
                 </div>
             </div>
             <div id="mainContent">
@@ -550,6 +553,16 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
 
           this.logger.info('Force refresh and UI update complete', { catalogId: message.catalogId }, 'preRelease');
           break;
+        case 'githubAuth':
+          await vscode.commands.executeCommand(message.data?.isLoggedIn ? 'ibmCatalog.logoutGithub' : 'ibmCatalog.loginGithub');
+          await this.sendAuthenticationStatus();
+          break;
+        case 'catalogAuth':
+          await vscode.commands.executeCommand(message.data?.isLoggedIn ? 'ibmCatalog.logout' : 'ibmCatalog.login');
+          await this.sendAuthenticationStatus();
+          break;
+        default:
+          await this.handleMessage(message);
       }
     } catch (error) {
       this.logger.error('Error handling message', { error, message }, 'preRelease');
@@ -561,28 +574,34 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   }
 
   public async sendAuthenticationStatus(): Promise<void> {
+    if (!this.view?.visible) {
+      return;
+    }
+
     try {
       const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
       const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
 
-      // Update VS Code context
+      // Update VS Code context for GitHub authentication
       await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', githubAuth);
 
-      // Send status to webview
-      this.view?.webview.postMessage({
-        command: 'authenticationStatus',
-        githubAuthenticated: githubAuth,
-        catalogAuthenticated: catalogAuth
+      await this.view.webview.postMessage({
+        command: 'updateAuthStatus',
+        data: {
+          github: {
+            isLoggedIn: githubAuth,
+            text: `GitHub: ${githubAuth ? 'Logged in' : 'Not logged in'}`
+          },
+          catalog: {
+            isLoggedIn: catalogAuth,
+            text: `IBM Cloud: ${catalogAuth ? 'Logged in' : 'Not logged in'}`
+          }
+        }
       });
 
-      // Update UI elements based on auth status
       this.updateButtonStates(githubAuth, catalogAuth);
     } catch (error) {
-      this.logger.error('Failed to get authentication status', { error }, 'preRelease');
-      this.view?.webview.postMessage({
-        command: 'showError',
-        error: 'Failed to check authentication status'
-      });
+      this.logger.error('Error sending authentication status', { error }, 'preRelease');
     }
   }
 
