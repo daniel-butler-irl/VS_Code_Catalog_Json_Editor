@@ -627,35 +627,49 @@ button.catalog-button:hover:not(:disabled) {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    padding: 8px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
 }
 
 .next-version-header {
-    font-size: 1.2em;
+    font-size: 1.1em;
     font-weight: 600;
     color: var(--vscode-foreground);
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     opacity: 0.9;
 }
 
 .version-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 1.15em;
-    padding: 4px 0;
+    flex-direction: column;
+    padding: 2px 0;
 }
 
 .version-label {
     color: var(--vscode-foreground);
     opacity: 0.8;
     font-weight: 500;
+    margin-right: 8px;
 }
 
 .version-value {
     font-family: var(--vscode-editor-font-family);
     color: var(--vscode-textLink-foreground);
     font-weight: 600;
-    font-size: 1.1em;
+}
+
+.version-value.released {
+    color: var(--vscode-notificationsWarningIcon-foreground);
+}
+
+.released-flavors {
+    font-size: 0.9em;
+    color: var(--vscode-descriptionForeground);
+    margin-left: 1em;
+    margin-top: 2px;
+    font-style: italic;
 }
 
 .catalog-quick-info {

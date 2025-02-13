@@ -23,6 +23,7 @@
     let isCatalogAuthenticated = false;
     let loadingState = false;
     let loadingMessage = '';
+    let githubReleases = [];
 
     // DOM Elements
     const loadingView = /** @type {HTMLElement} */ (document.getElementById('loadingView'));
@@ -344,46 +345,22 @@
     }
 
     function handleRefreshComplete() {
-        const mainContent = document.getElementById('mainContent');
-        const refreshBtn = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
-        const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
-        
-        if (!mainContent || !catalogSelect) {
-            console.error('Required elements not found');
-            return;
+        hideLoading();
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
         }
-        
-        // Re-enable controls and reset button state
-        if (refreshBtn) {
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = 'Get Latest Versions';
-            refreshBtn.classList.remove('refreshing');
+        if (getLatestBtn) {
+            getLatestBtn.disabled = false;
         }
-        
-        // Always enable catalog select
-        catalogSelect.disabled = false;
-        
-        // Only enable version and postfix inputs if we're not on main/master
-        if (!isMainOrMaster) {
-            if (versionInput) { versionInput.disabled = false; }
-            if (postfixInput) { postfixInput.disabled = false; }
-        }
-        
-        // Remove loading state
-        mainContent.classList.remove('loading-state');
-        mainContent.classList.add('loaded');
 
-        // Update auth status with current state
-        updateAuthStatus({
-            github: {
-                isLoggedIn: isGithubAuthenticated,
-                text: `GitHub: ${isGithubAuthenticated ? 'Logged in' : 'Not logged in'}`
-            },
-            catalog: {
-                isLoggedIn: isCatalogAuthenticated,
-                text: `IBM Cloud: ${isCatalogAuthenticated ? 'Logged in' : 'Not logged in'}`
-            }
-        });
+        // Clear version input to allow new suggestion
+        if (versionInput) {
+            versionInput.value = '';
+        }
+
+        // Update version suggestion after refresh
+        suggestNextVersion();
+        updateTagPreview();
     }
 
     function handleError(error) {
@@ -507,6 +484,9 @@
             currentTimeoutId = null;
         }
 
+        // Store catalog details
+        catalogDetails = details;
+
         // Re-enable controls if not on main/master branch
         if (!isMainOrMaster) {
             if (catalogSelect) {catalogSelect.disabled = false;}
@@ -535,7 +515,6 @@
             return;
         }
 
-        catalogDetails = details;
         if (!catalogDetailsDiv) {return;}
 
         // Handle case where offering is not found in catalog
@@ -575,27 +554,11 @@
             // Only suggest version if input is empty
             if (!versionInput?.value) {
                 suggestNextVersion();
+                updateTagPreview();
             }
 
             // Update the version table with the loaded versions
             renderCatalogDetails(details, versionInput?.value || '', proposedPostfix, githubReleases, details.versions);
-        } else {
-            // Show loading state for versions
-            const versionTable = catalogDetailsDiv.querySelector('.version-table tbody');
-            if (versionTable) {
-                versionTable.innerHTML = `
-                    <tr>
-                        <td>${githubReleases[0]?.tag || '—'}</td>
-                        <td class="loading-text">Loading versions...</td>
-                    </tr>
-                    ${githubReleases.slice(1).map(release => `
-                        <tr>
-                            <td>${release.tag}</td>
-                            <td>—</td>
-                        </tr>
-                    `).join('')}
-                `;
-            }
         }
     }
 
@@ -616,6 +579,20 @@
             details
         });
 
+        // Check if version is already released in catalog or GitHub
+        const isVersionReleasedInCatalog = catalogVersions?.some(v => v.version === proposedVersion);
+        const isVersionReleasedInGithub = githubReleases?.some(r => {
+            const version = r.tag.replace(/^v/, '').split('-')[0];
+            return version === proposedVersion;
+        });
+        const isVersionReleased = isVersionReleasedInCatalog || isVersionReleasedInGithub;
+
+        // Get released flavors from catalog
+        const releasedFlavors = catalogVersions
+            ?.filter(v => v.version === proposedVersion)
+            .map(v => v.flavor?.label || v.flavor?.name || 'Unknown')
+            .join(', ');
+
         // Update the next version preview in the pre-release section
         const nextVersionDiv = document.getElementById('nextVersion');
         if (nextVersionDiv) {
@@ -624,11 +601,12 @@
                     <div class="next-version-header">Next Release Versions</div>
                     <div class="version-row">
                         <span class="version-label">GitHub:</span>
-                        <span class="version-value">${proposedVersion && proposedPostfix ? `v${proposedVersion}-${proposedPostfix}` : 'Not set'}</span>
+                        <span class="version-value ${isVersionReleasedInGithub ? 'released' : ''}">${proposedVersion && proposedPostfix ? `v${proposedVersion}-${proposedPostfix}` : 'Not set'}${isVersionReleasedInGithub ? ' (Released)' : ''}</span>
                     </div>
                     <div class="version-row">
                         <span class="version-label">Catalog:</span>
-                        <span class="version-value">${proposedVersion || 'Not set'}</span>
+                        <span class="version-value ${isVersionReleasedInCatalog ? 'released' : ''}">${proposedVersion || 'Not set'}${isVersionReleasedInCatalog ? ' (Released)' : ''}</span>
+                        ${isVersionReleasedInCatalog ? `<div class="released-flavors">Released in: ${releasedFlavors}</div>` : ''}
                     </div>
                 </div>`;
         }
@@ -817,40 +795,46 @@
      * Suggests the next version number based on catalog versions
      */
     function suggestNextVersion() {
-        if (!versionInput || !catalogDetails) {
-            return;
-        }
-
-        // If versions are still loading, don't show any error or make suggestions
-        if (catalogDetails.versions === undefined) {
-            return;
-        }
-
-        // Now we know versions are loaded (not undefined)
-        if (catalogDetails.versions.length === 0 && !isMainOrMaster) {
-            showError('First release must be created through the IBM Cloud Catalog interface');
+        if (!versionInput) {
             return;
         }
 
         // Only suggest version if the input is empty
-        if (!versionInput.value) {
-            const versions = Array.from(new Set(catalogDetails.versions.map(v => v.version)))
+        if (versionInput.value) {
+            return;
+        }
+
+        // Try to get the next version from catalog first
+        if (catalogDetails?.versions) {
+            const catalogVersions = Array.from(new Set(catalogDetails.versions.map(v => v.version)))
                 .filter(v => /^\d+\.\d+\.\d+$/.test(v))
                 .sort((a, b) => -semverCompare(a, b));
 
-            if (versions.length) {
-                const latest = versions[0];
+            if (catalogVersions.length) {
+                const latest = catalogVersions[0];
                 const [major, minor, patch] = latest.split('.').map(Number);
                 versionInput.value = `${major}.${minor}.${patch + 1}`;
+                console.debug('Suggested next version from catalog:', versionInput.value);
+                return;
             }
         }
 
-        // Validate current version against catalog versions
-        if (versionInput.value && catalogDetails.versions) {
-            const isVersionInvalid = catalogDetails.versions.some(v => v.version === versionInput.value);
-            if (isVersionInvalid && !isMainOrMaster) {
-                showError(`Version ${versionInput.value} already exists in the catalog`);
-            }
+        // Fallback to GitHub version if catalog version is not available
+        const githubVersions = Array.from(new Set(githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0])))
+            .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+            .sort((a, b) => -semverCompare(a, b));
+
+        if (githubVersions.length) {
+            const latest = githubVersions[0];
+            const [major, minor, patch] = latest.split('.').map(Number);
+            versionInput.value = `${major}.${minor}.${patch + 1}`;
+            console.debug('Suggested next version from GitHub:', versionInput.value);
+            return;
+        }
+
+        // If no versions found in either source and not on main/master branch
+        if (!isMainOrMaster) {
+            showError('First release must be created through the IBM Cloud Catalog interface');
         }
     }
 
@@ -949,26 +933,43 @@
     }
 
     function handleReleaseComplete(success, error, cancelled) {
-        // Re-enable buttons and reset their state
-        if (githubBtn) {
-            githubBtn.disabled = false;
-            githubBtn.textContent = 'Create Pre-Release';
-            githubBtn.classList.remove('loading');
-        }
-        if (catalogBtn) {
-            catalogBtn.disabled = false;
-            catalogBtn.textContent = 'Import to Catalog';
-            catalogBtn.classList.remove('loading');
-        }
-
-        // Reset loading states
-        if (mainContent) {
-            mainContent.classList.remove('loading-state');
-        }
         hideLoading();
+        enableAllControls();
 
-        // Update button states based on current auth status
-        updateButtonStates();
+        if (cancelled) {
+            showError('Release was cancelled', true);
+            return;
+        }
+
+        if (!success) {
+            showError(error || 'Failed to create release', true);
+            return;
+        }
+
+        // Clear inputs on success
+        if (versionInput) {
+            versionInput.value = '';
+        }
+        if (postfixInput) {
+            postfixInput.value = '';
+        }
+
+        // Force a refresh to get latest versions
+        vscode.postMessage({
+            command: 'forceRefresh',
+            catalogId: catalogSelect?.value
+        });
+
+        // Request catalog details update
+        if (catalogSelect?.value) {
+            vscode.postMessage({ 
+                command: 'selectCatalog',
+                catalogId: catalogSelect.value
+            });
+        }
+
+        // Update UI
+        updateTagPreview();
     }
 
     // Add function to update timestamp display
