@@ -1,4 +1,4 @@
-import { OfferingVersion as IBMCloudOfferingVersion, OfferingFlavor } from '../ibmCloud';
+import { OfferingVersion as IBMCloudOfferingVersion } from '../ibmCloud';
 
 export interface PreReleaseDetails {
   version: string;
@@ -7,6 +7,13 @@ export interface PreReleaseDetails {
   releaseGithub: boolean;
   targetVersion?: string;
   catalogId?: string;
+  selectedFlavors?: Array<{
+    name: string;
+    label: string;
+    working_directory: string;
+    format_kind: string;
+    selected?: boolean;
+  }>;
 }
 
 export interface GitHubRelease {
@@ -16,10 +23,22 @@ export interface GitHubRelease {
   tarball_url: string;
 }
 
+// Define the flavor interface directly
+export interface OfferingFlavor {
+  name: string;
+  label: string;
+  format_kind?: string;
+  metadata?: {
+    name: string;
+    label: string;
+    index?: number;
+  };
+}
+
 // Extend the IBM Cloud version for catalog-specific needs
 export interface CatalogVersion extends Omit<IBMCloudOfferingVersion, 'flavor'> {
   tgz_url: string;
-  flavor: OfferingFlavor;  // Make flavor required for our use case
+  flavor: OfferingFlavor;
   githubTag?: string;  // Optional GitHub tag associated with this version
 }
 

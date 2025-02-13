@@ -21,9 +21,10 @@ import axios from 'axios';
 
 interface CatalogFlavor {
   name: string;
-  label?: string;
-  working_directory?: string;
-  format_kind?: string;
+  label: string;
+  working_directory: string;
+  format_kind: string;
+  selected?: boolean;
 }
 
 interface CatalogProduct {
@@ -654,7 +655,7 @@ export class PreReleaseService {
   private async extractCatalogDetailsFromTarball(tarballUrl: string): Promise<{
     name: string;
     label: string;
-    flavors: Array<{ name: string; label: string; working_directory: string; format_kind: string }>;
+    flavors: Array<CatalogFlavor>;
   }> {
     const tempDir = path.join(os.tmpdir(), `catalog-${Date.now()}`);
     const tempFile = path.join(tempDir, 'release.tar.gz');
@@ -701,8 +702,9 @@ export class PreReleaseService {
       const flavors = product.flavors?.map(flavor => ({
         name: flavor.name,
         label: flavor.label || flavor.name,
-        working_directory: flavor.working_directory || '',
-        format_kind: flavor.format_kind || 'solution'
+        working_directory: flavor.working_directory || '.',
+        format_kind: flavor.format_kind || 'terraform',
+        selected: true  // All flavors selected by default
       })) || [];
 
       this.logger.debug('Extracted flavors from ibm_catalog.json', {
@@ -712,7 +714,8 @@ export class PreReleaseService {
         flavors: flavors.map(f => ({
           name: f.name,
           label: f.label,
-          working_directory: f.working_directory
+          working_directory: f.working_directory,
+          selected: f.selected
         }))
       }, 'preRelease');
 
@@ -736,6 +739,114 @@ export class PreReleaseService {
         this.logger.warn('Failed to clean up temporary directory', { error, tempDir });
       }
     }
+  }
+
+  /**
+   * Filters out flavors that already exist for a given version
+   * @param allFlavors All available flavors
+   * @param versions Catalog versions
+   * @param version Version to check
+   * @returns Available flavors and list of already imported flavors
+   */
+  private filterAvailableFlavors(
+    allFlavors: CatalogFlavor[],
+    versions: CatalogVersion[],
+    version: string
+  ): { availableFlavors: CatalogFlavor[]; alreadyImportedFlavors: CatalogFlavor[] } {
+    const alreadyImportedFlavors: CatalogFlavor[] = [];
+    const availableFlavors = allFlavors.filter(flavor => {
+      const exists = this.flavorExistsInVersion(versions, version, flavor.name);
+      if (exists) {
+        // Find the existing version to get its format_kind
+        const existingVersion = versions.find(v =>
+          v.version === version &&
+          v.flavor.name === flavor.name
+        );
+        alreadyImportedFlavors.push({
+          ...flavor,
+          format_kind: existingVersion?.flavor.format_kind || flavor.format_kind
+        });
+        return false;
+      }
+      return true;
+    });
+
+    return { availableFlavors, alreadyImportedFlavors };
+  }
+
+  /**
+   * Determines if a flavor should use stack or terraform format
+   * @param flavor The flavor to check
+   * @returns The correct format_kind
+   */
+  private determineFormatKind(flavor: CatalogFlavor): string {
+    // Check working directory for stack_definition.json
+    if (flavor.working_directory && flavor.working_directory.includes('stack_definition.json')) {
+      return 'stack';
+    }
+    // Check if the working directory contains 'solutions' which typically indicates a stack
+    if (flavor.working_directory && flavor.working_directory.includes('solutions')) {
+      return 'stack';
+    }
+    return flavor.format_kind || 'terraform';
+  }
+
+  private async selectFlavorsToImport(flavors: CatalogFlavor[]): Promise<CatalogFlavor[]> {
+    this.logger.debug('Showing flavor selection dialog', {
+      totalFlavors: flavors.length,
+      flavors: flavors.map(f => ({ name: f.name, label: f.label }))
+    }, 'preRelease');
+
+    const items = flavors.map(flavor => {
+      const format_kind = this.determineFormatKind(flavor);
+      return {
+        label: `${flavor.label}: ${flavor.name} (${format_kind})`,
+        picked: true,  // All flavors selected by default
+        flavor: {
+          ...flavor,
+          label: flavor.label || flavor.name,  // Ensure label is never undefined
+          working_directory: flavor.working_directory || '.',  // Ensure working_directory is never undefined
+          format_kind  // Use the determined format_kind
+        }
+      };
+    });
+
+    const selectedItems = await vscode.window.showQuickPick(items, {
+      canPickMany: true,
+      title: 'Select Flavors to Import',
+      placeHolder: 'All flavors are selected by default'
+    });
+
+    if (!selectedItems) {
+      this.logger.debug('Flavor selection cancelled', {}, 'preRelease');
+      return [];
+    }
+
+    const selectedFlavors = selectedItems.map(item => ({
+      ...item.flavor,
+      selected: true
+    }));
+
+    this.logger.debug('Flavors selected', {
+      selectedCount: selectedFlavors.length,
+      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label }))
+    }, 'preRelease');
+
+    return selectedFlavors;
+  }
+
+  /**
+   * Checks if a flavor already exists for a given version in the catalog
+   * @param versions Catalog versions
+   * @param version Version to check
+   * @param flavorName Flavor name to check
+   * @returns boolean indicating if the flavor exists
+   */
+  private flavorExistsInVersion(versions: CatalogVersion[], version: string, flavorName: string): boolean {
+    return versions.some(v =>
+      v.version === version &&
+      v.flavor.name === flavorName
+    );
   }
 
   /**
@@ -812,23 +923,54 @@ export class PreReleaseService {
         // Extract catalog details from the release tarball
         const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
 
-        // Check if version already exists in catalog
-        const versionExists = catalogDetails.versions.some(v => v.version === details.version);
-        if (versionExists) {
-          throw new Error(`Version ${details.version} already exists in the catalog. Please choose a different version.`);
+        // Filter available flavors
+        const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+          releaseDetails.flavors,
+          catalogDetails.versions,
+          details.version
+        );
+
+        // Log flavor availability
+        this.logger.debug('Flavor availability for version', {
+          version: details.version,
+          totalFlavors: releaseDetails.flavors.length,
+          availableFlavors: availableFlavors.map(f => f.name),
+          alreadyImported: alreadyImportedFlavors
+        }, 'preRelease');
+
+        // If no flavors are available, show error and return
+        if (availableFlavors.length === 0) {
+          const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
+            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+          throw new Error(errorMessage);
         }
 
-        // Catalog import confirmation with format_kind information
+        // Show flavor selection dialog with only available flavors
+        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors);
+
+        if (selectedFlavors.length === 0) {
+          this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
+          return false;
+        }
+
+        // Store selected flavors in release details and details object
+        releaseDetails.flavors = selectedFlavors;
+        details.selectedFlavors = selectedFlavors;
+
+        // Update confirmation message to show which flavors are being imported and which already exist
         confirmMessage = `Import the following to the IBM Cloud Catalog?\n\n` +
           `Catalog: ${selectedCatalog.label}\n` +
           `Offering Name: ${releaseDetails.name}\n` +
           `Offering Label: ${releaseDetails.label}\n` +
           `GitHub Release Tag: ${tagName}\n` +
           `Catalog Version: ${details.version}\n` +
-          `Flavors to Import:\n${releaseDetails.flavors.map(f =>
-            `  • ${f.label} (${f.format_kind || 'terraform'})`
-          ).join('\n')}\n\n` +
-          `Note: A separate version will be imported for each flavor.`;
+          `Selected Flavors to Import:\n${selectedFlavors.map(f =>
+            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+          ).join('\n')}` +
+          (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
+            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+          ).join('\n')}` : '') +
+          `\n\nNote: A separate version will be imported for each selected flavor.`;
 
         confirmButtons = [
           { title: 'Import to Catalog', isCloseAffordance: false },
@@ -1006,8 +1148,8 @@ export class PreReleaseService {
 
       // Get repository info and verify permissions
       const { stdout: repoUrl } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
-      const httpsMatch = repoUrl.trim().match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
-      const sshMatch = repoUrl.trim().match(/git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const httpsMatch = repoUrl.trim().match(/github\.com[:/]([^/]+)\/([^.]+)\.git/);
+      const sshMatch = repoUrl.trim().match(/git@github\.com:([^/]+)\/([^.]+)\.git/);
       const match = httpsMatch || sshMatch;
 
       if (!match) {
@@ -1127,8 +1269,37 @@ export class PreReleaseService {
       throw new Error('No flavors found in the catalog manifest');
     }
 
-    // Import each flavor as a separate version
-    for (const flavor of releaseDetails.flavors) {
+    // Double check which flavors are still available (in case catalog was updated between selection and import)
+    const { availableFlavors } = this.filterAvailableFlavors(
+      details.selectedFlavors || releaseDetails.flavors,
+      catalogDetails.versions,
+      details.version
+    );
+
+    if (availableFlavors.length === 0) {
+      throw new Error(`No flavors available to import for version ${details.version}. They may have been imported by another user.`);
+    }
+
+    // Use only the flavors that are still available
+    const flavorsToImport = availableFlavors;
+
+    this.logger.info('Starting import of selected flavors', {
+      totalFlavors: releaseDetails.flavors.length,
+      selectedFlavors: flavorsToImport.length,
+      selectedFlavorNames: flavorsToImport.map((f: CatalogFlavor) => f.name)
+    }, 'preRelease');
+
+    // Import each selected flavor as a separate version
+    for (const flavor of flavorsToImport) {
+      // Verify one last time that this specific flavor hasn't been imported
+      if (this.flavorExistsInVersion(catalogDetails.versions, details.version, flavor.name)) {
+        this.logger.warn('Skipping flavor that was imported by another user', {
+          version: details.version,
+          flavorName: flavor.name
+        }, 'preRelease');
+        continue;
+      }
+
       this.logger.info('Importing flavor', {
         flavorName: flavor.name,
         flavorLabel: flavor.label,
@@ -1137,6 +1308,7 @@ export class PreReleaseService {
       }, 'preRelease');
 
       try {
+        const format_kind = this.determineFormatKind(flavor);
         // Import the version for this flavor
         await ibmCloudService.importVersion(
           details.catalogId!,
@@ -1148,16 +1320,16 @@ export class PreReleaseService {
             repotype: 'git',
             catalogIdentifier: details.catalogId!,
             target_kinds: ['terraform'],
-            format_kind: flavor.format_kind || 'terraform',
+            format_kind,  // Use the determined format_kind
             product_kind: 'solution',
             flavor: {
               metadata: {
                 name: flavor.name,
                 label: flavor.label,
-                index: releaseDetails.flavors.indexOf(flavor) + 1
+                index: flavorsToImport.indexOf(flavor) + 1  // Use flavorsToImport for index
               }
             },
-            working_directory: flavor.working_directory || '.'
+            working_directory: flavor.working_directory
           }
         );
 
