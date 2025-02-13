@@ -184,24 +184,45 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
 
         // Handle array items
         if (Array.isArray(value)) {
+            // Create array header item if this is not a child of an array
+            if (parentItem?.contextValue !== 'array') {
+                const propertyName = parentPath.split('.').pop()?.replace(/\[\d+\]/g, '') || '';
+                const arrayLabel = `${propertyName} Array [${value.length}]`;
+                const arrayItem = new CatalogTreeItem(
+                    this.context,
+                    arrayLabel,
+                    value,
+                    parentPath,
+                    this.getCollapsibleState(value, this.expandedNodes.has(parentPath)),
+                    'array',
+                    undefined,
+                    parentItem
+                );
+                items.push(arrayItem);
+            }
+
+            // Create items for array elements
             value.forEach((item, index) => {
                 const path = this.buildJsonPath(parentPath, index.toString());
                 const schemaMetadata = this.getSchemaMetadata(path);
 
+                // For array items, if the item is a string, use it directly as the label
+                const itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item, index);
+
                 const treeItem = new CatalogTreeItem(
                     this.context,
-                    index.toString(),
+                    itemLabel,
                     item,
                     path,
                     this.getCollapsibleState(item, this.expandedNodes.has(path)),
                     this.getContextValue(item),
                     schemaMetadata,
-                    parentItem
+                    parentItem?.contextValue === 'array' ? parentItem : items[0] // Link to array header if exists
                 );
 
                 items.push(treeItem);
             });
-            return this.sortTreeItems(items);
+            return items;
         }
 
         // Handle object properties
@@ -217,9 +238,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 ? ValidationStatus.Unknown  // Always start as Unknown
                 : ValidationStatus.Unknown;
 
+            // Remove array indices from the key display
+            const displayKey = key.replace(/\[\d+\]/g, '');
+
             const item = new CatalogTreeItem(
                 this.context,
-                key,
+                displayKey,
                 val,
                 path,
                 this.getCollapsibleState(val, this.expandedNodes.has(path)),
@@ -239,6 +263,35 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         }
 
         return this.sortTreeItems(items);
+    }
+
+    /**
+     * Gets a display label for an object in an array
+     */
+    private getObjectLabel(item: unknown, index: number): string {
+        if (typeof item !== 'object' || item === null) {
+            return `${index + 1}`;
+        }
+
+        // Try to find a meaningful label from common identifier properties
+        const obj = item as Record<string, unknown>;
+        const labelProperties = ['name', 'label', 'title', 'id'];
+
+        for (const prop of labelProperties) {
+            if (prop in obj && typeof obj[prop] === 'string') {
+                return obj[prop] as string;
+            }
+        }
+
+        // If no meaningful label is found, use the first string property
+        for (const [key, value] of Object.entries(obj)) {
+            if (typeof value === 'string') {
+                return value;
+            }
+        }
+
+        // If no string property is found, return empty string (the object icon will still show)
+        return '';
     }
 
     /**

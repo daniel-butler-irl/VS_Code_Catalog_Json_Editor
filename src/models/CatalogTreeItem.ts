@@ -47,9 +47,8 @@ export class CatalogTreeItem extends vscode.TreeItem {
         catalogId?: string,
         initialStatus: ValidationStatus = ValidationStatus.Unknown
     ) {
-        // Remove array indices from all display labels
-        const displayLabel = label.replace(/\[\d+\]/g, '');
-        super(displayLabel, collapsibleState);
+        // Use the label as is, without modification
+        super(label, collapsibleState);
 
         this.context = context;
         this.logger = LoggingService.getInstance();

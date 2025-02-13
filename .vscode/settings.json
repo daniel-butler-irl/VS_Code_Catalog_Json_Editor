@@ -10,7 +10,7 @@
     },
     // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
     "typescript.tsc.autoDetect": "off",
-    "IBM Cloud Deployable Architecture Builder.disable GHE URI check": false,
+    "IBM Cloud Deployable Architecture Builder.disable GHE URI check": true,
     "mochaExplorer.files": "out/tests/**/*.test.js",
     "mochaExplorer.require": [
         "ts-node/register"
