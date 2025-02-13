@@ -24,7 +24,6 @@ body {
 .container {
     height: 100%;
     min-width: 200px;
-    max-width: 300px;
     width: 100%;
     margin: 0;
     padding: var(--container-padding);
@@ -1196,4 +1195,10 @@ input:disabled, select:disabled {
     0% { opacity: 0.6; }
     50% { opacity: 1; }
     100% { opacity: 0.6; }
+}
+
+@media (min-width: 300px) {
+    .container {
+        width: calc(100% - var(--container-padding) * 2);
+    }
 } 
