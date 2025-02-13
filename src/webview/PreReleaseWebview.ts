@@ -27,6 +27,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private disposables: vscode.Disposable[] = [];
   private isInitialized: boolean = false;
+  private lastSentGitHubDetails: { branch?: string; repoUrl?: string } = {};
+  private lastAuthCheck: number = 0;
+  private gitHubDetailsTimeout: NodeJS.Timeout | undefined;
+  private static readonly AUTH_CHECK_INTERVAL = 30000; // 30 seconds between auth checks
+  private static readonly DEBOUNCE_DELAY = 1000; // 1 second debounce for GitHub details
 
   private constructor(
     context: vscode.ExtensionContext,
@@ -76,41 +81,142 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     this.view.webview.html = this.getWebviewContent(styleUri, scriptUri);
 
     // Show loading state immediately
-    this.view.webview.postMessage({ command: 'showLoading', message: 'Initializing Pre-Release Manager...' });
+    await this.view.webview.postMessage({
+      command: 'setLoadingState',
+      loading: true,
+      message: 'Initializing Pre-Release Manager...'
+    });
+
+    // Register message handlers first
+    this.registerMessageHandlers();
 
     // Initialize the webview
     if (!this.isInitialized) {
       await this.initialize();
     }
-
-    this.registerMessageHandlers();
   }
 
   private async initialize(): Promise<void> {
     try {
-      // Remove automatic setup call
+      this.logger.debug('Starting webview initialization', {}, 'preRelease');
+
+      // Show loading state immediately
+      if (this.view) {
+        this.logger.debug('Setting initial loading state', {}, 'preRelease');
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: true,
+          message: 'Initializing Pre-Release Manager...'
+        });
+      }
+
+      // Get GitHub details first - this will also update the UI
+      this.logger.debug('Fetching initial GitHub details', {}, 'preRelease');
+      await this.sendGitHubDetails();
+
       // Get the webview state to restore the previously selected catalog
       if (this.view?.webview) {
+        this.logger.debug('Restoring webview state', {}, 'preRelease');
         const state = await this.getWebviewState();
         if (state?.selectedCatalogId) {
+          this.logger.debug('Restoring catalog selection', { catalogId: state.selectedCatalogId }, 'preRelease');
           await this.handleCatalogSelection(state.selectedCatalogId);
+        } else {
+          // If no catalog is selected, ensure buttons are in correct state
+          const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
+          const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
+          await this.updateButtonStates(githubAuth, catalogAuth);
         }
       }
 
       // Initial refresh without auth check
+      this.logger.debug('Performing initial refresh', {}, 'preRelease');
       await this.refresh();
 
       this.isInitialized = true;
+      this.logger.info('Webview initialization complete', {}, 'preRelease');
     } catch (error) {
-      this.logger.error('Failed to initialize Pre-Release webview', error);
-      this.view?.webview.postMessage({
-        command: 'showError',
-        error: 'Failed to initialize Pre-Release Manager. Please try refreshing.'
-      });
+      this.logger.error('Failed to initialize Pre-Release webview', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      }, 'preRelease');
+
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: 'Failed to initialize Pre-Release Manager. Please try refreshing.'
+        });
+      }
     } finally {
       // Hide loading state after initialization attempt
-      this.view?.webview.postMessage({ command: 'hideLoading' });
+      if (this.view) {
+        this.logger.debug('Clearing loading state after initialization', {}, 'preRelease');
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false
+        });
+      }
     }
+  }
+
+  private async sendGitHubDetails(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    // Clear any existing timeout
+    if (this.gitHubDetailsTimeout) {
+      clearTimeout(this.gitHubDetailsTimeout);
+    }
+
+    // Set a new timeout for the update
+    this.gitHubDetailsTimeout = setTimeout(async () => {
+      try {
+        const branch = await this.preReleaseService.getCurrentBranch();
+        const repoInfo = await this.preReleaseService.getRepositoryInfo();
+        const repoUrl = repoInfo ? `http://github.com/${repoInfo.owner}/${repoInfo.name}` : 'Not a Git repository';
+
+        // Check if details have changed before sending update
+        if (this.lastSentGitHubDetails.branch !== branch || this.lastSentGitHubDetails.repoUrl !== repoUrl) {
+          await this.view?.webview.postMessage({
+            command: 'updateGitHubDetails',
+            branch: branch || 'Not a Git repository',
+            repoUrl
+          });
+
+          // Update cached values
+          this.lastSentGitHubDetails = { branch, repoUrl };
+
+          // Only log when there's an actual update
+          this.logger.info('GitHub details updated', {
+            branch: branch || 'Not a Git repository',
+            repoUrl
+          }, 'preRelease');
+        }
+      } catch (error) {
+        // Only update the UI if the error state is different from the last sent state
+        const errorState = {
+          branch: 'Not a Git repository',
+          repoUrl: 'Not a Git repository'
+        };
+
+        if (this.lastSentGitHubDetails.branch !== errorState.branch ||
+          this.lastSentGitHubDetails.repoUrl !== errorState.repoUrl) {
+          this.logger.warn('Git repository access error', {
+            error: error instanceof Error ? error.message : String(error)
+          }, 'preRelease');
+
+          await this.view?.webview.postMessage({
+            command: 'updateGitHubDetails',
+            ...errorState
+          });
+
+          // Update cached values for error state
+          this.lastSentGitHubDetails = errorState;
+        }
+      }
+    }, PreReleaseWebview.DEBOUNCE_DELAY);
   }
 
   private getWebviewState(): Promise<{ selectedCatalogId: string } | undefined> {
@@ -147,13 +253,20 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
 
     try {
       // Show loading state
-      this.view.webview.postMessage({ command: 'showLoading' });
+      await this.view.webview.postMessage({
+        command: 'setLoadingState',
+        loading: true,
+        message: 'Refreshing data...'
+      });
 
       // Clear any existing error state during refresh
-      this.view.webview.postMessage({
+      await this.view.webview.postMessage({
         command: 'showError',
         error: undefined
       });
+
+      // Always get fresh GitHub details first
+      await this.sendGitHubDetails();
 
       const [releases, catalogData] = await Promise.allSettled([
         this.preReleaseService.getLastPreReleases().catch(error => {
@@ -174,9 +287,6 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           };
         })
       ]);
-
-      // Hide loading state
-      this.view.webview.postMessage({ command: 'hideLoading' });
 
       this.logger.debug('Updating UI with fetched data', {
         releasesStatus: releases.status,
@@ -201,37 +311,22 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       this.logger.info('Pre-release panel refresh complete', {}, 'preRelease');
     } catch (error) {
       this.logger.error('Error refreshing pre-release data', error, 'preRelease');
-      this.view?.webview.postMessage({
+      await this.view.webview.postMessage({
         command: 'showError',
         error: 'Failed to refresh data. Please try again.'
       });
-      // Hide loading state even on error
-      this.view.webview.postMessage({ command: 'hideLoading' });
+    } finally {
+      // Hide loading state after refresh
+      await this.view.webview.postMessage({
+        command: 'setLoadingState',
+        loading: false
+      });
     }
   }
 
   private async sendBranchName(): Promise<void> {
-    if (!this.view) {
-      return;
-    }
-
-    try {
-      const branch = await this.preReleaseService.getCurrentBranch();
-      await this.view.webview.postMessage({
-        command: 'updateBranchName',
-        branch
-      });
-    } catch (error) {
-      this.logger.warn('Failed to get branch name, showing empty state',
-        { error: error instanceof Error ? error.message : String(error) },
-        'preRelease'
-      );
-      await this.view.webview.postMessage({
-        command: 'updateBranchName',
-        branch: '',
-        error: 'Not in a Git repository'
-      });
-    }
+    // Reuse sendGitHubDetails to keep code DRY
+    await this.sendGitHubDetails();
   }
 
   private async handleSetup(): Promise<void> {
@@ -346,6 +441,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         <div id="loadingView" class="loading-view">
             <div class="loading-spinner"></div>
             <div class="loading-text">Initializing Pre-Release Manager...</div>
+            <div class="error-text"></div>
         </div>
         <div id="mainContainer" class="container" style="display: none;">
             <div id="authStatus" class="auth-status">
@@ -359,6 +455,19 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                 </div>
             </div>
             <div id="mainContent">
+                <div class="section">
+                    <h2>GitHub Details</h2>
+                    <div class="details-info">
+                        <div class="details-row">
+                            <span class="details-label">Repository:</span>
+                            <span class="details-value" id="github-repo">Loading...</span>
+                        </div>
+                        <div class="details-row">
+                            <span class="details-label">Branch:</span>
+                            <span class="details-value" id="github-branch">Loading...</span>
+                        </div>
+                    </div>
+                </div>
                 <div class="section">
                     <h2>Create Pre-Release</h2>
                     <div class="form-group">
@@ -449,10 +558,15 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         versionCount: catalogDetails.versions?.length ?? 0
       }, 'preRelease');
 
-      this.view?.webview.postMessage({
+      await this.view?.webview.postMessage({
         command: 'updateCatalogDetails',
         catalogDetails
       });
+
+      // Update button states after catalog selection
+      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
+      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
+      await this.updateButtonStates(githubAuth, catalogAuth);
 
       this.logger.info('Successfully updated catalog details', { catalogId }, 'preRelease');
     } catch (error) {
@@ -578,6 +692,12 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Check if enough time has passed since the last auth check
+    const now = Date.now();
+    if (now - this.lastAuthCheck < PreReleaseWebview.AUTH_CHECK_INTERVAL) {
+      return;
+    }
+
     try {
       const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
       const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
@@ -600,18 +720,30 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       });
 
       this.updateButtonStates(githubAuth, catalogAuth);
+      this.lastAuthCheck = now;
     } catch (error) {
-      this.logger.error('Error sending authentication status', { error }, 'preRelease');
+      // Only log authentication errors as they are important for debugging
+      this.logger.error('Authentication check failed', {
+        error: error instanceof Error ? error.message : String(error)
+      }, 'preRelease');
     }
   }
 
   private updateButtonStates(githubAuth: boolean, catalogAuth: boolean): void {
     if (this.view?.webview) {
+      // Get current catalog selection state
+      const state = this.getWebviewState();
+      const hasCatalogSelected = state !== undefined && state.then(s => !!s?.selectedCatalogId);
+
       this.view.webview.postMessage({
         command: 'updateButtonStates',
         data: {
           githubAuth,
-          catalogAuth
+          catalogAuth,
+          // Only enable catalog-related buttons if a catalog is selected
+          enableCatalogButtons: hasCatalogSelected && catalogAuth,
+          // GitHub buttons can be enabled if authenticated, regardless of catalog selection
+          enableGithubButtons: githubAuth
         }
       });
     }
@@ -632,21 +764,163 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   }
 
   private registerMessageHandlers(): void {
+    if (!this.view) {
+      return;
+    }
+
     this.disposables.push(
       vscode.window.onDidChangeActiveColorTheme(() => {
         if (this.view) {
-          this.view.webview.html = this.getWebviewContent(this.getMediaUri('prerelease.css'), this.getMediaUri('prerelease.js'));
+          const styleUri = this.view.webview.asWebviewUri(
+            vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.css')
+          );
+          const scriptUri = this.view.webview.asWebviewUri(
+            vscode.Uri.joinPath(this.context.extensionUri, 'media', 'prerelease.js')
+          );
+          this.view.webview.html = this.getWebviewContent(styleUri, scriptUri);
         }
       })
     );
 
-    this.view?.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+    this.view.webview.onDidReceiveMessage(async (message: any) => {
       try {
-        await this.handleMessage(message);
+        switch (message.command) {
+          case 'getBranchName':
+          case 'checkAuthentication':
+            // Don't log these frequent checks
+            if (message.command === 'getBranchName') {
+              await this.sendGitHubDetails();
+            } else {
+              await this.sendAuthenticationStatus();
+            }
+            break;
+          case 'stateResponse':
+            // This is a response from the webview, no action needed
+            break;
+          case 'setup':
+            await this.handleSetup();
+            break;
+          case 'refresh':
+            await this.refresh();
+            break;
+          case 'selectCatalog':
+            if (message.catalogId) {
+              await this.handleCatalogSelection(message.catalogId);
+            } else {
+              // If no catalog is selected, disable the buttons
+              await this.updateButtonStates(false, false);
+            }
+            break;
+          case 'forceRefresh':
+            if (message.catalogId) {
+              await this.handleForceRefresh(message.catalogId);
+            } else {
+              await this.refresh();
+            }
+            break;
+          default:
+            // Only log truly unknown commands
+            if (!['getBranchName', 'checkAuthentication', 'stateResponse'].includes(message.command)) {
+              this.logger.warn('Unknown message command received', { command: message.command }, 'preRelease');
+            }
+            break;
+        }
       } catch (error) {
-        this.logger.error('Error handling webview message', { error }, 'preRelease');
-        vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        this.logger.error('Error handling webview message', { error, message }, 'preRelease');
+        if (this.view) {
+          await this.view.webview.postMessage({
+            command: 'showError',
+            error: error instanceof Error ? error.message : 'An error occurred'
+          });
+        }
       }
     });
+  }
+
+  private async handleForceRefresh(catalogId: string): Promise<void> {
+    this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
+
+    try {
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: true,
+          message: 'Force refreshing data...'
+        });
+      }
+
+      // Always get fresh GitHub details first
+      await this.sendGitHubDetails();
+
+      const [releases, catalogData] = await Promise.allSettled([
+        this.preReleaseService.getLastPreReleases().catch(error => {
+          this.logger.warn('Failed to fetch releases, showing empty state', { error }, 'preRelease');
+          return [];
+        }),
+        this.preReleaseService.getCatalogDetails().catch(error => {
+          this.logger.warn('Failed to fetch catalog details, showing empty state', { error }, 'preRelease');
+          return {
+            catalogs: [],
+            selectedCatalog: {
+              catalogId: '',
+              offeringId: '',
+              name: '',
+              label: '',
+              versions: []
+            }
+          };
+        })
+      ]);
+
+      if (this.view) {
+        this.logger.debug('Updating UI with refreshed data', {
+          releasesStatus: releases.status,
+          catalogDataStatus: catalogData.status,
+          catalogId
+        }, 'preRelease');
+
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          releases: releases.status === 'fulfilled' ? releases.value : [],
+          catalogs: catalogData.status === 'fulfilled' ? catalogData.value.catalogs : [],
+          catalogDetails: catalogData.status === 'fulfilled' ? catalogData.value.selectedCatalog : undefined
+        });
+
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false
+        });
+      }
+
+      this.logger.info('Force refresh completed successfully', { catalogId }, 'preRelease');
+    } catch (error) {
+      this.logger.error('Failed to force refresh', {
+        error,
+        catalogId,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      }, 'preRelease');
+
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false,
+          error: 'Failed to refresh data. Please try again.'
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  public dispose(): void {
+    // Clear any pending timeouts
+    if (this.gitHubDetailsTimeout) {
+      clearTimeout(this.gitHubDetailsTimeout);
+    }
+
+    // Dispose of other resources
+    this.disposables.forEach(d => d.dispose());
+    this.disposables = [];
   }
 } 

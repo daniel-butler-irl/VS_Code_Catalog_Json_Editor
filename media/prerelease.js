@@ -40,7 +40,17 @@
 
     // Initial state setup
     function initializeUI() {
-        showLoading('Initializing Pre-Release Manager...');
+        // Show initial loading state
+        if (loadingView) {
+            loadingView.style.display = 'flex';
+            const loadingText = loadingView.querySelector('.loading-text');
+            if (loadingText) {
+                loadingText.textContent = 'Initializing Pre-Release Manager...';
+            }
+        }
+        if (mainContainer) {
+            mainContainer.style.display = 'none';
+        }
         
         // Initialize inputs - version should be enabled from start
         if (versionInput) {
@@ -75,21 +85,6 @@
             catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Checking...';
         }
 
-        // Restore previous catalog selection if available
-        const previousState = vscode.getState();
-        if (previousState?.selectedCatalogId && catalogSelect) {
-            catalogSelect.value = previousState.selectedCatalogId;
-            // If we have a previous catalog selection and we're not on main/master,
-            // enable the version input
-            if (!isMainOrMaster && versionInput) {
-                versionInput.disabled = false;
-                versionInput.placeholder = 'Enter version number';
-            }
-        }
-
-        // Request initial authentication status
-        vscode.postMessage({ command: 'checkAuthentication' });
-
         // Add click handlers for auth buttons
         const githubButton = document.getElementById('githubAuthButton');
         const catalogButton = document.getElementById('catalogAuthButton');
@@ -111,6 +106,18 @@
                 });
             });
         }
+
+        // Add event listeners
+        catalogSelect?.addEventListener('change', handleCatalogSelect);
+        githubBtn?.addEventListener('click', () => handleCreateClick('github'));
+        catalogBtn?.addEventListener('click', () => handleCreateClick('catalog'));
+        getLatestBtn?.addEventListener('click', handleGetLatestClick);
+        postfixInput?.addEventListener('input', updateTagPreview);
+        versionInput?.addEventListener('input', updateTagPreview);
+
+        // Request initial data
+        vscode.postMessage({ command: 'getBranchName' });
+        vscode.postMessage({ command: 'checkAuthentication' });
     }
 
     function showLoading(message = 'Loading...') {
@@ -247,67 +254,63 @@
     // Handle messages from the extension
     window.addEventListener('message', event => {
         const message = event.data;
-
+        
         switch (message.command) {
+            case 'getBranchName':
+            case 'checkAuthentication':
+            case 'stateResponse':
             case 'getState':
-                vscode.postMessage({
-                    command: 'stateResponse',
-                    state: vscode.getState() || { selectedCatalogId: '' }
-                });
-                break;
-            case 'authenticationStatus':
-                isGithubAuthenticated = message.githubAuthenticated;
-                isCatalogAuthenticated = message.catalogAuthenticated;
-                updateAuthStatus({
-                    github: {
-                        isLoggedIn: isGithubAuthenticated,
-                        text: `GitHub: ${isGithubAuthenticated ? 'Logged in' : 'Not logged in'}`
-                    },
-                    catalog: {
-                        isLoggedIn: isCatalogAuthenticated,
-                        text: `IBM Cloud: ${isCatalogAuthenticated ? 'Logged in' : 'Not logged in'}`
-                    }
-                });
-                break;
-            case 'updateData':
-                handleUpdateData(message);
-                // Update timestamp when data is received
-                lastCheckedTimestamp = message.timestamp;
-                isCacheUsed = message.isCacheUsed;
-                updateTimestampDisplay();
-                break;
-            case 'updateBranchName':
-                updateBranchName(message.branch);
-                break;
+            case 'updateButtonStates':
+            case 'updateGitHubDetails':
             case 'updateCatalogDetails':
-                updateCatalogDetails(message.catalogDetails);
-                break;
+            case 'updateData':
             case 'updateNextVersion':
-                if (versionInput && !versionInput.value) {
-                    versionInput.value = message.version;
-                    updateTagPreview();
+            case 'updateAuthStatus':
+            case 'setLoadingState':
+            case 'showError':
+            case 'refreshComplete':
+            case 'releaseComplete':
+                // These are all known commands, handle them with their respective functions
+                switch (message.command) {
+                    case 'updateButtonStates':
+                        if (message.data) {
+                            const { githubAuth, catalogAuth, enableCatalogButtons, enableGithubButtons } = message.data;
+                            isGithubAuthenticated = githubAuth;
+                            isCatalogAuthenticated = catalogAuth;
+                            updateButtonStates();
+                        }
+                        break;
+                    case 'updateGitHubDetails':
+                        handleGitHubDetailsUpdate(message);
+                        break;
+                    case 'updateCatalogDetails':
+                        handleCatalogDetailsUpdate(message);
+                        break;
+                    case 'updateData':
+                        handleDataUpdate(message);
+                        break;
+                    case 'updateNextVersion':
+                        handleNextVersionUpdate(message);
+                        break;
+                    case 'updateAuthStatus':
+                        updateAuthStatus(message.data);
+                        break;
+                    case 'setLoadingState':
+                        handleSetLoadingState(message);
+                        break;
+                    case 'showError':
+                        handleError(message.error);
+                        break;
+                    case 'refreshComplete':
+                        handleRefreshComplete();
+                        break;
+                    case 'releaseComplete':
+                        handleReleaseComplete(message.success, message.error, message.cancelled);
+                        break;
                 }
                 break;
-            case 'hasUnpushedChanges':
-                handleUnpushedChanges(message.hasUnpushedChanges);
-                break;
-            case 'refreshComplete':
-                handleRefreshComplete();
-                break;
-            case 'releaseComplete':
-                handleReleaseComplete(message.success, message.error, message.cancelled);
-                break;
-            case 'showLoading':
-                handleSetLoadingState(message);
-                break;
-            case 'hideLoading':
-                hideLoading();
-                break;
-            case 'showError':
-                handleError(message.error);
-                break;
-            case 'updateAuthStatus':
-                updateAuthStatus(message.data);
+            default:
+                console.warn('Unknown message command:', message.command);
                 break;
         }
     });
@@ -658,14 +661,22 @@
                 }
             });
 
-            // Create a set of processed GitHub tags
+            // Create a set of processed GitHub tags and versions
             const processedTags = new Set();
+            const processedVersions = new Set();
+            let versionCount = 0;
 
-            // First, process GitHub releases
-            githubReleases.forEach(release => {
+            // First, process GitHub releases (limited to 5)
+            githubReleases.slice(0, 5).forEach(release => {
+                if (versionCount >= 5) return;
+
                 const tag = 'tag_name' in release ? release.tag_name : release.tag;
                 const catalogEntries = versionMap.get(tag) || [];
                 processedTags.add(tag);
+
+                // Add the base version to processed versions
+                const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '').split('-')[0];
+                processedVersions.add(baseVersion);
 
                 content += `
                     <tr>
@@ -686,28 +697,50 @@
                             }
                         </td>
                     </tr>`;
+                versionCount++;
             });
 
             // Then, process any catalog versions that don't have a matching GitHub release
-            details.versions.forEach(version => {
-                if (!version.githubTag || processedTags.has(version.githubTag)) {
-                    return;
-                }
+            if (versionCount < 5) {
+                const remainingVersions = Array.from(new Set(
+                    details.versions
+                        .filter(v => !processedVersions.has(v.version))
+                        .map(v => v.version)
+                )).sort((a, b) => semverCompare(b, a)).slice(0, 5 - versionCount);
 
-                content += `
-                    <tr>
-                        <td class="github-version">
-                            <div class="version-tag not-published">
-                                <div class="version-number">Not published</div>
-                            </div>
-                        </td>
-                        <td class="catalog-version">
-                            <div class="version-tag" title="${version.tgz_url || ''}">
-                                <div class="version-number">${version.version}</div>
-                                <div class="version-flavor">${version.flavor?.label || version.flavor?.name || 'Unknown'}</div>
-                            </div>
-                        </td>
-                    </tr>`;
+                for (const version of remainingVersions) {
+                    if (versionCount >= 5) break;
+
+                    const versionsForDisplay = details.versions.filter(v => 
+                        v.version === version && (!v.githubTag || !processedTags.has(v.githubTag))
+                    );
+
+                    if (versionsForDisplay.length > 0) {
+                        content += `
+                            <tr>
+                                <td class="github-version">
+                                    <div class="version-tag not-published">
+                                        <div class="version-number">Not published</div>
+                                    </div>
+                                </td>
+                                <td class="catalog-version">
+                                    ${versionsForDisplay.map(version => `
+                                        <div class="version-tag" title="${version.tgz_url || ''}">
+                                            <div class="version-number">${version.version}</div>
+                                            <div class="version-flavor">${version.flavor?.label || version.flavor?.name || 'Unknown'}</div>
+                                        </div>
+                                    `).join('')}
+                                </td>
+                            </tr>`;
+                        versionCount++;
+                    }
+                }
+            }
+
+            console.debug('Final version display count', {
+                totalVersionsDisplayed: versionCount,
+                processedTags: Array.from(processedTags),
+                processedVersions: Array.from(processedVersions)
             });
 
             content += `
@@ -1010,45 +1043,82 @@
     }
 
     function updateButtonStates() {
-        const githubBtn = document.getElementById('githubBtn');
-        const catalogBtn = document.getElementById('catalogBtn');
-        const catalogSelect = document.getElementById('catalogSelect');
-        const versionInput = document.getElementById('version');
-        const postfixInput = document.getElementById('postfix');
-        const getLatestBtn = document.getElementById('getLatestBtn');
-
-        const hasCatalogSelected = catalogSelect instanceof HTMLSelectElement && catalogSelect.value;
-
-        // Update GitHub-related UI elements
-        if (githubBtn instanceof HTMLButtonElement) {
-            githubBtn.disabled = !isGithubAuthenticated || !hasCatalogSelected;
-            githubBtn.title = !isGithubAuthenticated ? 'Login to GitHub to create pre-releases' : 
-                            !hasCatalogSelected ? 'Select a catalog first' :
-                            'Create GitHub pre-release';
+        const isGitRepo = document.getElementById('github-repo')?.textContent !== 'Not a Git repository';
+        const selectedCatalogId = catalogSelect?.value;
+        const hasValidVersion = versionInput?.value && versionInput.value.trim() !== '';
+        const hasValidPostfix = postfixInput?.value && postfixInput.value.trim() !== '';
+        
+        // Common condition for all buttons - require catalog selection
+        const baseConditions = isGitRepo && selectedCatalogId;
+        
+        // GitHub button state
+        if (githubBtn) {
+            githubBtn.disabled = !baseConditions || !isGithubAuthenticated || isMainOrMaster || !hasValidVersion || !hasValidPostfix;
+            githubBtn.title = !isGitRepo ? 'Not a Git repository' :
+                             !selectedCatalogId ? 'Please select a catalog first' :
+                             !isGithubAuthenticated ? 'Please log in to GitHub first' :
+                             isMainOrMaster ? 'Cannot create pre-release from main/master branch' :
+                             !hasValidVersion ? 'Please enter a version number' :
+                             !hasValidPostfix ? 'Please enter a postfix' :
+                             'Create a new pre-release';
         }
-
-        // Update catalog-related UI elements
-        if (catalogBtn instanceof HTMLButtonElement) {
-            catalogBtn.disabled = !isCatalogAuthenticated || !hasCatalogSelected;
-            catalogBtn.title = !isCatalogAuthenticated ? 'Login to IBM Cloud to publish to catalog' : 
-                             !hasCatalogSelected ? 'Select a catalog first' : 
+        
+        // Catalog button state
+        if (catalogBtn) {
+            catalogBtn.disabled = !baseConditions || !isCatalogAuthenticated || !hasValidVersion || !hasValidPostfix;
+            catalogBtn.title = !isGitRepo ? 'Not a Git repository' :
+                             !selectedCatalogId ? 'Please select a catalog first' :
+                             !isCatalogAuthenticated ? 'Please log in to IBM Cloud first' :
+                             !hasValidVersion ? 'Please enter a version number' :
+                             !hasValidPostfix ? 'Please enter a postfix' :
                              'Import to catalog';
         }
-
-        if (getLatestBtn instanceof HTMLButtonElement) {
-            getLatestBtn.disabled = !hasCatalogSelected;
-            getLatestBtn.title = !hasCatalogSelected ? 'Select a catalog first' : 'Get latest releases';
+        
+        // Get Latest button state
+        if (getLatestBtn) {
+            getLatestBtn.disabled = !baseConditions || (!isGithubAuthenticated && !isCatalogAuthenticated);
+            getLatestBtn.title = !isGitRepo ? 'Not a Git repository' :
+                                !selectedCatalogId ? 'Please select a catalog first' :
+                                (!isGithubAuthenticated && !isCatalogAuthenticated) ? 'Please log in to GitHub or IBM Cloud first' :
+                                'Get latest releases';
+        }
+        
+        // Input fields state
+        if (postfixInput) {
+            postfixInput.disabled = !isGitRepo || isMainOrMaster || !selectedCatalogId;
+            if (!isGitRepo) {
+                postfixInput.value = '';
+                postfixInput.placeholder = 'Not a Git repository';
+            } else if (isMainOrMaster) {
+                postfixInput.placeholder = 'Cannot create releases from main/master branch';
+            } else if (!selectedCatalogId) {
+                postfixInput.placeholder = 'Please select a catalog first';
+            } else {
+                postfixInput.placeholder = 'Enter postfix';
+            }
         }
 
-        // Enable version and postfix inputs if authenticated and catalog selected
-        const shouldEnable = (isGithubAuthenticated || isCatalogAuthenticated) && hasCatalogSelected;
-        if (versionInput instanceof HTMLInputElement) {
-            versionInput.disabled = !shouldEnable;
-            versionInput.placeholder = !hasCatalogSelected ? 'Select a catalog first' : 'Enter version number';
+        // Version input state
+        if (versionInput) {
+            versionInput.disabled = !isGitRepo || isMainOrMaster || !selectedCatalogId;
+            if (!isGitRepo) {
+                versionInput.placeholder = 'Not a Git repository';
+            } else if (isMainOrMaster) {
+                versionInput.placeholder = 'Cannot create releases from main/master branch';
+            } else if (!selectedCatalogId) {
+                versionInput.placeholder = 'Please select a catalog first';
+            } else {
+                versionInput.placeholder = 'Enter version number';
+            }
         }
-        if (postfixInput instanceof HTMLInputElement) {
-            postfixInput.disabled = !shouldEnable;
-            postfixInput.placeholder = !hasCatalogSelected ? 'Select a catalog first' : 'Enter postfix';
+
+        // Update catalog select state
+        if (catalogSelect) {
+            catalogSelect.disabled = !isGitRepo || isMainOrMaster || !isCatalogAuthenticated;
+            catalogSelect.title = !isGitRepo ? 'Not a Git repository' :
+                                isMainOrMaster ? 'Cannot create releases from main/master branch' :
+                                !isCatalogAuthenticated ? 'Please log in to IBM Cloud first' :
+                                'Select a catalog';
         }
     }
 
@@ -1123,26 +1193,166 @@
         }
     }
 
-    function handleSetLoadingState(data) {
-        loadingState = data.loading;
-        loadingMessage = data.message || '';
-        
-        const loadingOverlay = document.getElementById('loading-overlay');
-        const loadingText = document.getElementById('loading-text');
-        const errorText = document.getElementById('error-text');
-        
-        if (loadingState) {
-            loadingOverlay.style.display = 'flex';
-            loadingText.textContent = loadingMessage;
-            errorText.style.display = 'none';
-        } else {
-            loadingOverlay.style.display = 'none';
-            if (data.error) {
-                errorText.textContent = data.error;
-                errorText.style.display = 'block';
-            } else {
+    // Handle loading state changes
+    function handleSetLoadingState(message) {
+        if (!loadingView || !mainContainer) {
+            return;
+        }
+
+        const loadingText = loadingView.querySelector('.loading-text');
+        const errorText = loadingView.querySelector('.error-text');
+
+        if (message.loading) {
+            loadingView.style.display = 'flex';
+            if (loadingText) {
+                loadingText.textContent = message.message || 'Loading...';
+            }
+            if (errorText instanceof HTMLElement) {
+                errorText.textContent = '';
                 errorText.style.display = 'none';
             }
+            mainContainer.style.display = 'none';
+        } else {
+            loadingView.style.display = 'none';
+            mainContainer.style.display = 'block';
+            if (message.error && errorText instanceof HTMLElement) {
+                errorText.textContent = message.error;
+                errorText.style.display = 'block';
+            }
+        }
+    }
+
+    // Handle GitHub details update
+    function handleGitHubDetailsUpdate(message) {
+        console.debug('Received GitHub details update:', message);
+        
+        const repoElement = document.getElementById('github-repo');
+        const branchElement = document.getElementById('github-branch');
+        
+        if (!repoElement || !branchElement) {
+            console.warn('GitHub details elements not found in DOM');
+            return;
+        }
+
+        const isGitRepo = message.repoUrl !== 'Not a Git repository';
+        console.debug('Git repository status:', { isGitRepo, repoUrl: message.repoUrl, branch: message.branch });
+        
+        // Update display values with proper styling
+        if (isGitRepo) {
+            repoElement.innerHTML = `<a href="${message.repoUrl}" class="git-repo-info" target="_blank">${message.repoUrl}</a>`;
+            branchElement.textContent = message.branch;
+            repoElement.classList.remove('not-git-repo');
+            branchElement.classList.remove('not-git-repo');
+        } else {
+            repoElement.textContent = 'Not a Git repository';
+            branchElement.textContent = 'Not a Git repository';
+            repoElement.classList.add('not-git-repo');
+            branchElement.classList.add('not-git-repo');
+        }
+        
+        // Store current branch for later use
+        currentBranch = isGitRepo ? message.branch : '';
+        isMainOrMaster = ['main', 'master'].includes(currentBranch.toLowerCase());
+        console.debug('Branch status:', { currentBranch, isMainOrMaster });
+        
+        // Update UI state based on Git repository status
+        if (!isGitRepo) {
+            console.debug('Disabling Git-related functionality - not a Git repository');
+            // Disable Git-related functionality
+            if (githubBtn) {
+                githubBtn.disabled = true;
+                githubBtn.title = 'Not a Git repository';
+            }
+            if (postfixInput) {
+                postfixInput.disabled = true;
+                postfixInput.value = '';
+                postfixInput.placeholder = 'Not a Git repository';
+            }
+            if (versionInput) {
+                versionInput.disabled = true;
+                versionInput.placeholder = 'Not a Git repository';
+            }
+        } else {
+            console.debug('Updating UI for Git repository');
+            // Update postfix input with branch name if empty
+            if (postfixInput && (!postfixInput.value || postfixInput.value === 'Loading branch name...')) {
+                console.debug('Setting postfix input value:', `${message.branch}-beta`);
+                postfixInput.value = `${message.branch}-beta`;
+            }
+            
+            // Enable/disable inputs based on branch
+            if (isMainOrMaster) {
+                console.debug('Disabling inputs - on main/master branch');
+                if (versionInput) {
+                    versionInput.disabled = true;
+                    versionInput.placeholder = 'Cannot create releases from main/master branch';
+                }
+                if (postfixInput) {
+                    postfixInput.disabled = true;
+                    postfixInput.placeholder = 'Cannot create releases from main/master branch';
+                }
+            } else {
+                console.debug('Enabling inputs - not on main/master branch');
+                if (versionInput) {
+                    versionInput.disabled = false;
+                    versionInput.placeholder = 'Enter version number';
+                }
+                if (postfixInput) {
+                    postfixInput.disabled = false;
+                    postfixInput.placeholder = 'Enter postfix';
+                }
+            }
+        }
+        
+        // Update button states
+        updateButtonStates();
+        console.debug('GitHub details update complete');
+    }
+
+    // Remove the old handleCatalogSelect reference and add proper handler
+    function handleCatalogSelect() {
+        const selectedCatalogId = catalogSelect.value;
+        vscode.postMessage({ 
+            command: 'selectCatalog',
+            catalogId: selectedCatalogId
+        });
+    }
+
+    // Add proper handler for data updates
+    function handleDataUpdate(message) {
+        if (!mainContent || !catalogSelect || !versionInput || !postfixInput) {
+            console.error('Required elements not found');
+            return;
+        }
+        
+        // Update catalog select
+        if (message.catalogs && message.catalogs.length > 0) {
+            updateAvailableCatalogs(message.catalogs);
+        } else {
+            catalogSelect.innerHTML = '<option value="">No catalogs available</option>';
+        }
+        
+        // Store releases for later use
+        lastReleases = message.releases || [];
+        
+        // Update button states
+        updateButtonStates();
+    }
+
+    // Add proper handler for catalog details updates
+    function handleCatalogDetailsUpdate(message) {
+        if (!catalogDetailsDiv) {
+            return;
+        }
+        catalogDetails = message.catalogDetails;
+        updateCatalogDetails(catalogDetails);
+    }
+
+    // Add proper handler for next version updates
+    function handleNextVersionUpdate(message) {
+        if (versionInput && !versionInput.value) {
+            versionInput.value = message.version;
+            updateTagPreview();
         }
     }
 })(); 

@@ -18,6 +18,7 @@ import { Readable, Transform, Writable } from 'stream';
 import fetch from 'node-fetch';
 import * as tar from 'tar';
 import axios from 'axios';
+import { OfferingVersion as IBMCloudOfferingVersion } from '../types/ibmCloud';
 
 interface CatalogFlavor {
   name: string;
@@ -64,6 +65,8 @@ export class PreReleaseService {
   private workspaceRoot: string | undefined;
   private view?: vscode.WebviewView;
   private cacheService: CacheService;
+  private lastBranchName: string | undefined;
+  private lastRepoInfo: { owner: string; name: string } | undefined;
 
   private constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -199,13 +202,42 @@ export class PreReleaseService {
    */
   public async getCurrentBranch(): Promise<string> {
     if (!this.workspaceRoot) {
+      this.logger.error('No workspace root found when getting current branch', {}, 'preRelease');
       throw new Error('No workspace root found');
     }
+
     try {
+      // First check if we're in a git repository
+      try {
+        await execAsync('git rev-parse --git-dir', this.workspaceRoot);
+      } catch (error) {
+        this.logger.error('Not in a Git repository when getting current branch', {
+          workspaceRoot: this.workspaceRoot,
+          error: error instanceof Error ? error.message : String(error)
+        }, 'preRelease');
+        throw new Error('Not in a Git repository');
+      }
+
+      // Get the current branch name
       const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', this.workspaceRoot);
-      return stdout.trim();
+      const branchName = stdout.trim();
+
+      // Only log branch changes
+      if (this.lastBranchName !== branchName) {
+        this.logger.info('Git branch changed', {
+          workspaceRoot: this.workspaceRoot,
+          previousBranch: this.lastBranchName,
+          newBranch: branchName
+        }, 'preRelease');
+        this.lastBranchName = branchName;
+      }
+
+      return branchName;
     } catch (error) {
-      this.logger.error('Failed to get current branch', error, 'preRelease');
+      this.logger.error('Failed to get current branch', {
+        workspaceRoot: this.workspaceRoot,
+        error: error instanceof Error ? error.message : String(error)
+      }, 'preRelease');
       throw new Error('Failed to get current branch. Are you in a git repository?');
     }
   }
@@ -367,22 +399,20 @@ export class PreReleaseService {
           const versionA = catalogReferencedTags.get(a.tag_name)?.version || '';
           const versionB = catalogReferencedTags.get(b.tag_name)?.version || '';
           return semver.rcompare(versionA, versionB);
-        })
-        .slice(0, 5);
+        });
 
-      // Then, if we have less than 5 catalog releases, add pre-releases until we reach 5
-      const remainingSlots = 5 - catalogReleases.length;
-      const preReleases = remainingSlots > 0 ? releases.data
+      // Then, get pre-releases that aren't in the catalog
+      const preReleases = releases.data
         .filter(release => release.prerelease && !catalogReferencedTags.has(release.tag_name))
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, remainingSlots) : [];
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-      // Combine and sort all releases by date
-      const combinedReleases = [...catalogReleases, ...preReleases];
+      // Combine releases, prioritizing catalog releases, and limit to 5 total
+      const combinedReleases = [...catalogReleases, ...preReleases].slice(0, 5);
 
       this.logger.debug('Release breakdown', {
         totalCatalogReleases: catalogReleases.length,
         totalPreReleases: preReleases.length,
+        finalReleaseCount: combinedReleases.length,
         combinedReleases: combinedReleases.map(r => ({
           tag_name: r.tag_name,
           is_catalog: catalogReferencedTags.has(r.tag_name),
@@ -565,18 +595,17 @@ export class PreReleaseService {
         'terraform'
       );
 
-      kindVersions.versions.forEach((version: { tgz_url?: string; version: string }) => {
+      kindVersions.versions.forEach((version: IBMCloudOfferingVersion) => {
         if (version.tgz_url) {
           const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
           if (tgzUrlTag) {
             allVersions.push({
+              id: version.id || '',  // Add required id field
               version: version.version,
               flavor: {
-                name: offering.name,
-                label: offering.label,
-                working_directory: version.working_directory || '.',
-                format_kind: version.format_kind || 'terraform',
-                selected: true
+                name: offering.name || '',  // Ensure name is never undefined
+                label: offering.label || offering.name || '',  // Ensure label is never undefined
+                format_kind: 'terraform'  // Default format kind
               },
               tgz_url: version.tgz_url,
               githubTag: tgzUrlTag
@@ -600,10 +629,11 @@ export class PreReleaseService {
       }, 'preRelease');
 
       return {
-        name: offering.name,
-        label: offering.label,
+        name: offering.name || '',  // Ensure name is never undefined
+        label: offering.label || offering.name || '',  // Ensure label is never undefined
         versions: allVersions,
-        offeringId: offering.id
+        offeringId: offering.id,
+        catalogId  // Add the required catalogId field
       };
     } catch (error) {
       this.logger.error('Failed to get catalog details', {
@@ -1509,40 +1539,76 @@ export class PreReleaseService {
   public async handleForceRefresh(catalogId?: string): Promise<void> {
     this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
 
+    if (!this.view) {
+      this.logger.debug('No view available for force refresh', {}, 'preRelease');
+      return;
+    }
+
     try {
-      if (this.view) {
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: true,
-          message: 'Force refreshing data...'
-        });
-      }
+      await this.view.webview.postMessage({
+        command: 'setLoadingState',
+        loading: true,
+        message: 'Force refreshing data...'
+      });
 
-      const { githubReleases, catalogDetails, versionMappings } = await this.getLatestVersions(catalogId);
+      // Get GitHub releases first
+      const githubReleases = await this.getGitHubReleases().catch(error => {
+        this.logger.warn('Failed to fetch GitHub releases', { error }, 'preRelease');
+        return [];
+      });
 
-      if (this.view) {
-        if (catalogId && catalogDetails) {
-          await this.view.webview.postMessage({
-            command: 'updateCatalogDetails',
-            catalogDetails: {
-              ...catalogDetails,
-              versionMappings
-            }
-          });
+      // Get catalog details if catalogId is provided
+      let catalogDetails: CatalogDetails | undefined;
+      let versionMappings: VersionMappingSummary[] = [];
+
+      if (catalogId) {
+        try {
+          catalogDetails = await this.getSelectedCatalogDetails(catalogId);
+          if (catalogDetails) {
+            versionMappings = this.getVersionMappingSummary(
+              catalogId,
+              catalogDetails.offeringId,
+              'terraform',
+              githubReleases,
+              catalogDetails.versions
+            );
+          }
+        } catch (error) {
+          this.logger.warn('Failed to fetch catalog details', { error, catalogId }, 'preRelease');
         }
+      }
 
-        await this.view.webview.postMessage({
-          command: 'updateData',
-          releases: githubReleases,
-          catalogs: (await this.getCatalogDetails()).catalogs,
-          catalogDetails: catalogDetails
-        });
+      // Get catalogs list
+      const catalogData = await this.getCatalogDetails().catch(error => {
+        this.logger.warn('Failed to fetch catalog details', { error }, 'preRelease');
+        return { catalogs: [] };
+      });
 
+      // Update UI with all data
+      if (catalogId && catalogDetails) {
         await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: false
+          command: 'updateCatalogDetails',
+          catalogDetails: {
+            ...catalogDetails,
+            versionMappings
+          }
         });
       }
+
+      await this.view.webview.postMessage({
+        command: 'updateData',
+        releases: githubReleases.slice(0, 5), // Ensure we only return 5 releases
+        catalogs: catalogData.catalogs,
+        catalogDetails: catalogDetails ? {
+          ...catalogDetails,
+          versionMappings
+        } : undefined
+      });
+
+      await this.view.webview.postMessage({
+        command: 'setLoadingState',
+        loading: false
+      });
 
       this.logger.info('Force refresh completed successfully', { catalogId }, 'preRelease');
     } catch (error) {
@@ -1553,6 +1619,14 @@ export class PreReleaseService {
           command: 'setLoadingState',
           loading: false,
           error: 'Failed to refresh data. Please try again.'
+        });
+
+        // Send empty data to reset the view
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          releases: [],
+          catalogs: [],
+          catalogDetails: undefined
         });
       }
 
@@ -1692,19 +1766,23 @@ export class PreReleaseService {
 
     try {
       const branch = await this.getCurrentBranch();
+      const repoInfo = await this.getRepositoryInfo();
+      const repoUrl = repoInfo ? `http://github.com/${repoInfo.owner}/${repoInfo.name}` : 'Not in a Git repository';
+
       await this.view.webview.postMessage({
-        command: 'updateBranchName',
-        branch
+        command: 'updateGitHubDetails',
+        branch,
+        repoUrl
       });
     } catch (error) {
-      this.logger.warn('Failed to get branch name, showing empty state',
+      this.logger.warn('Failed to get Git details, showing empty state',
         { error: error instanceof Error ? error.message : String(error) },
         'preRelease'
       );
       await this.view.webview.postMessage({
-        command: 'updateBranchName',
-        branch: '',
-        error: 'Not in a Git repository'
+        command: 'updateGitHubDetails',
+        branch: 'Not in a Git repository',
+        repoUrl: 'Not in a Git repository'
       });
     }
   }
@@ -1726,24 +1804,47 @@ export class PreReleaseService {
       const selectedCatalogId = await this.getSelectedCatalogId();
 
       if (forceRefresh) {
-        // Use the same path as "Get Latest Versions" for consistency
         await this.handleForceRefresh(selectedCatalogId);
         return;
       }
 
-      // Get latest versions using the consolidated function
-      const { githubReleases, catalogDetails, versionMappings } = await this.getLatestVersions(selectedCatalogId);
+      // Get GitHub releases first
+      const githubReleases = await this.getGitHubReleases().catch(error => {
+        this.logger.warn('Failed to fetch GitHub releases', { error }, 'preRelease');
+        return [];
+      });
+
+      // Get catalog details if catalogId is provided
+      let catalogDetails: CatalogDetails | undefined;
+      let versionMappings: VersionMappingSummary[] = [];
+
+      if (selectedCatalogId) {
+        try {
+          catalogDetails = await this.getSelectedCatalogDetails(selectedCatalogId);
+          if (catalogDetails) {
+            versionMappings = this.getVersionMappingSummary(
+              selectedCatalogId,
+              catalogDetails.offeringId,
+              'terraform',
+              githubReleases,
+              catalogDetails.versions
+            );
+          }
+        } catch (error) {
+          this.logger.warn('Failed to fetch catalog details', { error, catalogId: selectedCatalogId }, 'preRelease');
+        }
+      }
 
       // Get catalogs list
       const catalogData = await this.getCatalogDetails().catch(error => {
         this.logger.warn('Failed to fetch catalog details', { error }, 'preRelease');
-        return { catalogs: [], selectedCatalog: undefined };
+        return { catalogs: [] };
       });
 
       // Update UI with all data
       await this.view.webview.postMessage({
         command: 'updateData',
-        releases: githubReleases,
+        releases: githubReleases.slice(0, 5), // Ensure we only return 5 releases
         catalogs: catalogData.catalogs,
         catalogDetails: catalogDetails ? {
           ...catalogDetails,
@@ -1761,6 +1862,7 @@ export class PreReleaseService {
       this.logger.error('Error refreshing pre-release data', { error, forceRefresh }, 'preRelease');
 
       if (this.view) {
+        // Send empty data to reset the view
         await this.view.webview.postMessage({
           command: 'updateData',
           releases: [],
@@ -1808,28 +1910,295 @@ export class PreReleaseService {
     }
   }
 
-  private async getRepositoryInfo(): Promise<{ owner: string; name: string } | undefined> {
+  /**
+   * Gets information about the current Git repository
+   * Supports the following URL formats:
+   * SSH:
+   * - git@github.com:owner/repo.git
+   * - git@github.com:owner/repo
+   * - ssh://git@github.com/owner/repo.git
+   * - ssh://git@github.com/owner/repo
+   * - ssh://git@github.enterprise.com/owner/repo.git
+   * HTTPS:
+   * - https://github.com/owner/repo.git
+   * - https://github.com/owner/repo
+   * - https://github.enterprise.com/owner/repo.git
+   * @returns Repository owner and name, or undefined if not in a Git repository
+   */
+  public async getRepositoryInfo(): Promise<{ owner: string; name: string } | undefined> {
     try {
       if (!this.workspaceRoot) {
+        this.logger.error('No workspace root found when checking for Git repository', {}, 'preRelease');
         return undefined;
       }
 
-      // Get the remote URL from git config
-      const gitConfigPath = path.join(this.workspaceRoot, '.git', 'config');
-      const configContent = await fs.promises.readFile(gitConfigPath, 'utf8');
-
-      // Parse the remote URL
-      const remoteUrlMatch = configContent.match(/url\s*=\s*.*github\.com[:/]([^/]+)\/([^.]+)\.git/);
-      if (!remoteUrlMatch) {
+      // Check if .git directory exists first
+      const gitDir = path.join(this.workspaceRoot, '.git');
+      try {
+        const gitDirStats = await fs.promises.stat(gitDir);
+        if (!gitDirStats.isDirectory()) {
+          this.logger.error('Not a Git repository - .git exists but is not a directory', {
+            workspaceRoot: this.workspaceRoot,
+            gitPath: gitDir
+          }, 'preRelease');
+          return undefined;
+        }
+      } catch (error) {
+        this.logger.error('Not a Git repository - .git directory not found', {
+          workspaceRoot: this.workspaceRoot,
+          gitPath: gitDir,
+          error: error instanceof Error ? error.message : String(error)
+        }, 'preRelease');
         return undefined;
       }
 
-      return {
-        owner: remoteUrlMatch[1],
-        name: remoteUrlMatch[2]
-      };
+      // Try to get the original clone URL first
+      try {
+        // Get all remotes
+        const { stdout: remotes } = await execAsync('git remote', this.workspaceRoot);
+        const remotesList = remotes.trim().split('\n');
+
+        // Try to find the original source remote in this order:
+        // 1. 'origin' - the default name for the primary remote
+        // 2. 'upstream' - common name for the original source when forked
+        // 3. First remote in the list
+        let sourceRemote = 'origin';
+        if (!remotesList.includes('origin') && remotesList.includes('upstream')) {
+          sourceRemote = 'upstream';
+        } else if (!remotesList.includes('origin') && remotesList.length > 0) {
+          sourceRemote = remotesList[0];
+        }
+
+        // Get the remote URL
+        const { stdout: remoteUrl } = await execAsync(`git remote get-url ${sourceRemote}`, this.workspaceRoot);
+        const trimmedUrl = remoteUrl.trim();
+
+        this.logger.debug('Found source remote', {
+          sourceRemote,
+          availableRemotes: remotesList,
+          remoteUrl: trimmedUrl
+        }, 'preRelease');
+
+        // Enhanced URL parsing patterns
+        const urlPatterns = {
+          // Standard SSH format: git@github.com:owner/repo.git
+          standardSsh: /git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/,
+          // SSH with protocol: ssh://git@github.com/owner/repo.git
+          protocolSsh: /ssh:\/\/git@([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/,
+          // HTTPS format: https://github.com/owner/repo.git
+          https: /https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/
+        };
+
+        let match: RegExpMatchArray | null = null;
+        let matchType: string | undefined;
+
+        // Try each pattern and log which one matched
+        for (const [patternType, pattern] of Object.entries(urlPatterns)) {
+          const testMatch = trimmedUrl.match(pattern);
+          if (testMatch) {
+            match = testMatch;
+            matchType = patternType;
+            break;
+          }
+        }
+
+        if (match) {
+          // Extract owner and name based on the pattern type
+          let owner: string;
+          let name: string;
+
+          if (matchType === 'standardSsh' || matchType === 'protocolSsh') {
+            const domain = match[1];
+            owner = match[2];
+            name = match[3];
+
+            // Verify it's a GitHub domain
+            if (!domain.includes('github')) {
+              this.logger.warn('Non-GitHub domain detected in SSH URL', {
+                domain,
+                urlType: matchType,
+                remoteUrl: trimmedUrl
+              }, 'preRelease');
+            }
+          } else { // HTTPS
+            const domain = match[1];
+            owner = match[2];
+            name = match[3];
+
+            // Verify it's a GitHub domain
+            if (!domain.includes('github')) {
+              this.logger.warn('Non-GitHub domain detected in HTTPS URL', {
+                domain,
+                urlType: matchType,
+                remoteUrl: trimmedUrl
+              }, 'preRelease');
+            }
+          }
+
+          const repoInfo = { owner, name };
+
+          // Log successful URL parsing
+          this.logger.debug('Successfully parsed repository URL', {
+            urlType: matchType,
+            remoteUrl: trimmedUrl,
+            parsedInfo: repoInfo
+          }, 'preRelease');
+
+          // Only log if repository info has changed
+          if (!this.lastRepoInfo ||
+            this.lastRepoInfo.owner !== owner ||
+            this.lastRepoInfo.name !== name) {
+            this.logger.info('GitHub repository changed', {
+              workspaceRoot: this.workspaceRoot,
+              previousRepo: this.lastRepoInfo,
+              newRepo: repoInfo,
+              sourceRemote,
+              remoteUrl: trimmedUrl,
+              urlType: matchType
+            }, 'preRelease');
+            this.lastRepoInfo = repoInfo;
+          }
+
+          return repoInfo;
+        } else {
+          // Log failed URL parsing attempt
+          this.logger.error('Failed to parse remote URL', {
+            remoteUrl: trimmedUrl,
+            testedPatterns: Object.keys(urlPatterns)
+          }, 'preRelease');
+        }
+      } catch (error) {
+        this.logger.debug('Could not get remote URL from git command, falling back to config file', {
+          error: error instanceof Error ? error.message : String(error)
+        }, 'preRelease');
+      }
+
+      // Fallback to reading config file
+      const gitConfigPath = path.join(gitDir, 'config');
+      try {
+        const configContent = await fs.promises.readFile(gitConfigPath, 'utf8');
+
+        // First try to find the origin remote section
+        let remoteUrl: string | undefined;
+        const originMatch = configContent.match(/\[remote "origin"\][^\[]*url\s*=\s*([^\n]+)/);
+        const upstreamMatch = configContent.match(/\[remote "upstream"\][^\[]*url\s*=\s*([^\n]+)/);
+        const anyRemoteMatch = configContent.match(/\[remote [^\]]+\][^\[]*url\s*=\s*([^\n]+)/);
+
+        if (originMatch) {
+          remoteUrl = originMatch[1].trim();
+        } else if (upstreamMatch) {
+          remoteUrl = upstreamMatch[1].trim();
+        } else if (anyRemoteMatch) {
+          remoteUrl = anyRemoteMatch[1].trim();
+        }
+
+        if (!remoteUrl) {
+          this.logger.error('No remote section found in Git config', {
+            workspaceRoot: this.workspaceRoot,
+            configPath: gitConfigPath,
+            configContent: configContent.substring(0, 200) + '...' // Log first 200 chars for debugging
+          }, 'preRelease');
+          return undefined;
+        }
+
+        // Use the same enhanced URL parsing patterns as above
+        const urlPatterns = {
+          standardSsh: /git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/,
+          protocolSsh: /ssh:\/\/git@([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/,
+          https: /https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/
+        };
+
+        let match: RegExpMatchArray | null = null;
+        let matchType: string | undefined;
+
+        for (const [patternType, pattern] of Object.entries(urlPatterns)) {
+          const testMatch = remoteUrl.match(pattern);
+          if (testMatch) {
+            match = testMatch;
+            matchType = patternType;
+            break;
+          }
+        }
+
+        if (!match) {
+          this.logger.error('No GitHub remote URL pattern matched in Git config', {
+            workspaceRoot: this.workspaceRoot,
+            configPath: gitConfigPath,
+            remoteUrl,
+            testedPatterns: Object.keys(urlPatterns)
+          }, 'preRelease');
+          return undefined;
+        }
+
+        // Extract owner and name based on the pattern type
+        let owner: string;
+        let name: string;
+
+        if (matchType === 'standardSsh' || matchType === 'protocolSsh') {
+          const domain = match[1];
+          owner = match[2];
+          name = match[3];
+
+          if (!domain.includes('github')) {
+            this.logger.warn('Non-GitHub domain detected in SSH URL from config', {
+              domain,
+              urlType: matchType,
+              remoteUrl
+            }, 'preRelease');
+          }
+        } else { // HTTPS
+          const domain = match[1];
+          owner = match[2];
+          name = match[3];
+
+          if (!domain.includes('github')) {
+            this.logger.warn('Non-GitHub domain detected in HTTPS URL from config', {
+              domain,
+              urlType: matchType,
+              remoteUrl
+            }, 'preRelease');
+          }
+        }
+
+        const repoInfo = { owner, name };
+
+        // Log successful config parsing
+        this.logger.debug('Successfully parsed repository URL from config', {
+          urlType: matchType,
+          remoteUrl,
+          parsedInfo: repoInfo,
+          source: 'config_file'
+        }, 'preRelease');
+
+        // Only log if repository info has changed
+        if (!this.lastRepoInfo ||
+          this.lastRepoInfo.owner !== owner ||
+          this.lastRepoInfo.name !== name) {
+          this.logger.info('GitHub repository changed', {
+            workspaceRoot: this.workspaceRoot,
+            previousRepo: this.lastRepoInfo,
+            newRepo: repoInfo,
+            remoteUrl,
+            source: 'config_file',
+            urlType: matchType
+          }, 'preRelease');
+          this.lastRepoInfo = repoInfo;
+        }
+
+        return repoInfo;
+      } catch (error) {
+        this.logger.error('Failed to read Git config file', {
+          workspaceRoot: this.workspaceRoot,
+          configPath: gitConfigPath,
+          error: error instanceof Error ? error.message : String(error)
+        }, 'preRelease');
+        return undefined;
+      }
     } catch (error) {
-      this.logger.debug('Failed to get repository info', { error }, 'preRelease');
+      this.logger.error('Unexpected error while checking Git repository', {
+        workspaceRoot: this.workspaceRoot,
+        error: error instanceof Error ? error.message : String(error)
+      }, 'preRelease');
       return undefined;
     }
   }
@@ -1989,6 +2358,14 @@ export class PreReleaseService {
         return [];
       });
 
+      this.logger.debug('Retrieved GitHub releases', {
+        totalReleases: githubReleases.length,
+        releases: githubReleases.map(r => ({
+          tag: r.tag_name,
+          created_at: r.created_at
+        }))
+      }, 'preRelease');
+
       // Get catalog details if catalogId is provided
       let catalogDetails: CatalogDetails | undefined;
       if (catalogId) {
@@ -2001,16 +2378,36 @@ export class PreReleaseService {
       // Create version mappings
       const versionMappings: VersionMappingSummary[] = [];
       if (catalogDetails?.versions) {
+        this.logger.debug('Processing catalog versions', {
+          totalCatalogVersions: catalogDetails.versions.length,
+          versions: catalogDetails.versions.map(v => ({
+            version: v.version,
+            flavor: v.flavor.name,
+            githubTag: v.githubTag
+          }))
+        }, 'preRelease');
+
         // Get all unique versions
         const allVersions = new Set([
           ...githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0]),
           ...catalogDetails.versions.map(v => v.version)
         ]);
 
-        // Sort versions by semver (newest first)
+        this.logger.debug('Unique versions before filtering', {
+          totalUniqueVersions: allVersions.size,
+          versions: Array.from(allVersions)
+        }, 'preRelease');
+
+        // Sort versions by semver (newest first) and take latest 5
         const sortedVersions = Array.from(allVersions)
           .filter(v => semver.valid(v))
-          .sort((a, b) => semver.rcompare(a, b));
+          .sort((a, b) => semver.rcompare(a, b))
+          .slice(0, 5); // Limit to 5 versions
+
+        this.logger.debug('Sorted and limited versions', {
+          totalVersions: sortedVersions.length,
+          versions: sortedVersions
+        }, 'preRelease');
 
         // Create mapping for each version
         for (const version of sortedVersions) {
@@ -2036,6 +2433,29 @@ export class PreReleaseService {
           });
         }
 
+        // Ensure we only have 5 version mappings
+        if (versionMappings.length > 5) {
+          this.logger.warn('More than 5 version mappings found before trimming', {
+            totalMappings: versionMappings.length,
+            mappings: versionMappings.map(m => m.version)
+          }, 'preRelease');
+          versionMappings.length = 5;
+        }
+
+        this.logger.debug('Final version mappings to be sent to UI', {
+          totalMappings: versionMappings.length,
+          mappings: versionMappings.map(m => ({
+            version: m.version,
+            hasGithubRelease: !!m.githubRelease,
+            githubTag: m.githubRelease?.tag,
+            catalogVersionCount: m.catalogVersions?.length || 0,
+            catalogVersions: m.catalogVersions?.map(cv => ({
+              version: cv.version,
+              flavor: cv.flavor.name
+            }))
+          }))
+        }, 'preRelease');
+
         // Update version input with next suggested version if available
         if (sortedVersions.length > 0 && this.view) {
           const latestVersion = sortedVersions[0];
@@ -2050,7 +2470,7 @@ export class PreReleaseService {
       }
 
       return {
-        githubReleases,
+        githubReleases: githubReleases.slice(0, 5), // Ensure we only return 5 GitHub releases
         catalogDetails,
         versionMappings
       };
