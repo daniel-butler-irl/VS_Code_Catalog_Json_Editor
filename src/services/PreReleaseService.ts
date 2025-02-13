@@ -540,157 +540,71 @@ export class PreReleaseService {
       const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id);
       const offering = offerings.find((o: { name: string }) => o.name === offeringName);
 
-      let catalogDetails: CatalogDetails;
       if (!offering) {
-        catalogDetails = {
-          catalogId: selectedCatalog.id,
-          offeringId: '',
-          name: offeringName,
-          label: offeringLabel,
-          versions: [],
-          offeringNotFound: true
-        };
-      } else {
-        // Clear version-related caches before fetching fresh data
-        await ibmCloudService.clearOfferingCache(catalogId);
-        this.cacheService.delete(`${CacheKeys.OFFERING_DETAILS}_${catalogId}`);
-        this.logger.debug('Cleared version caches before fetching fresh data', {
+        this.logger.error('Offering not found in catalog', {
           catalogId,
-          offeringId: offering.id
+          offeringName,
+          availableOfferings: offerings.map((o: { name: string }) => o.name)
         }, 'preRelease');
-
-        // Get all versions for each kind
-        const allVersions: CatalogVersion[] = [];
-
-        for (const kind of offering.kinds || []) {
-          try {
-            const kindVersions = await ibmCloudService.getOfferingKindVersions(
-              catalogId,
-              offering.id,
-              kind.target_kind || kind.install_kind || 'terraform'
-            );
-
-            // Log all available versions before mapping
-            this.logger.debug('Available versions before mapping', {
-              catalogId,
-              offeringId: offering.id,
-              kindType: kind.target_kind || kind.install_kind || 'terraform',
-              catalogVersions: kindVersions.versions.map((v: { version: string; id: string; tgz_url?: string; flavor?: any }) => ({
-                version: v.version,
-                id: v.id,
-                tgz_url: v.tgz_url,
-                flavor: v.flavor
-              })),
-              githubReleases: githubReleases.map(r => ({
-                tag: r.tag_name,
-                fullVersion: r.tag_name.replace(/^v/, ''),
-                tarball_url: r.tarball_url
-              }))
-            }, 'preRelease');
-
-            // Map the versions to our format and log version mapping details
-            const mappedVersions = kindVersions.versions.map((version: { version: string; id: string; tgz_url?: string; flavor?: any; created?: string }) => {
-              // First try to match by comparing tgz_url with tarball_url
-              const matchingRelease = githubReleases.find(r => {
-                // If we have a tgz_url, try to match it with the GitHub tarball_url
-                if (version.tgz_url) {
-                  // Extract tag from both URLs and compare
-                  const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
-                  const tarballTag = r.tarball_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
-
-                  // Add detailed logging for URL parsing
-                  this.logger.debug('URL parsing details', {
-                    tgz_url: version.tgz_url,
-                    tarball_url: r.tarball_url,
-                    tgzUrlTag,
-                    tarballTag,
-                    tgzUrlHasTarGz: version.tgz_url.endsWith('.tar.gz'),
-                    tarballHasTarGz: r.tarball_url.endsWith('.tar.gz'),
-                    matches: tgzUrlTag === tarballTag
-                  }, 'preRelease');
-
-                  return tgzUrlTag === tarballTag;
-                }
-                return false;
-              });
-
-              const mappedVersion = {
-                id: version.id || `${version.version}-${Date.now()}`,
-                version: version.version,
-                flavor: {
-                  name: version.flavor?.name || kind.target_kind || kind.install_kind || 'terraform',
-                  label: version.flavor?.label || kind.target_kind || kind.install_kind || 'Terraform'
-                },
-                tgz_url: version.tgz_url || '',
-                created: version.created || new Date().toISOString(),
-                githubTag: matchingRelease?.tag_name
-              };
-
-              // Log the mapping result
-              this.logger.debug('Version mapping result', {
-                catalogVersion: version.version,
-                mappedVersion,
-                hasGithubMatch: !!matchingRelease,
-                githubMatch: matchingRelease ? {
-                  tag: matchingRelease.tag_name,
-                  tarball_url: matchingRelease.tarball_url
-                } : undefined,
-                extractedTag: version.tgz_url?.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1]
-              }, 'preRelease');
-
-              return mappedVersion;
-            });
-
-            // Log summary of mapping results
-            this.logger.debug('Version mapping summary', {
-              catalogId,
-              offeringId: offering.id,
-              kindType: kind.target_kind || kind.install_kind || 'terraform',
-              totalCatalogVersions: kindVersions.versions.length,
-              totalGithubReleases: githubReleases.length,
-              mappedVersionsCount: mappedVersions.length,
-              githubReleases: githubReleases.map(r => ({
-                tag: r.tag_name,
-                tarball_url: r.tarball_url
-              })),
-              mappedVersions: mappedVersions.map((v: CatalogVersion) => ({
-                version: v.version,
-                flavor: v.flavor,
-                tgz_url: v.tgz_url,
-                githubTag: v.githubTag
-              }))
-            }, 'preRelease');
-
-            allVersions.push(...mappedVersions);
-          } catch (error) {
-            this.logger.error('Failed to get versions for kind', {
-              error,
-              kindId: kind.target_kind || kind.install_kind,
-              offeringId: offering.id
-            }, 'preRelease');
-          }
-        }
-
-        // Sort versions by semver
-        allVersions.sort((a, b) => semver.rcompare(a.version, b.version));
-
-        catalogDetails = {
-          catalogId: selectedCatalog.id,
-          offeringId: offering.id,
-          name: offering.name,
-          label: offeringLabel,
-          versions: allVersions
-        };
-
-        // Store the offering ID in cache since we successfully got versions
-        this.cacheService.set(cacheKey, catalogDetails, CacheConfigurations[CacheKeys.OFFERING_DETAILS]);
-        this.logger.info('Stored offering ID in cache after successful version retrieval', {
-          catalogId,
-          offeringId: offering.id
-        }, 'preRelease');
+        throw new Error(`Offering "${offeringName}" not found in catalog ${catalogId}. Please ensure the offering exists in the catalog before proceeding.`);
       }
 
-      return catalogDetails;
+      // Clear version-related caches before fetching fresh data
+      await ibmCloudService.clearOfferingCache(catalogId);
+      this.cacheService.delete(`${CacheKeys.OFFERING_DETAILS}_${catalogId}`);
+      this.logger.debug('Cleared version caches before fetching fresh data', {
+        catalogId,
+        offeringId: offering.id
+      }, 'preRelease');
+
+      // Get all versions for each kind
+      const allVersions: CatalogVersion[] = [];
+      const kindVersions = await ibmCloudService.getOfferingKindVersions(
+        selectedCatalog.id,
+        offering.id,
+        'terraform'
+      );
+
+      kindVersions.versions.forEach((version: { tgz_url?: string; version: string }) => {
+        if (version.tgz_url) {
+          const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
+          if (tgzUrlTag) {
+            allVersions.push({
+              version: version.version,
+              flavor: {
+                name: offering.name,
+                label: offering.label,
+                working_directory: version.working_directory || '.',
+                format_kind: version.format_kind || 'terraform',
+                selected: true
+              },
+              tgz_url: version.tgz_url,
+              githubTag: tgzUrlTag
+            });
+          }
+        }
+      });
+
+      if (allVersions.length === 0) {
+        this.logger.error('No versions found in catalog', {
+          catalogId,
+          offeringId: offering.id,
+          offeringName: offering.name
+        }, 'preRelease');
+        throw new Error(`No versions found for offering "${offeringName}" in catalog ${catalogId}. There must be at least one version in the catalog.`);
+      }
+
+      this.logger.info('Stored offering ID in cache after successful version retrieval', {
+        catalogId,
+        offeringId: offering.id
+      }, 'preRelease');
+
+      return {
+        name: offering.name,
+        label: offering.label,
+        versions: allVersions,
+        offeringId: offering.id
+      };
     } catch (error) {
       this.logger.error('Failed to get catalog details', {
         error,
