@@ -273,10 +273,20 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             return `${index + 1}`;
         }
 
-        // Try to find a meaningful label from common identifier properties
         const obj = item as Record<string, unknown>;
-        const labelProperties = ['name', 'label', 'title', 'id'];
 
+        // Always prioritize label over name for display
+        if ('label' in obj && typeof obj.label === 'string') {
+            return obj.label;
+        }
+
+        // Fallback to name if no label
+        if ('name' in obj && typeof obj.name === 'string') {
+            return obj.name;
+        }
+
+        // Try other identifier properties
+        const labelProperties = ['title', 'id'];
         for (const prop of labelProperties) {
             if (prop in obj && typeof obj[prop] === 'string') {
                 return obj[prop] as string;

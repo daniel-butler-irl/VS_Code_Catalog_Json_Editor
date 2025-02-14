@@ -6,6 +6,7 @@ import { AuthService } from '../services/AuthService';
 import { LoggingService } from '../services/core/LoggingService';
 import { SchemaMetadata } from '../types/schema';
 import { FlavorNodeValue, ValidationMetadata, ValidationStatus } from '../types/tree';
+import { name } from 'tar/dist/commonjs/types';
 
 
 /**
@@ -25,6 +26,8 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private static isProcessingQueue: boolean = false;
     private static queueProcessor?: NodeJS.Timeout;
     private static readonly QUEUE_PROCESS_DELAY = 100; // ms between validations
+
+    private static readonly debugChannel = vscode.window.createOutputChannel('IBM Catalog Debug');
 
     public readonly parent?: CatalogTreeItem;
     public readonly catalogId?: string;
@@ -47,8 +50,27 @@ export class CatalogTreeItem extends vscode.TreeItem {
         catalogId?: string,
         initialStatus: ValidationStatus = ValidationStatus.Unknown
     ) {
-        // Use the label as is, without modification
-        super(label, collapsibleState);
+        // For objects with name and label properties, use label as display and name as description
+        let displayLabel = label;
+        let itemDescription = '';
+
+        if (typeof value === 'object' && value !== null && 'name' in value && 'label' in value) {
+            const objValue = value as { name: string, label: string };
+            if (typeof objValue.label === 'string') {
+                displayLabel = objValue.label;
+                if (typeof objValue.name === 'string') {
+                    itemDescription = objValue.name;
+                }
+            }
+        }
+
+        // Use the formatted label when calling super
+        super(displayLabel, collapsibleState);
+
+        // Set description if we found one
+        if (itemDescription) {
+            this.description = itemDescription;
+        }
 
         this.context = context;
         this.logger = LoggingService.getInstance();
@@ -429,8 +451,22 @@ export class CatalogTreeItem extends vscode.TreeItem {
      * Creates a tooltip for the item showing name and description
      */
     private createTooltip(): string {
-        const parts: string[] = [`Name: ${this.label}`];
+        const parts: string[] = [];
 
+        // Add name/label information
+        if (typeof this.value === 'object' && this.value !== null) {
+            const values = this.value as Record<string, unknown>;
+            if ('label' in values && typeof values.label === 'string') {
+                parts.push(`Label: ${values.label}`);
+            }
+            if ('name' in values && typeof values.name === 'string') {
+                parts.push(`Name: ${values.name}`);
+            }
+        } else {
+            parts.push(`Name: ${this.label}`);
+        }
+
+        // Add schema description if available
         if (this._schemaMetadata?.description) {
             parts.push(`Description: ${this._schemaMetadata.description}`);
         }
@@ -692,17 +728,14 @@ export class CatalogTreeItem extends vscode.TreeItem {
         if (typeof this.value === 'object' && this.value !== null) {
             let description = '';
 
-            // Show descriptive names for various object types
-            if (this.isDependencyParent()) {
-                const values = this.value as Record<string, unknown>;
-                const name = values.name;
-                if (name) {
-                    description = String(name);
-                }
+            // Generic handling for objects with name and label properties
+            const values = this.value as Record<string, unknown>;
+            if ('name' in values && typeof values.name === 'string') {
+                description = values.name;
             }
-            // Check if this is an input mapping object
-            else if (this.isInputMappingParent()) {
-                const values = this.value as Record<string, unknown>;
+
+            // Special handling for input mapping objects
+            if (this.isInputMappingParent()) {
                 const referenceVersion = values.reference_version === true;
 
                 // Determine source and destination based on the fields present
@@ -723,49 +756,6 @@ export class CatalogTreeItem extends vscode.TreeItem {
                 if (sourceValue && destinationValue) {
                     description = `${sourceValue} → ${destinationValue}`;
                 }
-            }
-            // Check if this is an IAM permission object
-            else if (this.isIamPermissionParent()) {
-                const values = this.value as Record<string, unknown>;
-                const serviceName = values.service_name;
-                if (serviceName) {
-                    description = String(serviceName);
-                }
-            }
-            // Check if this is a configuration object
-            else if (this.isConfigurationParent()) {
-                const values = this.value as Record<string, unknown>;
-                const key = values.key;
-                if (key) {
-                    description = String(key);
-                }
-            }
-            // Check if this is a feature object
-            else if (this.isFeatureParent()) {
-                const values = this.value as Record<string, unknown>;
-                const title = values.title;
-                if (title) {
-                    description = String(title);
-                }
-            }
-            // Check if this is a product object
-            else if (this.isProductParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
-            // Check if this is a flavor object
-            else if (this.isFlavorParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
-            else {
-                description = `Object{${Object.keys(this.value).length}}`;
             }
 
             // Remove any array indices from the description
