@@ -52,21 +52,16 @@ body {
     font-size: 1em;
     font-weight: 600;
     color: var(--vscode-foreground);
-    display: flex;
-    align-items: center;
-    gap: 8px;
 }
 
 .section h2::before {
-    content: '';
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    background-color: var(--vscode-textLink-foreground);
-    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z'/%3E%3C/svg%3E");
-    mask-repeat: no-repeat;
-    mask-position: center;
-    mask-size: contain;
+    display: none;
+}
+
+.section h2[data-icon="catalog"]::before,
+.section h2[data-icon="github"]::before,
+.section h2[data-icon="versions"]::before {
+    display: none;
 }
 
 .form-group {
@@ -245,6 +240,7 @@ button:hover {
     background-color: var(--vscode-editor-background);
     font-size: 0.9em;
     transition: border-color var(--transition-speed) ease;
+    margin-bottom: 0;
 }
 
 .catalog-info:hover {
@@ -451,21 +447,11 @@ select:disabled {
 }
 
 .versions-table {
-    margin-top: 16px;
+    margin-top: 0;
     border: 1px solid var(--vscode-panel-border);
     border-radius: var(--border-radius);
     background-color: var(--vscode-editor-background);
     overflow: hidden;
-}
-
-.versions-table h3 {
-    margin: 0;
-    padding: 12px;
-    font-size: 0.95em;
-    color: var(--vscode-foreground);
-    opacity: 0.9;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    background-color: var(--vscode-sideBar-background);
 }
 
 .versions-table table {
@@ -477,17 +463,15 @@ select:disabled {
 .versions-table th {
     text-align: left;
     padding: 8px 12px;
+    background-color: var(--vscode-editor-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
     font-weight: 600;
     color: var(--vscode-foreground);
-    opacity: 0.8;
-    background-color: var(--vscode-sideBar-background);
-    border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .versions-table td {
-    padding: 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--vscode-panel-border);
-    color: var(--vscode-foreground);
     vertical-align: top;
 }
 
@@ -500,47 +484,56 @@ select:disabled {
 }
 
 .versions-table .version-tag {
-    display: flex;
+    display: inline-flex;
     flex-direction: column;
-    gap: 4px;
-    margin-bottom: 4px;
-    padding: 6px 8px;
-    border-radius: 4px;
+    padding: 6px 10px;
+    border-radius: 3px;
     background-color: var(--vscode-badge-background);
-    cursor: help;
+    color: var(--vscode-badge-foreground);
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+    margin-right: 8px;
+    min-width: 80px;
 }
 
 .versions-table .version-tag:last-child {
-    margin-bottom: 0;
+    margin-right: 0;
 }
 
 .versions-table .version-number {
-    color: var(--vscode-textLink-foreground);
-    font-weight: 500;
-    font-size: 1em;
+    font-weight: 600;
+    margin-bottom: 4px;
 }
 
 .versions-table .version-flavor {
     font-size: 0.85em;
-    color: var(--vscode-descriptionForeground);
+    opacity: 0.8;
 }
 
 .versions-table .github-version .version-tag {
-    color: var(--vscode-gitDecoration-addedResourceForeground);
+    background-color: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    min-width: 120px;
 }
 
 .versions-table .catalog-version {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.versions-table .version-tag.not-published {
+    background-color: var(--vscode-inputValidation-warningBackground);
+    border: 1px solid var(--vscode-inputValidation-warningBorder);
+    color: var(--vscode-inputValidation-warningForeground);
+    font-style: italic;
 }
 
 .versions-table .empty-state {
-    text-align: center;
     padding: 16px;
+    text-align: center;
     color: var(--vscode-descriptionForeground);
     font-style: italic;
-    opacity: 0.8;
 }
 
 /* Update info-row styles for better alignment */
@@ -641,37 +634,24 @@ button.catalog-button:hover:not(:disabled) {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 8px;
-    background-color: var(--vscode-editor-background);
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
-}
-
-.next-version-header {
-    font-size: 1.1em;
-    font-weight: 600;
-    color: var(--vscode-foreground);
-    margin-bottom: 4px;
-    opacity: 0.9;
 }
 
 .version-row {
     display: flex;
-    flex-direction: column;
-    padding: 2px 0;
+    align-items: flex-start;
+    gap: 8px;
 }
 
 .version-label {
+    min-width: 60px;
     color: var(--vscode-foreground);
     opacity: 0.8;
     font-weight: 500;
-    margin-right: 8px;
 }
 
 .version-value {
+    color: var(--vscode-foreground);
     font-family: var(--vscode-editor-font-family);
-    color: var(--vscode-textLink-foreground);
-    font-weight: 600;
 }
 
 .version-value.released {
@@ -681,9 +661,9 @@ button.catalog-button:hover:not(:disabled) {
 .released-flavors {
     font-size: 0.9em;
     color: var(--vscode-descriptionForeground);
-    margin-left: 1em;
-    margin-top: 2px;
     font-style: italic;
+    margin-left: 0;
+    padding-left: 60px;
 }
 
 .catalog-quick-info {
@@ -1290,4 +1270,48 @@ input:disabled, select:disabled {
     background: none;
     border: none;
     padding: 0;
+}
+
+/* Add styles for GitHub URL tooltip */
+.details-info .details-value {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.details-info .git-repo-info {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 100%;
+    display: inline-block;
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+    position: relative;
+}
+
+.details-info .git-repo-info:hover {
+    text-decoration: underline;
+}
+
+/* Add tooltip styles */
+[title] {
+    position: relative;
+}
+
+[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 8px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+    font-size: 0.9em;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 4px;
 } 

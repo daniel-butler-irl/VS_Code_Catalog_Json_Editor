@@ -14,6 +14,7 @@ export interface PreReleaseDetails {
     format_kind: string;
     selected?: boolean;
   }>;
+  skipConfirmation?: boolean;
 }
 
 export interface GitHubRelease {
@@ -56,6 +57,11 @@ export interface WebviewMessage {
   data?: PreReleaseDetails;
   catalogId?: string;
   message?: string;
+  // Additional properties for direct message data
+  version?: string;
+  postfix?: string;
+  publishToCatalog?: boolean;
+  releaseGithub?: boolean;
 }
 
 // Re-export the IBM Cloud type for consistency

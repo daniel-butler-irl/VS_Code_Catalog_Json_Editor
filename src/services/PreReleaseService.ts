@@ -401,17 +401,30 @@ export class PreReleaseService {
           return semver.rcompare(versionA, versionB);
         });
 
-      // Then, get pre-releases that aren't in the catalog
-      const preReleases = releases.data
-        .filter(release => release.prerelease && !catalogReferencedTags.has(release.tag_name))
+      // Get the latest catalog release date (if any)
+      const latestCatalogDate = catalogReleases.length > 0
+        ? new Date(catalogReleases[0].created_at).getTime()
+        : 0;
+
+      // Then, get pre-releases that are newer than the latest catalog release
+      const newerPreReleases = releases.data
+        .filter(release =>
+          release.prerelease &&
+          !catalogReferencedTags.has(release.tag_name) &&
+          new Date(release.created_at).getTime() > latestCatalogDate
+        )
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-      // Combine releases, prioritizing catalog releases, and limit to 5 total
-      const combinedReleases = [...catalogReleases, ...preReleases].slice(0, 5);
+      // Combine releases based on the new logic:
+      // If we have newer pre-releases, take the latest one plus 4 catalog releases
+      // Otherwise, take 5 catalog releases
+      const combinedReleases = newerPreReleases.length > 0
+        ? [...newerPreReleases.slice(0, 1), ...catalogReleases.slice(0, 4)]
+        : catalogReleases.slice(0, 5);
 
       this.logger.debug('Release breakdown', {
         totalCatalogReleases: catalogReleases.length,
-        totalPreReleases: preReleases.length,
+        totalNewerPreReleases: newerPreReleases.length,
         finalReleaseCount: combinedReleases.length,
         combinedReleases: combinedReleases.map(r => ({
           tag_name: r.tag_name,
@@ -528,10 +541,9 @@ export class PreReleaseService {
 
       // Get the selected catalog
       const privateCatalogs = await ibmCloudService.getAvailablePrivateCatalogs();
-      const selectedCatalog = privateCatalogs.find((c: { id: string }) => c.id === catalogId);
-
+      const selectedCatalog = privateCatalogs.find((c: { id: string; label: string }) => c.id === catalogId);
       if (!selectedCatalog) {
-        throw new Error(`Catalog with ID ${catalogId} not found`);
+        throw new Error('Selected catalog not found');
       }
 
       // Find offering by name (should match the name in ibm_catalog.json)
@@ -603,8 +615,8 @@ export class PreReleaseService {
               id: version.id || '',  // Add required id field
               version: version.version,
               flavor: {
-                name: offering.name || '',  // Ensure name is never undefined
-                label: offering.label || offering.name || '',  // Ensure label is never undefined
+                name: version.flavor?.name || '',  // Use flavor name instead of offering name
+                label: version.flavor?.label || version.flavor?.name || '',  // Use flavor label/name instead of offering label
                 format_kind: 'terraform'  // Default format kind
               },
               tgz_url: version.tgz_url,
@@ -810,13 +822,27 @@ export class PreReleaseService {
     return flavor.format_kind || 'terraform';
   }
 
-  private async selectFlavorsToImport(flavors: CatalogFlavor[]): Promise<CatalogFlavor[]> {
+  private async selectFlavorsToImport(flavors: CatalogFlavor[], catalogVersions: CatalogVersion[], version: string): Promise<CatalogFlavor[]> {
     this.logger.debug('Showing flavor selection dialog', {
       totalFlavors: flavors.length,
       flavors: flavors.map(f => ({ name: f.name, label: f.label }))
     }, 'preRelease');
 
-    const items = flavors.map(flavor => {
+    // First, filter out already imported flavors
+    const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+      flavors,
+      catalogVersions,
+      version
+    );
+
+    if (availableFlavors.length === 0) {
+      const errorMessage = `All flavors are already imported for version ${version}:\n` +
+        alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+      throw new Error(errorMessage);
+    }
+
+    // Create QuickPick items for available flavors
+    const items = availableFlavors.map(flavor => {
       const format_kind = this.determineFormatKind(flavor);
       return {
         label: `${flavor.label}: ${flavor.name} (${format_kind})`,
@@ -830,10 +856,16 @@ export class PreReleaseService {
       };
     });
 
+    // Show the selection dialog with information about already imported flavors
+    const placeHolder = alreadyImportedFlavors.length > 0
+      ? `Already imported flavors for version ${version}:\n${alreadyImportedFlavors.map(f =>
+        `• ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n')}\n\nSelect additional flavors to import:`
+      : 'All flavors are selected by default';
+
     const selectedItems = await vscode.window.showQuickPick(items, {
       canPickMany: true,
       title: 'Select Flavors to Import',
-      placeHolder: 'All flavors are selected by default'
+      placeHolder
     });
 
     if (!selectedItems) {
@@ -848,7 +880,9 @@ export class PreReleaseService {
 
     this.logger.debug('Flavors selected', {
       selectedCount: selectedFlavors.length,
-      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label }))
+      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label })),
+      alreadyImportedCount: alreadyImportedFlavors.length,
+      alreadyImportedFlavors: alreadyImportedFlavors.map(f => ({ name: f.name, label: f.label }))
     }, 'preRelease');
 
     return selectedFlavors;
@@ -890,137 +924,132 @@ export class PreReleaseService {
 
       const tagName = `v${details.version}-${details.postfix}`;
 
-      let confirmMessage: string;
-      let confirmButtons: { title: string; isCloseAffordance: boolean }[];
+      // Skip confirmation if flag is set
+      if (!details.skipConfirmation) {
+        let confirmMessage: string;
+        let confirmButtons: { title: string; isCloseAffordance: boolean }[];
 
-      if (details.releaseGithub) {
-        // For GitHub releases, check if it already exists
-        const existingReleases = await this.getLastPreReleases();
-        const releaseExists = existingReleases.some(release => release.tag_name === tagName);
-        if (releaseExists) {
-          throw new Error(`A release with tag ${tagName} already exists. Please choose a different version or postfix.`);
+        if (details.releaseGithub) {
+          // For GitHub releases, check if it already exists
+          const existingReleases = await this.getLastPreReleases();
+          const releaseExists = existingReleases.some(release => release.tag_name === tagName);
+          if (releaseExists) {
+            throw new Error(`A release with tag ${tagName} already exists. Please choose a different version or postfix.`);
+          }
+
+          // GitHub release confirmation
+          confirmMessage = `Create the following GitHub pre-release?\n\n` +
+            `Version: ${details.version}\n` +
+            `Postfix: ${details.postfix}\n` +
+            `Tag: ${tagName}\n` +
+            `Branch: ${branch}\n` +
+            `${hasUnpushedChanges ? '⚠️ Warning: Branch has unpushed changes\n' : ''}`;
+
+          confirmButtons = [
+            { title: 'Create Pre-Release', isCloseAffordance: false },
+            { title: 'Cancel', isCloseAffordance: true }
+          ];
+        } else if (details.publishToCatalog) {
+          // For catalog imports, verify we have a catalog ID
+          if (!details.catalogId) {
+            this.logger.error('Catalog import attempted without catalog ID', { details });
+            throw new Error('No catalog selected. Please select a catalog before importing.');
+          }
+
+          // Get catalog details for confirmation
+          const catalogDetails = await this.getSelectedCatalogDetails(details.catalogId);
+
+          // Get the catalog label from the available catalogs
+          const privateCatalogs = await this.ibmCloudService?.getAvailablePrivateCatalogs();
+          const selectedCatalog = privateCatalogs?.find(c => c.id === details.catalogId);
+          if (!selectedCatalog) {
+            throw new Error('Selected catalog not found');
+          }
+
+          // For catalog imports, verify the GitHub release exists and get its details
+          const githubRelease = await this.getGitHubRelease(tagName);
+          if (!githubRelease) {
+            throw new Error(`GitHub release ${tagName} not found. A GitHub release is required for catalog import.`);
+          }
+
+          // Set the target version URL for catalog import
+          details.targetVersion = githubRelease.tarball_url;
+
+          // Extract catalog details from the release tarball
+          const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
+
+          // Filter available flavors
+          const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+            releaseDetails.flavors,
+            catalogDetails.versions,
+            details.version
+          );
+
+          // Log flavor availability
+          this.logger.debug('Flavor availability for version', {
+            version: details.version,
+            totalFlavors: releaseDetails.flavors.length,
+            availableFlavors: availableFlavors.map(f => f.name),
+            alreadyImported: alreadyImportedFlavors
+          }, 'preRelease');
+
+          // If no flavors are available, show error and return
+          if (availableFlavors.length === 0) {
+            const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
+              alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+            throw new Error(errorMessage);
+          }
+
+          // Show flavor selection dialog with only available flavors
+          const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, details.version);
+
+          if (selectedFlavors.length === 0) {
+            this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
+            return false;
+          }
+
+          // Store selected flavors in release details and details object
+          releaseDetails.flavors = selectedFlavors;
+          details.selectedFlavors = selectedFlavors;
+
+          // Update confirmation message to show which flavors are being imported and which already exist
+          confirmMessage = `Import the following to the IBM Cloud Catalog?\n\n` +
+            `Catalog: ${selectedCatalog.label}\n` +
+            `Offering Name: ${releaseDetails.name}\n` +
+            `Offering Label: ${releaseDetails.label}\n` +
+            `GitHub Release Tag: ${tagName}\n` +
+            `Catalog Version: ${details.version}\n` +
+            `Selected Flavors to Import:\n${selectedFlavors.map(f =>
+              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+            ).join('\n')}` +
+            (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
+              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+            ).join('\n')}` : '') +
+            `\n\nNote: A separate version will be imported for each selected flavor.`;
+
+          confirmButtons = [
+            { title: 'Import to Catalog', isCloseAffordance: false },
+            { title: 'Cancel', isCloseAffordance: true }
+          ];
+        } else {
+          throw new Error('Invalid operation: Must specify either GitHub release or catalog import');
         }
 
-        // GitHub release confirmation
-        confirmMessage = `Create the following GitHub pre-release?\n\n` +
-          `Version: ${details.version}\n` +
-          `Postfix: ${details.postfix}\n` +
-          `Tag: ${tagName}\n` +
-          `Branch: ${branch}\n` +
-          `${hasUnpushedChanges ? '⚠️ Warning: Branch has unpushed changes\n' : ''}`;
-
-        confirmButtons = [
-          { title: 'Create Pre-Release', isCloseAffordance: false },
-          { title: 'Cancel', isCloseAffordance: true }
-        ];
-      } else if (details.publishToCatalog) {
-        // For catalog imports, verify we have a catalog ID
-        if (!details.catalogId) {
-          this.logger.error('Catalog import attempted without catalog ID', { details });
-          throw new Error('No catalog selected. Please select a catalog before importing.');
-        }
-
-        // Get catalog details for confirmation
-        const catalogDetails = await this.getSelectedCatalogDetails(details.catalogId);
-
-        // Get the catalog label from the available catalogs
-        const privateCatalogs = await this.ibmCloudService?.getAvailablePrivateCatalogs();
-        const selectedCatalog = privateCatalogs?.find(c => c.id === details.catalogId);
-        if (!selectedCatalog) {
-          throw new Error('Selected catalog not found');
-        }
-
-        // For catalog imports, verify the GitHub release exists and get its details
-        const githubRelease = await this.getGitHubRelease(tagName);
-        if (!githubRelease) {
-          throw new Error(`GitHub release ${tagName} not found. A GitHub release is required for catalog import.`);
-        }
-
-        // Set the target version URL for catalog import
-        details.targetVersion = githubRelease.tarball_url;
-
-        // Extract catalog details from the release tarball
-        const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
-
-        // Filter available flavors
-        const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
-          releaseDetails.flavors,
-          catalogDetails.versions,
-          details.version
+        const confirmation = await vscode.window.showWarningMessage(
+          confirmMessage,
+          { modal: true },
+          ...confirmButtons
         );
 
-        // Log flavor availability
-        this.logger.debug('Flavor availability for version', {
-          version: details.version,
-          totalFlavors: releaseDetails.flavors.length,
-          availableFlavors: availableFlavors.map(f => f.name),
-          alreadyImported: alreadyImportedFlavors
-        }, 'preRelease');
-
-        // If no flavors are available, show error and return
-        if (availableFlavors.length === 0) {
-          const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
-            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
-          throw new Error(errorMessage);
-        }
-
-        // Show flavor selection dialog with only available flavors
-        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors);
-
-        if (selectedFlavors.length === 0) {
-          this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
+        if (!confirmation || confirmation.title.includes('Cancel')) {
+          this.logger.info('Pre-release creation cancelled by user', { tagName });
           return false;
         }
-
-        // Store selected flavors in release details and details object
-        releaseDetails.flavors = selectedFlavors;
-        details.selectedFlavors = selectedFlavors;
-
-        // Update confirmation message to show which flavors are being imported and which already exist
-        confirmMessage = `Import the following to the IBM Cloud Catalog?\n\n` +
-          `Catalog: ${selectedCatalog.label}\n` +
-          `Offering Name: ${releaseDetails.name}\n` +
-          `Offering Label: ${releaseDetails.label}\n` +
-          `GitHub Release Tag: ${tagName}\n` +
-          `Catalog Version: ${details.version}\n` +
-          `Selected Flavors to Import:\n${selectedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
-          ).join('\n')}` +
-          (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
-          ).join('\n')}` : '') +
-          `\n\nNote: A separate version will be imported for each selected flavor.`;
-
-        confirmButtons = [
-          { title: 'Import to Catalog', isCloseAffordance: false },
-          { title: 'Cancel', isCloseAffordance: true }
-        ];
-      } else {
-        throw new Error('Invalid operation: Must specify either GitHub release or catalog import');
-      }
-
-      const confirmation = await vscode.window.showWarningMessage(
-        confirmMessage,
-        { modal: true },
-        ...confirmButtons
-      );
-
-      if (!confirmation || confirmation.title.includes('Cancel')) {
-        this.logger.info('Pre-release creation cancelled by user', { tagName });
-        return false;
       }
 
       // Create GitHub release if requested
       if (details.releaseGithub) {
         await this.createGitHubRelease(tagName);
-        if (details.publishToCatalog) {
-          // Get the newly created release to get its tarball URL
-          const newRelease = await this.getGitHubRelease(tagName);
-          if (!newRelease) {
-            throw new Error('Failed to get tarball URL for the new release');
-          }
-          details.targetVersion = newRelease.tarball_url;
-        }
 
         // Clear any cached GitHub releases
         this.cacheService.delete(CacheKeys.GITHUB_RELEASES);
@@ -1288,9 +1317,14 @@ export class PreReleaseService {
       throw new Error('No flavors found in the catalog manifest');
     }
 
+    // Use the flavors that were already selected in createPreRelease
+    if (!details.selectedFlavors || details.selectedFlavors.length === 0) {
+      throw new Error('No flavors were selected for import');
+    }
+
     // Double check which flavors are still available (in case catalog was updated between selection and import)
-    const { availableFlavors } = this.filterAvailableFlavors(
-      details.selectedFlavors || releaseDetails.flavors,
+    const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+      details.selectedFlavors,
       catalogDetails.versions,
       details.version
     );
@@ -1305,7 +1339,9 @@ export class PreReleaseService {
     this.logger.info('Starting import of selected flavors', {
       totalFlavors: releaseDetails.flavors.length,
       selectedFlavors: flavorsToImport.length,
-      selectedFlavorNames: flavorsToImport.map((f: CatalogFlavor) => f.name)
+      selectedFlavorNames: flavorsToImport.map((f: CatalogFlavor) => f.name),
+      alreadyImportedCount: alreadyImportedFlavors.length,
+      alreadyImportedFlavors: alreadyImportedFlavors.map(f => f.name)
     }, 'preRelease');
 
     // Import each selected flavor as a separate version
@@ -1344,7 +1380,7 @@ export class PreReleaseService {
             flavor: {
               metadata: {
                 name: flavor.name,
-                label: flavor.label,
+                label: flavor.label || flavor.name,
                 index: flavorsToImport.indexOf(flavor) + 1  // Use flavorsToImport for index
               }
             },
@@ -1503,6 +1539,21 @@ export class PreReleaseService {
 
   private async handleMessage(message: WebviewMessage): Promise<void> {
     try {
+      // Validate message structure first
+      if (!message || typeof message.command !== 'string') {
+        this.logger.error('Invalid message received', { message }, 'preRelease');
+        if (this.view) {
+          await this.view.webview.postMessage({
+            command: 'setLoadingState',
+            loading: false,
+            error: 'Invalid message format'
+          });
+        }
+        return;
+      }
+
+      this.logger.debug('Handling message', { command: message.command, hasData: !!message.data }, 'preRelease');
+
       switch (message.command) {
         case 'getBranchName':
           await this.sendBranchName();
@@ -1511,14 +1562,43 @@ export class PreReleaseService {
           await this.refresh();
           break;
         case 'selectCatalog':
-          if (message.catalogId) {
-            await this.handleCatalogSelection(message.catalogId);
+          if (!message.catalogId) {
+            this.logger.error('Missing catalogId for selectCatalog command', { message }, 'preRelease');
+            if (this.view) {
+              await this.view.webview.postMessage({
+                command: 'setLoadingState',
+                loading: false,
+                error: 'No catalog selected'
+              });
+            }
+            return;
           }
+          await this.handleCatalogSelection(message.catalogId);
           break;
         case 'createPreRelease':
-          if (message.data) {
-            await this.handleCreatePreRelease(message.data);
+          // Extract data from either message.data or direct properties
+          const releaseData: PreReleaseDetails = message.data || {
+            version: message.version || '',
+            postfix: message.postfix || '',
+            publishToCatalog: message.publishToCatalog || false,
+            releaseGithub: message.releaseGithub || false,
+            catalogId: message.catalogId
+          };
+
+          this.logger.debug('Processing createPreRelease command', { releaseData }, 'preRelease');
+
+          if (!releaseData || !releaseData.version || !releaseData.postfix) {
+            this.logger.error('Missing data for createPreRelease command', { message, releaseData }, 'preRelease');
+            if (this.view) {
+              await this.view.webview.postMessage({
+                command: 'setLoadingState',
+                loading: false,
+                error: 'Missing release details. Please fill in all required fields.'
+              });
+            }
+            return;
           }
+          await this.handleCreatePreRelease(releaseData);
           break;
         case 'setup':
           await this.handleSetup();
@@ -1526,12 +1606,34 @@ export class PreReleaseService {
         case 'forceRefresh':
           await this.handleForceRefresh(message.catalogId);
           break;
+        default:
+          this.logger.warn('Unknown message command received', {
+            command: message.command,
+            messageType: typeof message,
+            hasData: !!message.data
+          }, 'preRelease');
+          break;
       }
     } catch (error) {
-      // Log the error but don't show it in the UI
-      this.logger.error('Error handling message', { error, message }, 'preRelease');
+      // Log the error with full context
+      this.logger.error('Error handling message', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        command: message.command,
+        messageData: message.data
+      }, 'preRelease');
 
-      // Instead of showing an error, refresh the view with empty data
+      // Show error in UI
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false,
+          error: error instanceof Error ? error.message : 'An error occurred'
+        });
+      }
+
+      // Always ensure the view is refreshed to a consistent state
       await this.refresh();
     }
   }
@@ -1659,7 +1761,159 @@ export class PreReleaseService {
         catalogId: data.catalogId
       }, 'preRelease');
 
-      const success = await this.createPreRelease(data);
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: true,
+          message: 'Creating pre-release...'
+        });
+      }
+
+      // Get branch and check for unpushed changes first
+      const branch = await this.getCurrentBranch();
+
+      // Block main/master branch
+      if (['main', 'master'].includes(branch)) {
+        throw new Error('Cannot create pre-release from main/master branch');
+      }
+
+      // Check for unpushed changes
+      const hasUnpushedChanges = await this.hasUnpushedChanges();
+      if (hasUnpushedChanges) {
+        this.logger.warn('Creating release with unpushed changes', { branch });
+      }
+
+      const tagName = `v${data.version}-${data.postfix}`;
+
+      let confirmMessage: string;
+      let confirmButtons: { title: string; isCloseAffordance: boolean }[];
+
+      if (data.releaseGithub) {
+        // For GitHub releases, check if it already exists
+        const existingReleases = await this.getLastPreReleases();
+        const releaseExists = existingReleases.some(release => release.tag_name === tagName);
+        if (releaseExists) {
+          throw new Error(`A release with tag ${tagName} already exists. Please choose a different version or postfix.`);
+        }
+
+        // GitHub release confirmation
+        confirmMessage = `Create the following GitHub pre-release?\n\n` +
+          `Version: ${data.version}\n` +
+          `Postfix: ${data.postfix}\n` +
+          `Tag: ${tagName}\n` +
+          `Branch: ${branch}\n` +
+          `${hasUnpushedChanges ? '⚠️ Warning: Branch has unpushed changes\n' : ''}`;
+
+        confirmButtons = [
+          { title: 'Create Pre-Release', isCloseAffordance: false },
+          { title: 'Cancel', isCloseAffordance: true }
+        ];
+      } else if (data.publishToCatalog) {
+        // For catalog imports, verify we have a catalog ID
+        if (!data.catalogId) {
+          this.logger.error('Catalog import attempted without catalog ID', { data });
+          throw new Error('No catalog selected. Please select a catalog before importing.');
+        }
+
+        // Get catalog details for confirmation
+        const catalogDetails = await this.getSelectedCatalogDetails(data.catalogId);
+
+        // Get the catalog label from the available catalogs
+        const privateCatalogs = await this.ibmCloudService?.getAvailablePrivateCatalogs();
+        const selectedCatalog = privateCatalogs?.find(c => c.id === data.catalogId);
+        if (!selectedCatalog) {
+          throw new Error('Selected catalog not found');
+        }
+
+        // For catalog imports, verify the GitHub release exists and get its details
+        const githubRelease = await this.getGitHubRelease(tagName);
+        if (!githubRelease) {
+          throw new Error(`GitHub release ${tagName} not found. A GitHub release is required for catalog import.`);
+        }
+
+        // Set the target version URL for catalog import
+        data.targetVersion = githubRelease.tarball_url;
+
+        // Extract catalog details from the release tarball
+        const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
+
+        // Filter available flavors
+        const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+          releaseDetails.flavors,
+          catalogDetails.versions,
+          data.version
+        );
+
+        // Log flavor availability
+        this.logger.debug('Flavor availability for version', {
+          version: data.version,
+          totalFlavors: releaseDetails.flavors.length,
+          availableFlavors: availableFlavors.map(f => f.name),
+          alreadyImported: alreadyImportedFlavors
+        }, 'preRelease');
+
+        // If no flavors are available, show error and return
+        if (availableFlavors.length === 0) {
+          const errorMessage = `All flavors are already imported for version ${data.version}:\n` +
+            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+          throw new Error(errorMessage);
+        }
+
+        // Show flavor selection dialog with only available flavors
+        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, data.version);
+
+        if (selectedFlavors.length === 0) {
+          this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
+          return;
+        }
+
+        // Store selected flavors in release details and details object
+        releaseDetails.flavors = selectedFlavors;
+        data.selectedFlavors = selectedFlavors;
+
+        // Update confirmation message to show which flavors are being imported and which already exist
+        confirmMessage = `Import the following to the IBM Cloud Catalog?\n\n` +
+          `Catalog: ${selectedCatalog.label}\n` +
+          `Offering Name: ${releaseDetails.name}\n` +
+          `Offering Label: ${releaseDetails.label}\n` +
+          `GitHub Release Tag: ${tagName}\n` +
+          `Catalog Version: ${data.version}\n` +
+          `Selected Flavors to Import:\n${selectedFlavors.map(f =>
+            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+          ).join('\n')}` +
+          (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
+            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+          ).join('\n')}` : '') +
+          `\n\nNote: A separate version will be imported for each selected flavor.`;
+
+        confirmButtons = [
+          { title: 'Import to Catalog', isCloseAffordance: false },
+          { title: 'Cancel', isCloseAffordance: true }
+        ];
+      } else {
+        throw new Error('Invalid operation: Must specify either GitHub release or catalog import');
+      }
+
+      const confirmation = await vscode.window.showWarningMessage(
+        confirmMessage,
+        { modal: true },
+        ...confirmButtons
+      );
+
+      if (!confirmation || confirmation.title.includes('Cancel')) {
+        this.logger.info('Pre-release creation cancelled by user', { tagName });
+        if (this.view) {
+          await this.view.webview.postMessage({
+            command: 'releaseComplete',
+            success: false,
+            cancelled: true
+          });
+        }
+        return;
+      }
+
+      const success = await this.createPreRelease({ ...data, skipConfirmation: true });
+
       if (success) {
         // Add a small delay to ensure GitHub and catalog APIs have propagated the changes
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1670,9 +1924,6 @@ export class PreReleaseService {
 
         if (data.catalogId) {
           cachesToClear.add(`${CacheKeys.OFFERING_DETAILS}_${data.catalogId}`);
-          cachesToClear.add(`${CacheKeys.CATALOG_OFFERINGS}_${data.catalogId}`);
-          cachesToClear.add(`offerings:${data.catalogId}`);
-          cachesToClear.add(`offeringValidation:${data.catalogId}:*`);
         }
 
         // Clear all unique caches at once
@@ -1698,6 +1949,15 @@ export class PreReleaseService {
           publishToCatalog: data.publishToCatalog
         }, 'preRelease');
       }
+
+      // Always notify the webview of completion
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'releaseComplete',
+          success,
+          cancelled: !success
+        });
+      }
     } catch (error) {
       this.logger.error('Failed to create pre-release', {
         error,
@@ -1708,7 +1968,25 @@ export class PreReleaseService {
         version: data.version,
         postfix: data.postfix
       }, 'preRelease');
+
+      // Notify webview of failure
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'releaseComplete',
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to create pre-release'
+        });
+      }
+
       throw error;
+    } finally {
+      // Ensure loading state is cleared
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false
+        });
+      }
     }
   }
 
@@ -1973,12 +2251,6 @@ export class PreReleaseService {
         const { stdout: remoteUrl } = await execAsync(`git remote get-url ${sourceRemote}`, this.workspaceRoot);
         const trimmedUrl = remoteUrl.trim();
 
-        this.logger.debug('Found source remote', {
-          sourceRemote,
-          availableRemotes: remotesList,
-          remoteUrl: trimmedUrl
-        }, 'preRelease');
-
         // Enhanced URL parsing patterns
         const urlPatterns = {
           // Standard SSH format: git@github.com:owner/repo.git
@@ -2036,13 +2308,6 @@ export class PreReleaseService {
           }
 
           const repoInfo = { owner, name };
-
-          // Log successful URL parsing
-          this.logger.debug('Successfully parsed repository URL', {
-            urlType: matchType,
-            remoteUrl: trimmedUrl,
-            parsedInfo: repoInfo
-          }, 'preRelease');
 
           // Only log if repository info has changed
           if (!this.lastRepoInfo ||
@@ -2162,14 +2427,6 @@ export class PreReleaseService {
 
         const repoInfo = { owner, name };
 
-        // Log successful config parsing
-        this.logger.debug('Successfully parsed repository URL from config', {
-          urlType: matchType,
-          remoteUrl,
-          parsedInfo: repoInfo,
-          source: 'config_file'
-        }, 'preRelease');
-
         // Only log if repository info has changed
         if (!this.lastRepoInfo ||
           this.lastRepoInfo.owner !== owner ||
@@ -2273,63 +2530,93 @@ export class PreReleaseService {
     githubReleases: GitHubRelease[],
     catalogVersions: CatalogVersion[]
   ): VersionMappingSummary[] {
-    // Get all unique versions from both GitHub and catalog
-    const allVersions = new Set([
-      ...githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0]),
-      ...catalogVersions.map(v => v.version)
-    ]);
+    // Sort GitHub releases by creation date (newest first)
+    const sortedGithubReleases = [...githubReleases].sort((a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
 
-    // Sort versions by semver (newest first) and take latest 5
-    const latestVersions = Array.from(allVersions)
-      .sort((a, b) => -this.compareSemVer(a, b))
-      .slice(0, 5);
+    // Sort catalog versions by semver (newest first)
+    const sortedCatalogVersions = [...catalogVersions].sort((a, b) =>
+      -this.compareSemVer(a.version, b.version)
+    );
 
-    // Create the final mapping summary
-    const mappedVersions = latestVersions.map(version => {
-      // Find all catalog entries for this version
-      const catalogEntries = catalogVersions.filter(v => v.version === version);
+    // Get unique versions from catalog
+    const uniqueCatalogVersions = Array.from(new Set(
+      sortedCatalogVersions.map(v => v.version)
+    ));
 
-      // Find GitHub release with matching base version or tag
-      const githubRelease = githubReleases.find(r => {
+    const mappings: VersionMappingSummary[] = [];
+
+    // Add the latest GitHub release first (if any)
+    if (sortedGithubReleases.length > 0) {
+      const latestGitHub = sortedGithubReleases[0];
+      const version = latestGitHub.tag_name.replace(/^v/, '').split('-')[0];
+
+      // Find any matching catalog versions
+      const matchingCatalogVersions = sortedCatalogVersions
+        .filter(v => v.version === version)
+        .map(v => ({
+          version: v.version,
+          flavor: v.flavor,
+          tgz_url: v.tgz_url,
+          githubTag: v.githubTag
+        }));
+
+      mappings.push({
+        version,
+        githubRelease: {
+          tag: latestGitHub.tag_name,
+          tarball_url: latestGitHub.tarball_url
+        },
+        catalogVersions: matchingCatalogVersions.length > 0 ? matchingCatalogVersions : null
+      });
+    }
+
+    // Add up to 4 latest catalog versions that aren't already included
+    for (const version of uniqueCatalogVersions) {
+      // Skip if this version is already in mappings
+      if (mappings.some(m => m.version === version)) {
+        continue;
+      }
+
+      // Get all catalog entries for this version
+      const catalogEntries = sortedCatalogVersions
+        .filter(v => v.version === version)
+        .map(v => ({
+          version: v.version,
+          flavor: v.flavor,
+          tgz_url: v.tgz_url,
+          githubTag: v.githubTag
+        }));
+
+      // Find matching GitHub release (if any)
+      const githubRelease = sortedGithubReleases.find(r => {
         const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
         return releaseVersion === version || r.tag_name === `v${version}`;
       });
 
-      // Log mapping details for debugging
-      this.logger.debug('Version mapping details', {
-        version,
-        catalogEntries: catalogEntries.map(e => ({
-          version: e.version,
-          flavor: e.flavor,
-          tgz_url: e.tgz_url
-        })),
-        githubRelease: githubRelease ? {
-          tag: githubRelease.tag_name,
-          tarball_url: githubRelease.tarball_url
-        } : null
-      }, 'preRelease');
-
-      return {
+      mappings.push({
         version,
         githubRelease: githubRelease ? {
           tag: githubRelease.tag_name,
           tarball_url: githubRelease.tarball_url
         } : null,
-        catalogVersions: catalogEntries.length > 0 ? catalogEntries.map(entry => ({
-          version: entry.version,
-          flavor: entry.flavor,
-          tgz_url: entry.tgz_url,
-          githubTag: entry.githubTag
-        })) : null
-      };
-    });
+        catalogVersions: catalogEntries
+      });
 
+      // Stop after we have 5 total mappings
+      if (mappings.length >= 5) {
+        break;
+      }
+    }
+
+    // Log the final mapping summary
     this.logger.debug('Final version mapping summary', {
       catalogId,
       offeringId,
       kindType,
-      totalVersions: latestVersions.length,
-      mappedVersions: mappedVersions.map(v => ({
+      totalMappings: mappings.length,
+      mappedVersions: mappings.map(v => ({
         version: v.version,
         hasGithubRelease: !!v.githubRelease,
         githubTag: v.githubRelease?.tag,
@@ -2338,7 +2625,7 @@ export class PreReleaseService {
       }))
     }, 'preRelease');
 
-    return mappedVersions;
+    return mappings;
   }
 
   /**

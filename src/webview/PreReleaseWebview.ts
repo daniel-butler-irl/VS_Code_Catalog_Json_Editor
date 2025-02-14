@@ -351,12 +351,24 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         releaseGithub: data.releaseGithub
       }, 'preRelease');
 
+      // Show loading state in UI
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: true,
+          message: 'Creating pre-release...'
+        });
+      }
+
       this.logger.info('Creating pre-release', { version: `v${data.version}-${data.postfix}` }, 'preRelease');
 
       try {
         const success = await this.preReleaseService.createPreRelease(data);
 
         if (success) {
+          // Add a small delay to ensure GitHub and catalog APIs have propagated the changes
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
           this.logger.debug('Refreshing panel after pre-release creation', {}, 'preRelease');
           await this.refresh();
 
@@ -366,10 +378,18 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           }, 'preRelease');
 
           // Notify webview of success
-          this.view?.webview.postMessage({
-            command: 'releaseComplete',
-            success: true
-          });
+          if (this.view) {
+            await this.view.webview.postMessage({
+              command: 'releaseComplete',
+              success: true
+            });
+
+            // Clear loading state
+            await this.view.webview.postMessage({
+              command: 'setLoadingState',
+              loading: false
+            });
+          }
         } else {
           // Operation was cancelled by user, reset the UI state
           this.logger.info('Pre-release creation cancelled by user', {
@@ -377,11 +397,19 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           }, 'preRelease');
 
           // Tell webview to reset button state
-          this.view?.webview.postMessage({
-            command: 'releaseComplete',
-            success: false,
-            cancelled: true // Add this flag to distinguish from errors
-          });
+          if (this.view) {
+            await this.view.webview.postMessage({
+              command: 'releaseComplete',
+              success: false,
+              cancelled: true
+            });
+
+            // Clear loading state
+            await this.view.webview.postMessage({
+              command: 'setLoadingState',
+              loading: false
+            });
+          }
         }
       } catch (error) {
         let errorMessage = 'Failed to create pre-release';
@@ -392,6 +420,8 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
             errorMessage = `Branch has no upstream. Please push the branch first: git push -u origin ${data.postfix.split('-')[0]}`;
           } else if (error.message.includes('failed to create tag')) {
             errorMessage = 'Failed to create tag. Please ensure you have write permissions.';
+          } else if (error.message.includes('already exists')) {
+            errorMessage = `Release ${data.version}-${data.postfix} already exists. Please choose a different version or postfix.`;
           } else {
             errorMessage = error.message;
           }
@@ -402,12 +432,20 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         // Show error in VS Code UI
         vscode.window.showErrorMessage(errorMessage);
 
-        // Show error in webview
-        this.view?.webview.postMessage({
-          command: 'releaseComplete',
-          success: false,
-          error: errorMessage
-        });
+        // Show error in webview and reset state
+        if (this.view) {
+          await this.view.webview.postMessage({
+            command: 'releaseComplete',
+            success: false,
+            error: errorMessage
+          });
+
+          // Clear loading state
+          await this.view.webview.postMessage({
+            command: 'setLoadingState',
+            loading: false
+          });
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
@@ -416,12 +454,20 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       // Show error in VS Code UI
       vscode.window.showErrorMessage(errorMessage);
 
-      // Show error in webview
-      this.view?.webview.postMessage({
-        command: 'releaseComplete',
-        success: false,
-        error: errorMessage
-      });
+      // Show error in webview and reset state
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'releaseComplete',
+          success: false,
+          error: errorMessage
+        });
+
+        // Clear loading state
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false
+        });
+      }
     }
   }
 
@@ -455,6 +501,18 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                 </div>
             </div>
             <div id="mainContent">
+                <div class="section">
+                    <h2>Catalog Details</h2>
+                    <div class="form-group">
+                        <label for="catalogSelect">Select Catalog</label>
+                        <select id="catalogSelect" disabled title="Login to IBM Cloud to view catalogs">
+                            <option value="">Loading catalogs...</option>
+                        </select>
+                    </div>
+                    <div id="catalogDetails">
+                        <p class="loading">Loading catalog details...</p>
+                    </div>
+                </div>
                 <div class="section">
                     <h2>GitHub Details</h2>
                     <div class="details-info">
@@ -505,15 +563,21 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                     </div>
                 </div>
                 <div class="section">
-                    <h2>Catalog Details</h2>
-                    <div class="form-group">
-                        <label for="catalogSelect">Select Catalog</label>
-                        <select id="catalogSelect" disabled title="Login to IBM Cloud to view catalogs">
-                            <option value="">Loading catalogs...</option>
-                        </select>
-                    </div>
-                    <div id="catalogDetails">
-                        <p class="loading">Loading catalog details...</p>
+                    <h2>Recent Versions</h2>
+                    <div class="versions-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>GitHub</th>
+                                    <th>Catalog</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="2" class="empty-state">Please select a catalog to view versions</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -676,7 +740,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           await this.sendAuthenticationStatus();
           break;
         default:
-          await this.handleMessage(message);
+          this.logger.warn('Unknown message command received', {
+            command: message.command,
+            messageType: typeof message,
+            hasData: !!message.data
+          }, 'preRelease');
       }
     } catch (error) {
       this.logger.error('Error handling message', { error, message }, 'preRelease');
@@ -782,49 +850,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       })
     );
 
-    this.view.webview.onDidReceiveMessage(async (message: any) => {
+    this.view.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
       try {
-        switch (message.command) {
-          case 'getBranchName':
-          case 'checkAuthentication':
-            // Don't log these frequent checks
-            if (message.command === 'getBranchName') {
-              await this.sendGitHubDetails();
-            } else {
-              await this.sendAuthenticationStatus();
-            }
-            break;
-          case 'stateResponse':
-            // This is a response from the webview, no action needed
-            break;
-          case 'setup':
-            await this.handleSetup();
-            break;
-          case 'refresh':
-            await this.refresh();
-            break;
-          case 'selectCatalog':
-            if (message.catalogId) {
-              await this.handleCatalogSelection(message.catalogId);
-            } else {
-              // If no catalog is selected, disable the buttons
-              await this.updateButtonStates(false, false);
-            }
-            break;
-          case 'forceRefresh':
-            if (message.catalogId) {
-              await this.handleForceRefresh(message.catalogId);
-            } else {
-              await this.refresh();
-            }
-            break;
-          default:
-            // Only log truly unknown commands
-            if (!['getBranchName', 'checkAuthentication', 'stateResponse'].includes(message.command)) {
-              this.logger.warn('Unknown message command received', { command: message.command }, 'preRelease');
-            }
-            break;
-        }
+        await this.handleMessage(message);
       } catch (error) {
         this.logger.error('Error handling webview message', { error, message }, 'preRelease');
         if (this.view) {
@@ -835,82 +863,6 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         }
       }
     });
-  }
-
-  private async handleForceRefresh(catalogId: string): Promise<void> {
-    this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
-
-    try {
-      if (this.view) {
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: true,
-          message: 'Force refreshing data...'
-        });
-      }
-
-      // Always get fresh GitHub details first
-      await this.sendGitHubDetails();
-
-      const [releases, catalogData] = await Promise.allSettled([
-        this.preReleaseService.getLastPreReleases().catch(error => {
-          this.logger.warn('Failed to fetch releases, showing empty state', { error }, 'preRelease');
-          return [];
-        }),
-        this.preReleaseService.getCatalogDetails().catch(error => {
-          this.logger.warn('Failed to fetch catalog details, showing empty state', { error }, 'preRelease');
-          return {
-            catalogs: [],
-            selectedCatalog: {
-              catalogId: '',
-              offeringId: '',
-              name: '',
-              label: '',
-              versions: []
-            }
-          };
-        })
-      ]);
-
-      if (this.view) {
-        this.logger.debug('Updating UI with refreshed data', {
-          releasesStatus: releases.status,
-          catalogDataStatus: catalogData.status,
-          catalogId
-        }, 'preRelease');
-
-        await this.view.webview.postMessage({
-          command: 'updateData',
-          releases: releases.status === 'fulfilled' ? releases.value : [],
-          catalogs: catalogData.status === 'fulfilled' ? catalogData.value.catalogs : [],
-          catalogDetails: catalogData.status === 'fulfilled' ? catalogData.value.selectedCatalog : undefined
-        });
-
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: false
-        });
-      }
-
-      this.logger.info('Force refresh completed successfully', { catalogId }, 'preRelease');
-    } catch (error) {
-      this.logger.error('Failed to force refresh', {
-        error,
-        catalogId,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      }, 'preRelease');
-
-      if (this.view) {
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: false,
-          error: 'Failed to refresh data. Please try again.'
-        });
-      }
-
-      throw error;
-    }
   }
 
   public dispose(): void {
