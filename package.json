@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.7.15",
+  "version": "0.7.16",
   "publisher": "DanielButler",
   "preview": true,
   "repository": {
@@ -120,6 +120,12 @@
         "command": "ibmCatalog.setLogLevel",
         "title": "Set Log Level",
         "category": "IBM Cloud Catalog"
+      },
+      {
+        "command": "ibmCatalog.deleteElement",
+        "title": "Delete Element",
+        "category": "IBM Catalog",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -211,6 +217,11 @@
           "command": "ibmCatalog.addElement",
           "when": "view == ibmCatalogTree && (viewItem == container || viewItem == array)",
           "group": "inline"
+        },
+        {
+          "command": "ibmCatalog.deleteElement",
+          "when": "view == ibmCatalogTree && viewItem != 'root'",
+          "group": "1_modification"
         }
       ]
     },
