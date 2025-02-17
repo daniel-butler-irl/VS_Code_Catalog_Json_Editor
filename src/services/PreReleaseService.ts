@@ -1412,9 +1412,9 @@ export class PreReleaseService {
             product_kind: 'solution',
             flavor: {
               metadata: {
-                name: flavor.name,
+                name: flavor.name, // Use the original programmatic name without modification
                 label: flavor.label || flavor.name,
-                index: flavorsToImport.indexOf(flavor) + 1  // Use flavorsToImport for index
+                index: flavorsToImport.indexOf(flavor) + 1
               }
             },
             working_directory: flavor.working_directory

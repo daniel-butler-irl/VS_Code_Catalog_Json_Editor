@@ -972,6 +972,7 @@ export class IBMCloudService {
                     version: options.version,
                     formatKind,
                     flavorName,
+                    flavorLabel: flavor.metadata.label,
                     workingDirectory: flavor.metadata.working_directory
                 }, 'preRelease');
 
