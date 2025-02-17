@@ -1196,15 +1196,48 @@ export class PreReleaseService {
 
       // Get repository info and verify permissions
       const { stdout: repoUrl } = await execAsync('git config --get remote.origin.url', this.workspaceRoot);
-      const httpsMatch = repoUrl.trim().match(/github\.com[:/]([^/]+)\/([^.]+)\.git/);
-      const sshMatch = repoUrl.trim().match(/git@github\.com:([^/]+)\/([^.]+)\.git/);
-      const match = httpsMatch || sshMatch;
+      const trimmedUrl = repoUrl.trim();
 
+      this.logger.debug('Parsing repository URL', { url: trimmedUrl }, 'preRelease');
+
+      // Handle various GitHub URL formats:
+      // 1. HTTPS with .git: https://github.com/owner/repo.git
+      // 2. HTTPS without .git: https://github.com/owner/repo
+      // 3. SSH format: git@github.com:owner/repo.git
+      // 4. SSH without .git: git@github.com:owner/repo
+      // 5. HTTPS with github.com prefix: github.com/owner/repo
+
+      let owner: string | undefined;
+      let repo: string | undefined;
+
+      // Try HTTPS format first
+      let match = trimmedUrl.match(/(?:https:\/\/)?github\.com[\/:]([^\/]+)\/([^\/\n.]+)(?:\.git)?$/);
+
+      // If not HTTPS, try SSH format
       if (!match) {
-        throw new Error('Could not parse GitHub repository URL');
+        match = trimmedUrl.match(/git@github\.com:([^\/]+)\/([^\/\n.]+)(?:\.git)?$/);
       }
 
-      const [, owner, repo] = match;
+      if (match) {
+        [, owner, repo] = match;
+      }
+
+      if (!owner || !repo) {
+        this.logger.error('Failed to parse GitHub URL', {
+          url: trimmedUrl,
+          parsedOwner: owner,
+          parsedRepo: repo
+        }, 'preRelease');
+        throw new Error(
+          'Could not parse GitHub repository URL. ' +
+          'Please ensure your repository remote URL is in one of these formats:\n' +
+          '- https://github.com/owner/repo.git\n' +
+          '- https://github.com/owner/repo\n' +
+          '- git@github.com:owner/repo.git\n' +
+          '- git@github.com:owner/repo\n' +
+          `Current URL: ${trimmedUrl}`
+        );
+      }
 
       // Verify repository permissions
       try {

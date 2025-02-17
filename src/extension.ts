@@ -236,6 +236,23 @@ function registerEssentialCommands(
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to logout from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
+        }),
+        // Register addElement command early to ensure it's available
+        vscode.commands.registerCommand('ibmCatalog.addElement', async (node: CatalogTreeItem) => {
+            try {
+                const schemaService = new SchemaService();
+                await schemaService.initialize();
+                const catalogService = new CatalogService(context);
+                await catalogService.initialize();
+
+                await catalogService.addElement(node, schemaService);
+                // Since we don't have the tree provider here, we'll need to refresh it through a context update
+                await vscode.commands.executeCommand('setContext', 'ibmCatalog.refresh', Date.now());
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                LoggingService.getInstance().error('Failed to add element', { error });
+                vscode.window.showErrorMessage(`Failed to add element: ${message}`);
+            }
         })
     );
 }
