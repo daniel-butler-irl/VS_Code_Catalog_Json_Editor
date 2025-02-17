@@ -17,10 +17,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     //
     // Event Emitters & Core Properties
     //
-    private _onDidChangeTreeData = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
-    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private _onDidChangeTreeData: vscode.EventEmitter<CatalogTreeItem | undefined> = new vscode.EventEmitter<CatalogTreeItem | undefined>();
+    readonly onDidChangeTreeData: vscode.Event<CatalogTreeItem | undefined> = this._onDidChangeTreeData.event;
     private treeView?: vscode.TreeView<CatalogTreeItem>;
-    private readonly logger = LoggingService.getInstance();
+    private readonly logger: LoggingService;
     private readonly uiStateService: UIStateService;
 
     //
@@ -40,6 +40,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         private readonly context: vscode.ExtensionContext,
         private readonly schemaService: SchemaService
     ) {
+        this.logger = LoggingService.getInstance();
         this.uiStateService = UIStateService.getInstance(context);
 
         // Initialize expanded nodes from persistent storage
@@ -52,6 +53,15 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             this.clearCaches();
             this.refresh();
         });
+
+        // Listen for refresh context changes
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('ibmCatalog.refresh')) {
+                    this.refresh();
+                }
+            })
+        );
     }
 
     //
@@ -274,6 +284,54 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         }
 
         const obj = item as Record<string, unknown>;
+        this.logger.debug('Resolving object label - Full object details', {
+            index,
+            availableProperties: Object.keys(obj),
+            hasLabel: 'label' in obj,
+            hasName: 'name' in obj,
+            hasId: 'id' in obj,
+            isDependency: 'catalog_id' in obj && 'id' in obj,
+            objectValue: obj,
+            labelValue: obj.label,
+            nameValue: obj.name,
+            idValue: obj.id,
+            storedLabel: typeof obj.label === 'string' ? obj.label : undefined
+        });
+
+        // For dependency nodes, check if we have a cached label
+        if ('id' in obj && typeof obj.id === 'string' && 'catalog_id' in obj) {
+            this.logger.debug('Processing dependency node label', {
+                id: obj.id,
+                catalogId: obj.catalog_id,
+                hasLabel: 'label' in obj,
+                labelValue: obj.label,
+                hasName: 'name' in obj,
+                nameValue: obj.name,
+                storedLabel: typeof obj.label === 'string' ? obj.label : undefined
+            });
+
+            if ('label' in obj && typeof obj.label === 'string') {
+                this.logger.debug('Using cached label for dependency', {
+                    label: obj.label,
+                    id: obj.id,
+                    fullObject: obj
+                });
+                return obj.label;
+            }
+            if ('name' in obj && typeof obj.name === 'string') {
+                this.logger.debug('Using name for dependency (no label found)', {
+                    name: obj.name,
+                    id: obj.id,
+                    fullObject: obj
+                });
+                return obj.name;
+            }
+            this.logger.debug('No label or name found for dependency, falling back to id', {
+                id: obj.id,
+                fullObject: obj
+            });
+            return obj.name as string || obj.id as string; // Fallback to name, then ID
+        }
 
         // Always prioritize label over name for display
         if ('label' in obj && typeof obj.label === 'string') {

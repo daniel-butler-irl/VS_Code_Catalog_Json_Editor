@@ -50,27 +50,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
         catalogId?: string,
         initialStatus: ValidationStatus = ValidationStatus.Unknown
     ) {
-        // For objects with name and label properties, use label as display and name as description
-        let displayLabel = label;
-        let itemDescription = '';
-
-        if (typeof value === 'object' && value !== null && 'name' in value && 'label' in value) {
-            const objValue = value as { name: string, label: string };
-            if (typeof objValue.label === 'string') {
-                displayLabel = objValue.label;
-                if (typeof objValue.name === 'string') {
-                    itemDescription = objValue.name;
-                }
-            }
-        }
-
-        // Use the formatted label when calling super
-        super(displayLabel, collapsibleState);
-
-        // Set description if we found one
-        if (itemDescription) {
-            this.description = itemDescription;
-        }
+        super(label, collapsibleState);
 
         this.context = context;
         this.logger = LoggingService.getInstance();
@@ -78,19 +58,166 @@ export class CatalogTreeItem extends vscode.TreeItem {
         this.parent = parent;
         this.catalogId = catalogId;
 
-        // Initialize validation metadata with Unknown status by default
-        // Only set Pending status if explicitly requested AND the item requires validation
+        // Initialize validation metadata
         this._validationMetadata = {
             status: (initialStatus === ValidationStatus.Pending && this.requiresValidation())
                 ? ValidationStatus.Pending
                 : ValidationStatus.Unknown
         };
 
-        this.updateDisplayProperties();
+        // Update display properties based on the type of node
+        this.updateInitialDisplay();
 
-        // Queue validation if needed and if we're in a state that requires validation
+        // For dependency nodes, attempt to fetch and display the offering label
+        if (typeof value === 'object' && value !== null) {
+            const objValue = value as Record<string, unknown>;
+            if (this.isDependencyNode(jsonPath) &&
+                'name' in objValue &&
+                typeof objValue.name === 'string' &&
+                catalogId &&
+                'id' in objValue &&
+                typeof objValue.id === 'string') {
+                void this.tryUpdateDependencyDisplay(
+                    catalogId,
+                    objValue.id as string,
+                    objValue.name as string
+                );
+            }
+        }
+
+        // Queue validation if needed
         if (this.requiresValidation() && initialStatus === ValidationStatus.Pending) {
             void this.queueForValidation();
+        }
+    }
+
+    /**
+     * Updates the initial display properties based on the type of node
+     */
+    private updateInitialDisplay(): void {
+        if (typeof this.value === 'object' && this.value !== null) {
+            const objValue = this.value as Record<string, unknown>;
+
+            // For objects with name property, show it in description
+            if ('name' in objValue && typeof objValue.name === 'string') {
+                this.description = objValue.name;
+            }
+        }
+
+        this.updateDisplayProperties();
+    }
+
+    /**
+     * Checks if a node is a dependency node based on its JSON path
+     */
+    private isDependencyNode(jsonPath: string): boolean {
+        return /\.dependencies\[\d+\]$/.test(jsonPath);
+    }
+
+    /**
+     * Attempts to update the display of a dependency node with the offering label from cache/API
+     */
+    private async tryUpdateDependencyDisplay(catalogId: string, offeringId: string, fallbackName: string): Promise<void> {
+        this.logger.debug('Starting dependency display update', {
+            catalogId,
+            offeringId,
+            fallbackName,
+            currentValue: this.value,
+            currentDescription: this.description,
+            currentLabel: typeof this.value === 'object' && this.value ? (this.value as Record<string, unknown>).label : undefined,
+            jsonPath: this.jsonPath
+        });
+
+        try {
+            const apiKey = await AuthService.getApiKey(this.context);
+            if (!apiKey) {
+                this.logger.debug('No API key available, falling back to name', {
+                    fallbackName,
+                    jsonPath: this.jsonPath
+                });
+                this.description = fallbackName;
+                return;
+            }
+
+            const ibmCloudService = new IBMCloudService(apiKey);
+            this.logger.debug('Fetching offerings for catalog', {
+                catalogId,
+                jsonPath: this.jsonPath
+            });
+            const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+
+            this.logger.debug('Searching for offering', {
+                offeringId,
+                totalOfferings: offerings.length,
+                availableOfferings: offerings.map(o => ({
+                    id: o.id,
+                    label: o.label,
+                    name: o.name
+                })),
+                jsonPath: this.jsonPath
+            });
+
+            const offering = offerings.find(o => o.id === offeringId);
+
+            if (offering?.label) {
+                this.logger.debug('Found offering label, updating display', {
+                    offeringId,
+                    label: offering.label,
+                    name: fallbackName,
+                    currentValue: this.value,
+                    jsonPath: this.jsonPath
+                });
+
+                // Store the offering label in the value object to ensure it persists
+                if (typeof this.value === 'object' && this.value !== null) {
+                    const valueObj = this.value as Record<string, unknown>;
+                    valueObj.label = offering.label;
+                    this.logger.debug('Stored label in value object', {
+                        updatedValue: valueObj,
+                        label: offering.label,
+                        jsonPath: this.jsonPath,
+                        hasLabel: 'label' in valueObj,
+                        labelValue: valueObj.label
+                    });
+                } else {
+                    this.logger.debug('Could not store label - value is not an object', {
+                        valueType: typeof this.value,
+                        value: this.value,
+                        jsonPath: this.jsonPath
+                    });
+                }
+
+                // Show the offering label in the description
+                this.description = offering.label;
+                this.tooltip = `${offering.label}\nID: ${offeringId}\nName: ${fallbackName}`;
+                this.updateDisplayProperties();
+
+                this.logger.debug('Updated display properties', {
+                    newDescription: this.description,
+                    newTooltip: this.tooltip,
+                    jsonPath: this.jsonPath,
+                    valueAfterUpdate: this.value
+                });
+            } else {
+                this.logger.debug('No label found for offering, using fallback name', {
+                    offeringId,
+                    fallbackName,
+                    offering: offering ? 'found' : 'not found',
+                    offeringDetails: offering,
+                    jsonPath: this.jsonPath
+                });
+                this.description = fallbackName;
+            }
+        } catch (error) {
+            this.logger.debug('Failed to get offering label, falling back to name', {
+                catalogId,
+                offeringId,
+                fallbackName,
+                error: error instanceof Error ? error.message : String(error),
+                jsonPath: this.jsonPath,
+                stack: error instanceof Error ? error.stack : undefined
+            });
+            this.description = fallbackName;
         }
     }
 
@@ -490,32 +617,43 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private getInputMappingDetails(values: Record<string, unknown>): string[] | undefined {
         const details: string[] = [];
         const referenceVersion = values.reference_version === true;
+        const direction = referenceVersion ? '↓ Parent to Dependency' : '↑ Dependency to Parent';
 
-        // Add mapping direction
-        const direction = this.getInputMappingDescription();
-        if (direction) {
+        // Add mapping type and direction
+        if ('dependency_input' in values || 'dependency_output' in values) {
             details.push(`Direction: ${direction}`);
+            details.push('Type: Dynamic Mapping');
+        } else if ('value' in values) {
+            details.push('Type: Static Value Mapping');
         }
 
-        // Add specific values
+        // Add specific mapping details
         if ('dependency_input' in values) {
-            details.push(`Dependency Input: ${values.dependency_input}`);
-            details.push(`Version Input: ${values.version_input}`);
+            const source = referenceVersion ? values.version_input : values.dependency_input;
+            const target = referenceVersion ? values.dependency_input : values.version_input;
+            details.push(`Source: ${source}`);
+            details.push(`Target: ${target}`);
             if (referenceVersion) {
-                details.push('Reference Version: true (Parent → Dependency)');
+                details.push('(Parent architecture input mapped to dependency input)');
+            } else {
+                details.push('(Dependency input mapped to parent architecture)');
             }
         } else if ('dependency_output' in values) {
-            details.push(`Dependency Output: ${values.dependency_output}`);
-            details.push(`Version Input: ${values.version_input}`);
+            const source = referenceVersion ? values.version_input : values.dependency_output;
+            const target = referenceVersion ? values.dependency_output : values.version_input;
+            details.push(`Source: ${source}`);
+            details.push(`Target: ${target}`);
             if (referenceVersion) {
-                details.push('Reference Version: true (Parent → Dependency)');
+                details.push('(Parent architecture input mapped to dependency output)');
+            } else {
+                details.push('(Dependency output mapped to parent architecture)');
             }
         } else if ('value' in values) {
             details.push(`Static Value: ${values.value}`);
             if ('version_input' in values) {
-                details.push(`Version Input: ${values.version_input}`);
+                details.push(`Mapped to Version Input: ${values.version_input}`);
             } else if ('dependency_input' in values) {
-                details.push(`Dependency Input: ${values.dependency_input}`);
+                details.push(`Mapped to Dependency Input: ${values.dependency_input}`);
             }
         }
 
@@ -728,38 +866,58 @@ export class CatalogTreeItem extends vscode.TreeItem {
         if (typeof this.value === 'object' && this.value !== null) {
             let description = '';
 
-            // Generic handling for objects with name and label properties
-            const values = this.value as Record<string, unknown>;
-            if ('name' in values && typeof values.name === 'string') {
-                description = values.name;
+            // Show descriptive names for various object types
+            if (this.isDependencyParent()) {
+                const values = this.value as Record<string, unknown>;
+                const name = values.name;
+                if (name) {
+                    description = String(name);
+                }
             }
+            // Check if this is an input mapping object
+            else if (this.isInputMappingParent()) {
+                const values = this.value as Record<string, unknown>;
+                // reference_version defaults to false if not set
+                const referenceVersion = values.reference_version ?? false;
 
-            // Special handling for input mapping objects
-            if (this.isInputMappingParent()) {
-                const referenceVersion = values.reference_version === true;
+                // Format: Values being mapped in description, direction in label
+                let mappingValues = '';
+                let mappingDirection = '';
 
-                // Determine source and destination based on the fields present
-                let sourceValue = '';
-                let destinationValue = '';
-
-                if ('dependency_input' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
-                    destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
-                } else if ('dependency_output' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
-                    destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+                if ('dependency_input' in values && 'version_input' in values) {
+                    const source = referenceVersion ? values.version_input : values.dependency_input;
+                    const target = referenceVersion ? values.dependency_input : values.version_input;
+                    mappingValues = `${source} → ${target}`;
+                    mappingDirection = referenceVersion ? 'version_input → dependency_input ↓' : 'dependency_input → version_input ↑';
+                } else if ('dependency_output' in values && 'version_input' in values) {
+                    const source = values.dependency_output;
+                    const target = values.version_input;
+                    mappingValues = `${source} → ${target}`;
+                    mappingDirection = 'dependency_output → version_input ↑';
                 } else if ('value' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.value);
-                    destinationValue = String(referenceVersion ? values.value : values.version_input);
+                    if ('version_input' in values) {
+                        mappingValues = `${values.value} → ${values.version_input}`;
+                        mappingDirection = 'static value → version_input';
+                    } else if ('dependency_input' in values) {
+                        mappingValues = `${values.value} → ${values.dependency_input}`;
+                        mappingDirection = 'static value → dependency_input';
+                    }
+                } else if ('version_input' in values) {
+                    // Handle case where version_input is the source
+                    if ('dependency_input' in values) {
+                        mappingValues = `${values.version_input} → ${values.dependency_input}`;
+                        mappingDirection = 'version_input → dependency_input ↓';
+                    } else if ('dependency_output' in values) {
+                        mappingValues = `${values.version_input} → ${values.dependency_output}`;
+                        mappingDirection = 'version_input → dependency_output ↓';
+                    }
                 }
 
-                if (sourceValue && destinationValue) {
-                    description = `${sourceValue} → ${destinationValue}`;
-                }
+                // Clean up the mapping values by removing any array indices
+                description = mappingValues.replace(/\[\d+\]/g, '');
+                this.tooltip = this.createTooltip(); // Update tooltip to reflect the mapping details
             }
-
-            // Remove any array indices from the description
-            return description.replace(/\[\d+\]/g, '');
+            // ... existing code for other object types ...
         }
 
         return '';

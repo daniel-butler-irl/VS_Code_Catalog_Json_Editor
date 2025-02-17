@@ -1055,6 +1055,7 @@ export class CatalogService {
             // 7. Create the dependency object
             const newDependency: Dependency = {
                 name: offeringDetails.name,
+                label: offeringDetails.label,  // Add the label property
                 id: offeringDetails.id,
                 version: versionConstraint,
                 flavors: selectedFlavors,
@@ -1282,6 +1283,7 @@ export class CatalogService {
     private async promptForOfferingWithDetails(catalogId: string): Promise<{
         id: string;
         name: string;
+        label?: string;
     } | undefined> {
         const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) { return undefined; }
@@ -1289,16 +1291,17 @@ export class CatalogService {
         const ibmCloudService = new IBMCloudService(apiKey);
         const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
 
-        const result = await PromptService.showQuickPick<{ id: string; name: string; }>({
+        const result = await PromptService.showQuickPick<{ id: string; name: string; label?: string; }>({
             title: 'Select Offering',
             placeholder: 'Choose an offering for this dependency',
             items: offerings.map(offering => ({
-                label: offering.name || offering.id,
-                description: offering.id,
+                label: offering.label || offering.name || offering.id,
+                description: offering.name || offering.id,
                 detail: offering.shortDescription,
                 value: {
                     id: offering.id,
-                    name: offering.name || offering.id
+                    name: offering.name || offering.id,
+                    label: offering.label
                 }
             }))
         });
@@ -1987,8 +1990,8 @@ export class CatalogService {
             const offeringItems = offerings
                 .filter(offering => offering && offering.id) // Filter out invalid offerings
                 .map(offering => ({
-                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.name || offering.id}`,
-                    description: offering.id,
+                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.label || offering.name || offering.id}`,
+                    description: offering.name || offering.id,
                     detail: offering.shortDescription || '',
                     value: offering.id
                 }));
