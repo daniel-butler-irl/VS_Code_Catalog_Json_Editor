@@ -988,7 +988,8 @@ export class IBMCloudService {
                     flavor: {
                         name: flavorName,
                         label: flavor.metadata.label || flavorName
-                    }
+                    },
+                    workingDirectory: flavor.metadata.working_directory || options.working_directory
                 });
 
                 this.logger.info('Successfully imported version for flavor', {
