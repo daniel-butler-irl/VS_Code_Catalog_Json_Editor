@@ -687,6 +687,7 @@ export class PreReleaseService {
     name: string;
     label: string;
     flavors: Array<CatalogFlavor>;
+    extractedFiles: string[];
   }> {
     const tempDir = path.join(os.tmpdir(), `catalog-${Date.now()}`);
     const tempFile = path.join(tempDir, 'release.tar.gz');
@@ -703,8 +704,27 @@ export class PreReleaseService {
       this.logger.info('Downloaded tarball', { fileSize: response.data.length, tempFile });
 
       // Extract and find ibm_catalog.json
-      const catalogJsonPath = await this.findIbmCatalogJson(tempDir, tempFile);
+      const extractedFiles: string[] = [];
+      let catalogJsonPath: string | undefined;
+
+      // Extract the tarball and track extracted files
+      await tar.x({
+        file: tempFile,
+        cwd: tempDir,
+        onentry: (entry: tar.ReadEntry) => {
+          extractedFiles.push(entry.path);
+          if (entry.path.endsWith('ibm_catalog.json')) {
+            catalogJsonPath = path.join(tempDir, entry.path);
+          }
+        }
+      });
+
       if (!catalogJsonPath) {
+        this.logger.error('ibm_catalog.json not found after extraction', {
+          tempDir,
+          filesInTempDir: await fs.promises.readdir(tempDir),
+          extractedFiles
+        }, 'preRelease');
         throw new Error('Could not find ibm_catalog.json in the release tarball');
       }
 
@@ -753,7 +773,8 @@ export class PreReleaseService {
       return {
         name: product.name,
         label: product.label,
-        flavors
+        flavors,
+        extractedFiles
       };
     } catch (error) {
       this.logger.error('Failed to extract catalog details from tarball', {
@@ -808,21 +829,31 @@ export class PreReleaseService {
   /**
    * Determines if a flavor should use stack or terraform format
    * @param flavor The flavor to check
+   * @param extractedFiles List of files extracted from the tarball
    * @returns The correct format_kind
    */
-  private determineFormatKind(flavor: CatalogFlavor): string {
-    // Check working directory for stack_definition.json
-    if (flavor.working_directory && flavor.working_directory.includes('stack_definition.json')) {
-      return 'stack';
+  private determineFormatKind(flavor: CatalogFlavor, extractedFiles: string[]): string {
+    this.logger.debug('Determining format kind for flavor', {
+      flavorName: flavor.name,
+      workingDirectory: flavor.working_directory,
+      existingFormatKind: flavor.format_kind,
+      extractedFiles
+    }, 'preRelease');
+
+    // loop through extracted files to determine format kind
+    // if file ends with flavor.working_directory/stack_definition.json, use stack
+    // otherwise, use terraform
+    for (const file of extractedFiles) {
+      if (file.endsWith(`${flavor.working_directory}/stack_definition.json`)) {
+        this.logger.debug('Detected stack format for flavor', { file }, 'preRelease');
+        return 'stack';
+      }
     }
-    // Check if the working directory contains 'solutions' which typically indicates a stack
-    if (flavor.working_directory && flavor.working_directory.includes('solutions')) {
-      return 'stack';
-    }
-    return flavor.format_kind || 'terraform';
+    this.logger.debug('Detected terraform format for flavor', {}, 'preRelease');
+    return 'terraform';
   }
 
-  private async selectFlavorsToImport(flavors: CatalogFlavor[], catalogVersions: CatalogVersion[], version: string): Promise<CatalogFlavor[]> {
+  private async selectFlavorsToImport(flavors: CatalogFlavor[], catalogVersions: CatalogVersion[], version: string, extractedFiles: string[]): Promise<CatalogFlavor[]> {
     this.logger.debug('Showing flavor selection dialog', {
       totalFlavors: flavors.length,
       flavors: flavors.map(f => ({ name: f.name, label: f.label }))
@@ -837,29 +868,32 @@ export class PreReleaseService {
 
     if (availableFlavors.length === 0) {
       const errorMessage = `All flavors are already imported for version ${version}:\n` +
-        alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+        alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${f.format_kind})`).join('\n');
       throw new Error(errorMessage);
     }
 
-    // Create QuickPick items for available flavors
-    const items = availableFlavors.map(flavor => {
-      const format_kind = this.determineFormatKind(flavor);
+    // Determine format_kind for each flavor once here
+    const flavorsWithFormat = availableFlavors.map(flavor => {
+      const format_kind = this.determineFormatKind(flavor, extractedFiles);
       return {
-        label: `${flavor.label}: ${flavor.name} (${format_kind})`,
-        picked: true,  // All flavors selected by default
-        flavor: {
-          ...flavor,
-          label: flavor.label || flavor.name,  // Ensure label is never undefined
-          working_directory: flavor.working_directory || '.',  // Ensure working_directory is never undefined
-          format_kind  // Use the determined format_kind
-        }
+        ...flavor,
+        label: flavor.label || flavor.name,  // Ensure label is never undefined
+        working_directory: flavor.working_directory || '.',  // Ensure working_directory is never undefined
+        format_kind  // Set determined format_kind
       };
     });
+
+    // Create QuickPick items using pre-determined format_kind
+    const items = flavorsWithFormat.map(flavor => ({
+      label: `${flavor.label}: ${flavor.name} (${flavor.format_kind})`,
+      picked: true,  // All flavors selected by default
+      flavor
+    }));
 
     // Show the selection dialog with information about already imported flavors
     const placeHolder = alreadyImportedFlavors.length > 0
       ? `Already imported flavors for version ${version}:\n${alreadyImportedFlavors.map(f =>
-        `• ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n')}\n\nSelect additional flavors to import:`
+        `• ${f.label}: ${f.name} (${f.format_kind})`).join('\n')}\n\nSelect additional flavors to import:`
       : 'All flavors are selected by default';
 
     const selectedItems = await vscode.window.showQuickPick(items, {
@@ -880,9 +914,9 @@ export class PreReleaseService {
 
     this.logger.debug('Flavors selected', {
       selectedCount: selectedFlavors.length,
-      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label })),
+      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label, format_kind: f.format_kind })),
       alreadyImportedCount: alreadyImportedFlavors.length,
-      alreadyImportedFlavors: alreadyImportedFlavors.map(f => ({ name: f.name, label: f.label }))
+      alreadyImportedFlavors: alreadyImportedFlavors.map(f => ({ name: f.name, label: f.label, format_kind: f.format_kind }))
     }, 'preRelease');
 
     return selectedFlavors;
@@ -996,12 +1030,17 @@ export class PreReleaseService {
           // If no flavors are available, show error and return
           if (availableFlavors.length === 0) {
             const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
-              alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+              alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`).join('\n');
             throw new Error(errorMessage);
           }
 
           // Show flavor selection dialog with only available flavors
-          const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, details.version);
+          const selectedFlavors = await this.selectFlavorsToImport(
+            availableFlavors,
+            catalogDetails.versions,
+            details.version,
+            releaseDetails.extractedFiles
+          );
 
           if (selectedFlavors.length === 0) {
             this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
@@ -1020,10 +1059,10 @@ export class PreReleaseService {
             `GitHub Release Tag: ${tagName}\n` +
             `Catalog Version: ${details.version}\n` +
             `Selected Flavors to Import:\n${selectedFlavors.map(f =>
-              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`
             ).join('\n')}` +
             (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
-              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`
             ).join('\n')}` : '') +
             `\n\nNote: A separate version will be imported for each selected flavor.`;
 
@@ -1396,8 +1435,7 @@ export class PreReleaseService {
       }, 'preRelease');
 
       try {
-        const format_kind = this.determineFormatKind(flavor);
-        // Import the version for this flavor
+        // Use the pre-determined format_kind from the flavor object
         await ibmCloudService.importVersion(
           details.catalogId!,
           catalogDetails.offeringId,
@@ -1407,12 +1445,12 @@ export class PreReleaseService {
             version: details.version,
             repotype: 'git',
             catalogIdentifier: details.catalogId!,
-            target_kinds: ['terraform'],
-            format_kind,  // Use the determined format_kind
+            target_kinds: [flavor.format_kind],  // Use format_kind for target_kinds
+            format_kind: flavor.format_kind,
             product_kind: 'solution',
             flavor: {
               metadata: {
-                name: flavor.name, // Use the original programmatic name without modification
+                name: flavor.name,
                 label: flavor.label || flavor.name,
                 index: flavorsToImport.indexOf(flavor) + 1
               }
@@ -1888,12 +1926,12 @@ export class PreReleaseService {
         // If no flavors are available, show error and return
         if (availableFlavors.length === 0) {
           const errorMessage = `All flavors are already imported for version ${data.version}:\n` +
-            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`).join('\n');
+            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`).join('\n');
           throw new Error(errorMessage);
         }
 
         // Show flavor selection dialog with only available flavors
-        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, data.version);
+        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, data.version, releaseDetails.extractedFiles);
 
         if (selectedFlavors.length === 0) {
           this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
@@ -1912,10 +1950,10 @@ export class PreReleaseService {
           `GitHub Release Tag: ${tagName}\n` +
           `Catalog Version: ${data.version}\n` +
           `Selected Flavors to Import:\n${selectedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+            `  • ${f.label}: ${f.name} (${f.format_kind})`  // Use pre-determined format_kind
           ).join('\n')}` +
           (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${this.determineFormatKind(f)})`
+            `  • ${f.label}: ${f.name} (${f.format_kind})`  // Use existing format_kind
           ).join('\n')}` : '') +
           `\n\nNote: A separate version will be imported for each selected flavor.`;
 
@@ -2229,11 +2267,11 @@ export class PreReleaseService {
    * - git@github.com:owner/repo
    * - ssh://git@github.com/owner/repo.git
    * - ssh://git@github.com/owner/repo
-   * - ssh://git@github.enterprise.com/owner/repo.git
+   * - ssh://git@github.github.com/owner/repo.git
    * HTTPS:
    * - https://github.com/owner/repo.git
    * - https://github.com/owner/repo
-   * - https://github.enterprise.com/owner/repo.git
+   * - https://github.github.com/owner/repo.git
    * @returns Repository owner and name, or undefined if not in a Git repository
    */
   public async getRepositoryInfo(): Promise<{ owner: string; name: string } | undefined> {
@@ -2290,7 +2328,7 @@ export class PreReleaseService {
           standardSsh: /git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/,
           // SSH with protocol: ssh://git@github.com/owner/repo.git
           protocolSsh: /ssh:\/\/git@([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/,
-          // HTTPS format: https://github.com/owner/repo.git
+          // HTTPS format: https?:\/\/github.com/owner/repo.git
           https: /https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/
         };
 

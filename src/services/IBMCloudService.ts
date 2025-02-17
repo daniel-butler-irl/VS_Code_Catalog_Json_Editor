@@ -600,14 +600,42 @@ export class IBMCloudService {
             );
 
             const offering = response.result;
-            const kind = offering.kinds?.find(k =>
-                k.target_kind === kindId ||
-                k.install_kind === kindId ||
-                k.format_kind === kindId
-            );
+            // Find all kinds that match the requested kindId
+            const matchingKinds = offering.kinds?.filter(k => {
+                // Check target_kind first (most common case)
+                if (k.target_kind === kindId) {
+                    return true;
+                }
+                // Then check install_kind
+                if (k.install_kind === kindId) {
+                    return true;
+                }
+                // Finally check format_kind
+                if (k.format_kind === kindId) {
+                    return true;
+                }
+                return false;
+            }) || [];
+
+            this.logger.debug('Found kinds for version lookup', {
+                kindId,
+                foundKinds: matchingKinds.length,
+                kindDetails: matchingKinds.map(k => ({
+                    target_kind: k.target_kind,
+                    install_kind: k.install_kind,
+                    format_kind: k.format_kind,
+                    versionCount: k.versions?.length
+                }))
+            }, 'preRelease');
+
+            // Combine versions from all matching kinds
+            const allVersions = matchingKinds.reduce<OfferingVersion[]>((acc, kind) => {
+                const kindVersions = (kind.versions || []) as OfferingVersion[];
+                return [...acc, ...kindVersions];
+            }, []);
 
             return {
-                versions: (kind?.versions || []) as OfferingVersion[]
+                versions: allVersions
             };
         } catch (error) {
             this.logger.error('Failed to fetch kind versions', {
@@ -945,25 +973,8 @@ export class IBMCloudService {
                     continue;
                 }
 
-                // Determine format_kind based on stack definition existence for this flavor's working directory
-                let formatKind = 'terraform';
-                if (flavor.metadata.working_directory) {
-                    try {
-                        const stackDefinitionPath = path.join(this.workspaceRoot || '', flavor.metadata.working_directory, 'stack_definition.json');
-                        await fs.promises.access(stackDefinitionPath);
-                        formatKind = 'stack';
-                        this.logger.debug('Found stack definition file, using format_kind: stack', {
-                            stackDefinitionPath,
-                            flavorName,
-                            workingDirectory: flavor.metadata.working_directory
-                        }, 'preRelease');
-                    } catch (error) {
-                        this.logger.debug('No stack definition file found, using format_kind: terraform', {
-                            workingDirectory: flavor.metadata.working_directory,
-                            flavorName
-                        }, 'preRelease');
-                    }
-                }
+                // Use the format_kind from options
+                const formatKind = options.format_kind;
 
                 // Log the request we're about to make
                 this.logger.info('Making version import request', {
@@ -971,6 +982,7 @@ export class IBMCloudService {
                     offeringId,
                     version: options.version,
                     formatKind,
+                    targetKinds: ['terraform'],  // Always terraform
                     flavorName,
                     flavorLabel: flavor.metadata.label,
                     workingDirectory: flavor.metadata.working_directory
@@ -982,9 +994,9 @@ export class IBMCloudService {
                     offeringId: offeringId,
                     targetVersion: options.version,
                     zipurl: options.zipurl,
-                    targetKinds: ['terraform'],
-                    formatKind: formatKind,
-                    productKind: 'solution',
+                    targetKinds: ['terraform'],  // Always terraform
+                    formatKind: formatKind,  // Can be 'stack' or 'terraform'
+                    productKind: 'solution',  // Always solution
                     flavor: {
                         name: flavorName,
                         label: flavor.metadata.label || flavorName
