@@ -50,7 +50,9 @@ export class CatalogTreeItem extends vscode.TreeItem {
         catalogId?: string,
         initialStatus: ValidationStatus = ValidationStatus.Unknown
     ) {
-        super(label, collapsibleState);
+        // Remove array indices from all display labels
+        const displayLabel = label.replace(/\[\d+\]/g, '');
+        super(displayLabel, collapsibleState);
 
         this.context = context;
         this.logger = LoggingService.getInstance();
@@ -58,15 +60,15 @@ export class CatalogTreeItem extends vscode.TreeItem {
         this.parent = parent;
         this.catalogId = catalogId;
 
-        // Initialize validation metadata
-        this._validationMetadata = {
-            status: (initialStatus === ValidationStatus.Pending && this.requiresValidation())
-                ? ValidationStatus.Pending
-                : ValidationStatus.Unknown
-        };
+        // Initialize validation metadata with provided status
+        this._validationMetadata = { status: initialStatus };
 
-        // Update display properties based on the type of node
         this.updateInitialDisplay();
+
+        // Queue validation if needed
+        if (this.needsValidation()) {
+            void this.queueForValidation();
+        }
 
         // For dependency nodes, attempt to fetch and display the offering label
         if (typeof value === 'object' && value !== null) {
@@ -83,11 +85,6 @@ export class CatalogTreeItem extends vscode.TreeItem {
                     objValue.name as string
                 );
             }
-        }
-
-        // Queue validation if needed
-        if (this.requiresValidation() && initialStatus === ValidationStatus.Pending) {
-            void this.queueForValidation();
         }
     }
 
@@ -676,35 +673,26 @@ export class CatalogTreeItem extends vscode.TreeItem {
         let destination = '';
         let sourceValue = '';
         let destinationValue = '';
+        let arrow = referenceVersion ? '↓' : '↑';  // Add arrow based on direction
 
         if ('dependency_input' in values) {
             source = referenceVersion ? 'version_input' : 'dependency_input';
             destination = referenceVersion ? 'dependency_input' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
             destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         } else if ('dependency_output' in values) {
             source = referenceVersion ? 'version_input' : 'dependency_output';
             destination = referenceVersion ? 'dependency_output' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
             destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         } else if ('value' in values) {
             source = referenceVersion ? 'version_input' : 'value';
             destination = referenceVersion ? 'value' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.value);
             destinationValue = String(referenceVersion ? values.value : values.version_input);
-        }
-
-        // Include the actual values in the description for collapsed view
-        if (source && destination) {
-            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
-            const cleanValue = (value: string) => {
-                const match = value.match(/\((.*?)\)/);
-                return match ? match[1] : value;
-            };
-
-            const cleanSourceValue = cleanValue(sourceValue);
-            const cleanDestValue = cleanValue(destinationValue);
-            return `${cleanSourceValue} → ${cleanDestValue}`;
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         }
 
         return '';
@@ -877,47 +865,73 @@ export class CatalogTreeItem extends vscode.TreeItem {
             // Check if this is an input mapping object
             else if (this.isInputMappingParent()) {
                 const values = this.value as Record<string, unknown>;
-                // reference_version defaults to false if not set
-                const referenceVersion = values.reference_version ?? false;
-
-                // Format: Values being mapped in description, direction in label
-                let mappingValues = '';
-                let mappingDirection = '';
+                const referenceVersion = values.reference_version === true;
 
                 if ('dependency_input' in values && 'version_input' in values) {
                     const source = referenceVersion ? values.version_input : values.dependency_input;
                     const target = referenceVersion ? values.dependency_input : values.version_input;
-                    mappingValues = `${source} → ${target}`;
-                    mappingDirection = referenceVersion ? 'version_input → dependency_input ↓' : 'dependency_input → version_input ↑';
+                    description = `${source} → ${target}`;
                 } else if ('dependency_output' in values && 'version_input' in values) {
-                    const source = values.dependency_output;
-                    const target = values.version_input;
-                    mappingValues = `${source} → ${target}`;
-                    mappingDirection = 'dependency_output → version_input ↑';
+                    description = `${values.dependency_output} → ${values.version_input}`;
                 } else if ('value' in values) {
                     if ('version_input' in values) {
-                        mappingValues = `${values.value} → ${values.version_input}`;
-                        mappingDirection = 'static value → version_input';
+                        description = `${values.value} → ${values.version_input}`;
                     } else if ('dependency_input' in values) {
-                        mappingValues = `${values.value} → ${values.dependency_input}`;
-                        mappingDirection = 'static value → dependency_input';
-                    }
-                } else if ('version_input' in values) {
-                    // Handle case where version_input is the source
-                    if ('dependency_input' in values) {
-                        mappingValues = `${values.version_input} → ${values.dependency_input}`;
-                        mappingDirection = 'version_input → dependency_input ↓';
-                    } else if ('dependency_output' in values) {
-                        mappingValues = `${values.version_input} → ${values.dependency_output}`;
-                        mappingDirection = 'version_input → dependency_output ↓';
+                        description = `${values.value} → ${values.dependency_input}`;
                     }
                 }
-
-                // Clean up the mapping values by removing any array indices
-                description = mappingValues.replace(/\[\d+\]/g, '');
-                this.tooltip = this.createTooltip(); // Update tooltip to reflect the mapping details
             }
-            // ... existing code for other object types ...
+            // Check if this is an input mapping field
+            else if (this.isInputMappingField()) {
+                // Return the actual value for the field
+                return String(this.value);
+            }
+            // Check if this is an IAM permission object
+            else if (this.isIamPermissionParent()) {
+                const values = this.value as Record<string, unknown>;
+                const serviceName = values.service_name;
+                if (serviceName) {
+                    description = String(serviceName);
+                }
+            }
+            // Check if this is a configuration object
+            else if (this.isConfigurationParent()) {
+                const values = this.value as Record<string, unknown>;
+                const key = values.key;
+                if (key) {
+                    description = String(key);
+                }
+            }
+            // Check if this is a feature object
+            else if (this.isFeatureParent()) {
+                const values = this.value as Record<string, unknown>;
+                const title = values.title;
+                if (title) {
+                    description = String(title);
+                }
+            }
+            // Check if this is a product object
+            else if (this.isProductParent()) {
+                const values = this.value as Record<string, unknown>;
+                const label = values.label;
+                if (label) {
+                    description = String(label);
+                }
+            }
+            // Check if this is a flavor object
+            else if (this.isFlavorParent()) {
+                const values = this.value as Record<string, unknown>;
+                const label = values.label;
+                if (label) {
+                    description = String(label);
+                }
+            }
+            else {
+                description = `Object{${Object.keys(this.value).length}}`;
+            }
+
+            // Remove any array indices from the description
+            return description.replace(/\[\d+\]/g, '');
         }
 
         return '';
@@ -1104,7 +1118,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
      */
     public isInputMappingField(): boolean {
         return Boolean(
-            this.jsonPath.match(/\.input_mapping\[\d+\]\.(dependency_(?:input|output)|version_input)$/)
+            this.parent?.jsonPath.match(/\.input_mapping\[\d+\]$/)
         );
     }
 

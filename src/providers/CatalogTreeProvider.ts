@@ -197,7 +197,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             // Create array header item if this is not a child of an array
             if (parentItem?.contextValue !== 'array') {
                 const propertyName = parentPath.split('.').pop()?.replace(/\[\d+\]/g, '') || '';
-                const arrayLabel = `${propertyName} Array [${value.length}]`;
+                const arrayLabel = `${propertyName} Array[${value.length}]`;
                 const arrayItem = new CatalogTreeItem(
                     this.context,
                     arrayLabel,
@@ -216,8 +216,35 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 const path = this.buildJsonPath(parentPath, index.toString());
                 const schemaMetadata = this.getSchemaMetadata(path);
 
-                // For array items, if the item is a string, use it directly as the label
-                const itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item, index);
+                let itemLabel = '';
+                let description = '';
+
+                // Special handling for input_mapping items
+                if (parentPath.endsWith('input_mapping')) {
+                    const mapping = item as Record<string, unknown>;
+                    const referenceVersion = mapping.reference_version === true;
+
+                    if ('dependency_input' in mapping && 'version_input' in mapping) {
+                        itemLabel = referenceVersion ?
+                            'version_input → dependency_input' :
+                            'dependency_input → version_input';
+                        description = `${mapping.version_input} → ${mapping.dependency_input}`;
+                    } else if ('dependency_output' in mapping && 'version_input' in mapping) {
+                        itemLabel = 'dependency_output → version_input';
+                        description = `${mapping.dependency_output} → ${mapping.version_input}`;
+                    } else if ('value' in mapping) {
+                        if ('version_input' in mapping) {
+                            itemLabel = 'value → version_input';
+                            description = `${mapping.value} → ${mapping.version_input}`;
+                        } else if ('dependency_input' in mapping) {
+                            itemLabel = 'value → dependency_input';
+                            description = `${mapping.value} → ${mapping.dependency_input}`;
+                        }
+                    }
+                } else {
+                    // For non-input_mapping items, use standard label logic
+                    itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item, index);
+                }
 
                 const treeItem = new CatalogTreeItem(
                     this.context,
@@ -227,8 +254,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                     this.getCollapsibleState(item, this.expandedNodes.has(path)),
                     this.getContextValue(item),
                     schemaMetadata,
-                    parentItem?.contextValue === 'array' ? parentItem : items[0] // Link to array header if exists
+                    parentItem?.contextValue === 'array' ? parentItem : items[0]
                 );
+
+                if (description) {
+                    treeItem.description = description;
+                }
 
                 items.push(treeItem);
             });
@@ -243,17 +274,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
             const catalogId = isIdNode && parentItem?.catalogId ? parentItem.catalogId : undefined;
 
-            // Set initial validation status based on authentication state
+            // Set initial validation status
             const initialStatus = (key === 'catalog_id' || isIdNode)
-                ? ValidationStatus.Unknown  // Always start as Unknown
+                ? ValidationStatus.Pending
                 : ValidationStatus.Unknown;
-
-            // Remove array indices from the key display
-            const displayKey = key.replace(/\[\d+\]/g, '');
 
             const item = new CatalogTreeItem(
                 this.context,
-                displayKey,
+                key,
                 val,
                 path,
                 this.getCollapsibleState(val, this.expandedNodes.has(path)),
@@ -264,8 +292,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 initialStatus
             );
 
-            // Queue validation only if we're authenticated and the item needs validation
-            if ((key === 'catalog_id' || isIdNode) && this.catalogService.hasFullFunctionality()) {
+            if (initialStatus === ValidationStatus.Pending) {
                 void this.queueValidation(item);
             }
 
@@ -276,90 +303,17 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     }
 
     /**
-     * Gets a display label for an object in an array
+     * Gets a descriptive label for an object in an array
      */
-    private getObjectLabel(item: unknown, index: number): string {
-        if (typeof item !== 'object' || item === null) {
-            return `${index + 1}`;
-        }
-
-        const obj = item as Record<string, unknown>;
-        this.logger.debug('Resolving object label - Full object details', {
-            index,
-            availableProperties: Object.keys(obj),
-            hasLabel: 'label' in obj,
-            hasName: 'name' in obj,
-            hasId: 'id' in obj,
-            isDependency: 'catalog_id' in obj && 'id' in obj,
-            objectValue: obj,
-            labelValue: obj.label,
-            nameValue: obj.name,
-            idValue: obj.id,
-            storedLabel: typeof obj.label === 'string' ? obj.label : undefined
-        });
-
-        // For dependency nodes, check if we have a cached label
-        if ('id' in obj && typeof obj.id === 'string' && 'catalog_id' in obj) {
-            this.logger.debug('Processing dependency node label', {
-                id: obj.id,
-                catalogId: obj.catalog_id,
-                hasLabel: 'label' in obj,
-                labelValue: obj.label,
-                hasName: 'name' in obj,
-                nameValue: obj.name,
-                storedLabel: typeof obj.label === 'string' ? obj.label : undefined
-            });
-
-            if ('label' in obj && typeof obj.label === 'string') {
-                this.logger.debug('Using cached label for dependency', {
-                    label: obj.label,
-                    id: obj.id,
-                    fullObject: obj
-                });
-                return obj.label;
-            }
-            if ('name' in obj && typeof obj.name === 'string') {
-                this.logger.debug('Using name for dependency (no label found)', {
-                    name: obj.name,
-                    id: obj.id,
-                    fullObject: obj
-                });
-                return obj.name;
-            }
-            this.logger.debug('No label or name found for dependency, falling back to id', {
-                id: obj.id,
-                fullObject: obj
-            });
-            return obj.name as string || obj.id as string; // Fallback to name, then ID
-        }
-
-        // Always prioritize label over name for display
-        if ('label' in obj && typeof obj.label === 'string') {
-            return obj.label;
-        }
-
-        // Fallback to name if no label
-        if ('name' in obj && typeof obj.name === 'string') {
-            return obj.name;
-        }
-
-        // Try other identifier properties
-        const labelProperties = ['title', 'id'];
-        for (const prop of labelProperties) {
-            if (prop in obj && typeof obj[prop] === 'string') {
-                return obj[prop] as string;
+    private getObjectLabel(obj: Record<string, unknown>, index: number): string {
+        // Try to find a descriptive field
+        const descriptiveFields = ['name', 'label', 'title', 'key', 'id'];
+        for (const field of descriptiveFields) {
+            if (field in obj && typeof obj[field] === 'string') {
+                return obj[field] as string;
             }
         }
-
-        // If no meaningful label is found, use the first string property
-        for (const [key, value] of Object.entries(obj)) {
-            if (typeof value === 'string') {
-                return value;
-            }
-        }
-
-        // If no string property is found, return empty string (the object icon will still show)
-        return '';
+        return `Item ${index + 1}`;
     }
 
     /**
