@@ -95,9 +95,11 @@ export class CatalogTreeItem extends vscode.TreeItem {
         if (typeof this.value === 'object' && this.value !== null) {
             const objValue = this.value as Record<string, unknown>;
 
-            // For objects with name property, show it in description
-            if ('name' in objValue && typeof objValue.name === 'string') {
-                this.description = objValue.name;
+            // For objects with label and name properties
+            if ('label' in objValue && typeof objValue.label === 'string') {
+                if ('name' in objValue && typeof objValue.name === 'string') {
+                    this.description = objValue.name;
+                }
             }
         }
 
@@ -852,86 +854,44 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
 
         if (typeof this.value === 'object' && this.value !== null) {
-            let description = '';
+            const values = this.value as Record<string, unknown>;
 
-            // Show descriptive names for various object types
-            if (this.isDependencyParent()) {
-                const values = this.value as Record<string, unknown>;
-                const name = values.name;
-                if (name) {
-                    description = String(name);
+            // For objects with label and name properties
+            if ('label' in values && typeof values.label === 'string') {
+                if ('name' in values && typeof values.name === 'string') {
+                    return values.name;
                 }
             }
-            // Check if this is an input mapping object
+            // Special handling for input mapping
             else if (this.isInputMappingParent()) {
-                const values = this.value as Record<string, unknown>;
                 const referenceVersion = values.reference_version === true;
 
                 if ('dependency_input' in values && 'version_input' in values) {
                     const source = referenceVersion ? values.version_input : values.dependency_input;
                     const target = referenceVersion ? values.dependency_input : values.version_input;
-                    description = `${source} → ${target}`;
+                    return `${source} → ${target}`;
                 } else if ('dependency_output' in values && 'version_input' in values) {
-                    description = `${values.dependency_output} → ${values.version_input}`;
+                    return `${values.dependency_output} → ${values.version_input}`;
                 } else if ('value' in values) {
                     if ('version_input' in values) {
-                        description = `${values.value} → ${values.version_input}`;
+                        return `${values.value} → ${values.version_input}`;
                     } else if ('dependency_input' in values) {
-                        description = `${values.value} → ${values.dependency_input}`;
+                        return `${values.value} → ${values.dependency_input}`;
                     }
                 }
             }
-            // Check if this is an input mapping field
+            // For input mapping fields
             else if (this.isInputMappingField()) {
-                // Return the actual value for the field
                 return String(this.value);
             }
-            // Check if this is an IAM permission object
-            else if (this.isIamPermissionParent()) {
-                const values = this.value as Record<string, unknown>;
-                const serviceName = values.service_name;
-                if (serviceName) {
-                    description = String(serviceName);
-                }
+            // For string values (like dependency flavors)
+            else if (typeof this.value === 'string') {
+                return this.value;
             }
-            // Check if this is a configuration object
-            else if (this.isConfigurationParent()) {
-                const values = this.value as Record<string, unknown>;
-                const key = values.key;
-                if (key) {
-                    description = String(key);
-                }
-            }
-            // Check if this is a feature object
-            else if (this.isFeatureParent()) {
-                const values = this.value as Record<string, unknown>;
-                const title = values.title;
-                if (title) {
-                    description = String(title);
-                }
-            }
-            // Check if this is a product object
-            else if (this.isProductParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
-            // Check if this is a flavor object
-            else if (this.isFlavorParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
+            // Default object display
             else {
-                description = `Object{${Object.keys(this.value).length}}`;
+                return `Object{${Object.keys(this.value).length}}`;
             }
-
-            // Remove any array indices from the description
-            return description.replace(/\[\d+\]/g, '');
         }
 
         return '';

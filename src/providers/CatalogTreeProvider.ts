@@ -241,9 +241,27 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                             description = `${mapping.value} → ${mapping.dependency_input}`;
                         }
                     }
-                } else {
-                    // For non-input_mapping items, use standard label logic
-                    itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item, index);
+                }
+                // Handle array items with label and name fields
+                else if (typeof item === 'object' && item !== null) {
+                    const objItem = item as Record<string, unknown>;
+                    if ('label' in objItem && typeof objItem.label === 'string') {
+                        itemLabel = objItem.label;
+                        if ('name' in objItem && typeof objItem.name === 'string') {
+                            description = objItem.name;
+                        }
+                    } else {
+                        itemLabel = this.getObjectLabel(objItem, index);
+                    }
+                }
+                // Handle string items (like dependency flavors)
+                else if (typeof item === 'string') {
+                    itemLabel = item;
+                    description = item;
+                }
+                else {
+                    // For non-special items, use standard label logic
+                    itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item as Record<string, unknown>, index);
                 }
 
                 const treeItem = new CatalogTreeItem(
