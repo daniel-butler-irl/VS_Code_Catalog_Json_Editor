@@ -174,6 +174,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             })
         );
 
+        // Register delete element command
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ibmCatalog.deleteElement', async (node: CatalogTreeItem) => {
+                try {
+                    await catalogService.deleteElement(node);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : 'Unknown error';
+                    void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
+                }
+            })
+        );
+
         logger.info('IBM Catalog Extension activated successfully');
         statusBarItem.text = '$(check) IBM Catalog Extension Ready';
         setTimeout(() => updateStatusBar(statusBarItem, context), 2000);

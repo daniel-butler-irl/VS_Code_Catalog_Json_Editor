@@ -2944,4 +2944,129 @@ export class CatalogService {
             return false;
         }
     }
+
+    /**
+     * Parses a JSON path into its component parts.
+     * @param jsonPath The JSON path to parse.
+     * @returns Array of path segments (strings for property names, numbers for array indices).
+     */
+    private parseJsonPath(jsonPath: string): (string | number)[] {
+        const segments: (string | number)[] = [];
+        const regex = /\[(\d+)\]|\.([^.\[\]]+)/g;
+        let match;
+        while ((match = regex.exec(jsonPath)) !== null) {
+            if (match[1] !== undefined) {
+                segments.push(parseInt(match[1], 10));
+            } else if (match[2] !== undefined) {
+                segments.push(match[2]);
+            }
+        }
+        return segments;
+    }
+
+    /**
+     * Gets a value from the catalog JSON data at the specified path.
+     * @param jsonPath The JSON path to get the value from.
+     * @returns The value at the specified path.
+     */
+    private getJsonValue(data: Record<string, unknown>, jsonPath: string): unknown {
+        const pathParts = this.parseJsonPath(jsonPath);
+        let current: any = data;
+
+        for (const part of pathParts) {
+            if (current === undefined || current === null) {
+                return undefined;
+            }
+            current = current[part];
+        }
+
+        return current;
+    }
+
+    /**
+     * Deletes an element from the catalog JSON data.
+     * @param node The catalog tree item to delete.
+     */
+    public async deleteElement(node: CatalogTreeItem): Promise<void> {
+        await this.ensureInitialized();
+
+        try {
+            this.logger.debug('Delete requested for element', {
+                label: node.label,
+                path: node.jsonPath,
+                value: node.value
+            });
+
+            // Check if the element has children
+            const hasChildren = typeof node.value === 'object' &&
+                node.value !== null &&
+                Object.keys(node.value).length > 0;
+
+            // Prepare confirmation message based on element type and children
+            let confirmMessage = `Are you sure you want to delete "${node.label}"?`;
+            let detail = '';
+
+            if (hasChildren) {
+                if (Array.isArray(node.value)) {
+                    detail = `This will delete the array and all ${node.value.length} of its elements.`;
+                } else {
+                    const childCount = Object.keys(node.value as object).length;
+                    detail = `This will delete the object and all ${childCount} of its properties.`;
+                }
+                confirmMessage = `${confirmMessage}\n\n${detail}`;
+            }
+
+            // Show confirmation dialog
+            const confirmation = await vscode.window.showWarningMessage(
+                confirmMessage,
+                { modal: true, detail },
+                'Delete',
+                'Cancel'
+            );
+
+            if (confirmation !== 'Delete') {
+                this.logger.debug('Delete operation cancelled by user');
+                return;
+            }
+
+            // Get the parent path and index for array items
+            const parentPath = node.jsonPath.replace(/\[\d+\]$/, '');
+            const arrayMatch = node.jsonPath.match(/\[(\d+)\]$/);
+            const isArrayItem = Boolean(arrayMatch);
+            const arrayIndex = isArrayItem && arrayMatch ? Number(arrayMatch[1]) : -1;
+
+            // Get current data
+            const data = await this.getCatalogData() as Record<string, unknown>;
+            const parentValue = this.getJsonValue(data, parentPath);
+
+            if (isArrayItem && Array.isArray(parentValue)) {
+                // Handle array item deletion
+                const newArray = [...parentValue];
+                newArray.splice(arrayIndex, 1);
+                await this.updateJsonValue(parentPath, newArray);
+            } else {
+                // Handle object property deletion
+                const propertyName = node.jsonPath.split('.').pop();
+                if (!propertyName) {
+                    throw new Error('Cannot determine property name for deletion');
+                }
+
+                const parentObject = this.getJsonValue(data, parentPath.replace(/\.\w+$/, '')) as Record<string, unknown>;
+                if (!parentObject || typeof parentObject !== 'object') {
+                    throw new Error('Cannot find parent object for deletion');
+                }
+
+                const updatedObject = { ...parentObject };
+                delete updatedObject[propertyName];
+                await this.updateJsonValue(parentPath.replace(/\.\w+$/, ''), updatedObject);
+            }
+
+            void vscode.window.showInformationMessage(`Successfully deleted ${node.label}`);
+        } catch (error) {
+            this.logger.error('Failed to delete element', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
+            throw error;
+        }
+    }
 }
