@@ -596,13 +596,8 @@
      * @param {import('../src/types/catalog/prerelease').CatalogVersion[]} catalogVersions
      */
     function renderCatalogDetails(details, proposedVersion, proposedPostfix, githubReleases, catalogVersions) {
-        console.debug('Rendering catalog details', {
-            proposedVersion,
-            proposedPostfix,
-            githubReleases,
-            catalogVersions,
-            details
-        });
+        const nextVersionDiv = document.getElementById('nextVersion');
+        if (!nextVersionDiv) return;
 
         // Check if version is already released in catalog or GitHub
         const isVersionReleasedInCatalog = catalogVersions?.some(v => v.version === proposedVersion);
@@ -610,232 +605,80 @@
             const version = r.tag.replace(/^v/, '').split('-')[0];
             return version === proposedVersion;
         });
-        const isVersionReleased = isVersionReleasedInCatalog || isVersionReleasedInGithub;
 
-        // Get released flavors from catalog
-        const releasedFlavors = catalogVersions
+        // Get all flavors for the proposed version
+        const versionFlavors = catalogVersions
             ?.filter(v => v.version === proposedVersion)
-            .map(v => {
-                console.debug('Version info for flavor display:', v);
-                // Access the flavor metadata for name and label
-                const flavorName = v.flavor?.name || 'Unknown';
-                const flavorLabel = v.flavor?.label || flavorName;
-                console.debug('Extracted flavor info:', { flavorName, flavorLabel });
-                return `[${flavorName} (${flavorLabel})]`;
-            })
-            .join(' ');
+            .map(v => v.flavor)
+            .filter(f => f); // Filter out undefined/null flavors
 
-        // Update the next version preview in the pre-release section
-        const nextVersionDiv = document.getElementById('nextVersion');
-        if (nextVersionDiv) {
-            nextVersionDiv.innerHTML = `
-                <div class="next-version-info">
-                    <div class="version-row">
-                        <span class="version-label">GitHub:</span>
-                        <span class="version-value ${isVersionReleasedInGithub ? 'released' : ''}">${proposedVersion && proposedPostfix ? `v${proposedVersion}-${proposedPostfix}` : 'Not set'}${isVersionReleasedInGithub ? ' (Released)' : ''}</span>
+        nextVersionDiv.innerHTML = `
+            <div class="next-version-info">
+                <div class="version-row">
+                    <div class="version-label">GitHub:</div>
+                    <div class="version-content">
+                        <span class="version-number">v${proposedVersion}-${proposedPostfix}</span>
+                        ${isVersionReleasedInGithub ? '<span class="release-status">(Released)</span>' : ''}
                     </div>
-                    <div class="version-row">
-                        <span class="version-label">Catalog:</span>
-                        <span class="version-value ${isVersionReleasedInCatalog ? 'released' : ''}">${proposedVersion || 'Not set'}${isVersionReleasedInCatalog ? ' (Released)' : ''}</span>
-                    </div>
-                    ${isVersionReleasedInCatalog ? `
-                        <div class="version-row">
-                            <span class="version-label"></span>
-                            <span class="version-value released-flavors">Released in: ${releasedFlavors}</span>
-                        </div>
-                    ` : ''}
-                </div>`;
-        }
-
-        // Render catalog details only
-        let content = `
-            <div class="catalog-info">
-                <div class="info-row">
-                    <span class="info-label">Name:</span>
-                    <span class="info-value">${details.name || 'Not set'}</span>
                 </div>
-                <div class="info-row">
-                    <span class="info-label">Offering ID:</span>
-                    <span class="info-value">${details.offeringId || 'Not set'}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Label:</span>
-                    <span class="info-value">${details.label || 'Not set'}</span>
-                </div>
-            </div>`;
-
-        if (catalogDetailsDiv) {
-            catalogDetailsDiv.innerHTML = content;
-        }
-
-        // Update the versions table at the bottom
-        const versionsTable = document.querySelector('.versions-table tbody');
-        if (!versionsTable) {
-            return;
-        }
-
-        if (!details.versions || details.versions.length === 0) {
-            versionsTable.innerHTML = `
-                <tr>
-                    <td colspan="2" class="empty-state">No version history available</td>
-                </tr>`;
-            return;
-        }
-
-        // Create a map of GitHub tags to catalog versions
-        const versionMap = new Map();
-        details.versions.forEach(version => {
-            if (version.githubTag) {
-                if (!versionMap.has(version.githubTag)) {
-                    versionMap.set(version.githubTag, []);
-                }
-                versionMap.get(version.githubTag).push(version);
-            }
-        });
-
-        // Create a set of processed GitHub tags and versions
-        const processedTags = new Set();
-        const processedVersions = new Set();
-        let versionCount = 0;
-        let versionsHtml = '';
-
-        // First, process GitHub releases (limited to 5)
-        githubReleases.slice(0, 5).forEach(release => {
-            if (versionCount >= 5) return;
-
-            const tag = 'tag_name' in release ? release.tag_name : release.tag;
-            const catalogEntries = versionMap.get(tag) || [];
-            processedTags.add(tag);
-
-            // Add the base version to processed versions
-            const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '').split('-')[0];
-            const postfix = typeof tag === 'string' && tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
-            processedVersions.add(baseVersion);
-
-            const repoUrlElement = document.querySelector('#github-repo .git-repo-info');
-            const repoUrl = repoUrlElement?.getAttribute('href');
-            console.debug('GitHub URL construction:', { repoUrl, repoUrlElement, tag });
-            const githubUrl = repoUrl && repoUrl !== 'Not a Git repository' ? 
-                `${repoUrl}/releases/tag/${tag}` : undefined;
-            console.debug('Constructed GitHub URL:', { githubUrl });
-            const releaseDate = 'created_at' in release && typeof release.created_at === 'string' ? 
-                new Date(release.created_at).toLocaleDateString() : '';
-
-            versionsHtml += `
-                <tr>
-                    <td class="github-version">
-                        <div class="version-tag ${githubUrl ? 'clickable' : ''}" data-release-url="${githubUrl || ''}">
-                            <div class="version-number">${baseVersion}</div>
-                            ${postfix ? `<div class="version-flavor">${postfix}</div>` : ''}
-                            ${releaseDate ? `<div class="release-date">${releaseDate}</div>` : ''}
-                        </div>
-                    </td>
-                    <td class="catalog-version">
-                        ${catalogEntries.length > 0 ? 
-                            catalogEntries.map(entry => {
-                                console.debug('Catalog entry for display:', entry);
-                                // Access the flavor name and label directly
-                                const flavorName = entry.flavor?.name || 'Unknown';
-                                const flavorLabel = entry.flavor?.label || flavorName;
-                                console.debug('Extracted catalog entry flavor info:', { flavorName, flavorLabel });
-                                return `
-                                    <div class="version-tag" title="${entry.tgz_url || ''}">
-                                        <div class="version-number">${entry.version}</div>
-                                        <div class="version-flavor">${flavorName} (${flavorLabel})</div>
+                <div class="version-row">
+                    <div class="version-label">Catalog:</div>
+                    <div class="version-content">
+                        <span class="version-number">${proposedVersion}</span>
+                        ${versionFlavors && versionFlavors.length > 0 ? `
+                            <div class="flavors-section">
+                                <div class="flavors-label">Flavors:</div>
+                                ${versionFlavors.map(flavor => `
+                                    <div class="flavor-item">
+                                        <span>${flavor.label || flavor.name}</span>
+                                        <span class="flavor-released">(Released)</span>
                                     </div>
-                                `;
-                            }).join('') :
-                            `<div class="version-tag not-published">
-                                <div class="version-number">Not published</div>
-                            </div>`
-                        }
-                    </td>
-                </tr>`;
-            versionCount++;
-        });
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
 
-        // Then, process any catalog versions that don't have a matching GitHub release
-        if (versionCount < 5) {
-            const remainingVersions = Array.from(new Set(
-                details.versions
-                    .filter(v => !processedVersions.has(v.version))
-                    .map(v => v.version)
-            )).sort((a, b) => semverCompare(b, a)).slice(0, 5 - versionCount);
-
-            for (const version of remainingVersions) {
-                if (versionCount >= 5) break;
-
-                const versionsForDisplay = details.versions.filter(v => 
-                    v.version === version && (!v.githubTag || !processedTags.has(v.githubTag))
-                );
-
-                if (versionsForDisplay.length > 0) {
-                    versionsHtml += `
-                        <tr>
-                            <td class="github-version">
-                                <div class="version-tag not-published">
-                                    <div class="version-number">Not published</div>
-                                </div>
-                            </td>
-                            <td class="catalog-version">
-                                ${versionsForDisplay.map(version => {
-                                    console.debug('Version for display:', version);
-                                    // Access the flavor name and label directly
-                                    const flavorName = version.flavor?.name || 'Unknown';
-                                    const flavorLabel = version.flavor?.label || flavorName;
-                                    console.debug('Extracted version flavor info:', { flavorName, flavorLabel });
-                                    return `
-                                        <div class="version-tag" title="${version.tgz_url || ''}">
-                                            <div class="version-number">${version.version}</div>
-                                            <div class="version-flavor">${flavorName} (${flavorLabel})</div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </td>
-                        </tr>`;
-                    versionCount++;
-                }
+        // Render catalog info
+        const catalogDetailsDiv = document.getElementById('catalog-details');
+        if (catalogDetailsDiv) {
+            if (!details.versions || details.versions.length === 0) {
+                catalogDetailsDiv.innerHTML = '<p class="empty-state">No version history available</p>';
+                return;
             }
+
+            if (details.offeringNotFound) {
+                catalogDetailsDiv.innerHTML = `
+                    <div class="catalog-info error">
+                        <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
+                        <p>Publishing to this catalog will not be available.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            catalogDetailsDiv.innerHTML = `
+                <div class="catalog-info">
+                    <div class="info-row">
+                        <span class="info-label">Name:</span>
+                        <span class="info-value">${details.name || 'Not set'}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Offering ID:</span>
+                        <span class="info-value">${details.offeringId || 'Not set'}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Label:</span>
+                        <span class="info-value">${details.label || 'Not set'}</span>
+                    </div>
+                </div>
+            `;
         }
 
-        versionsTable.innerHTML = versionsHtml || `
-            <tr>
-                <td colspan="2" class="empty-state">No version history available</td>
-            </tr>`;
-
-        // Add click handlers for GitHub release links
-        const releaseLinks = document.querySelectorAll('.version-tag.clickable');
-        console.debug('Setting up click handlers:', { 
-            clickableElements: releaseLinks.length,
-            elements: Array.from(releaseLinks).map(el => ({
-                url: el.getAttribute('data-release-url'),
-                classes: el.className
-            }))
-        });
-        releaseLinks.forEach(link => {
-            link.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const element = /** @type {HTMLElement} */ (event.currentTarget);
-                const url = element.getAttribute('data-release-url');
-                console.debug('Release link clicked:', { 
-                    url, 
-                    element,
-                    classes: element.className,
-                    attributes: Array.from(element.attributes).map(attr => `${attr.name}=${attr.value}`)
-                });
-                if (url) {
-                    console.debug('Opening URL:', url);
-                    // Use vscode.env.openExternal command to open URLs
-                    vscode.postMessage({
-                        command: 'openUrl',
-                        url: url
-                    });
-                } else {
-                    console.debug('No URL found for clicked element');
-                }
-            });
-        });
+        // Render the versions table
+        renderVersionsTable(details, githubReleases);
     }
 
     // Add semver comparison function
@@ -1418,5 +1261,108 @@
             versionInput.value = message.version;
             updateTagPreview();
         }
+    }
+
+    // Add version table rendering
+    function renderVersionsTable(details, githubReleases) {
+        const versionsTable = document.querySelector('.versions-table tbody');
+        if (!versionsTable) return;
+
+        if (!details.versions || details.versions.length === 0) {
+            versionsTable.innerHTML = `
+                <tr>
+                    <td colspan="2" class="empty-state">No version history available</td>
+                </tr>`;
+            return;
+        }
+
+        // Create a map of GitHub tags to catalog versions
+        const versionMap = new Map();
+        details.versions.forEach(version => {
+            if (version.githubTag) {
+                if (!versionMap.has(version.githubTag)) {
+                    versionMap.set(version.githubTag, []);
+                }
+                versionMap.get(version.githubTag).push(version);
+            }
+        });
+
+        // Create a set of processed GitHub tags and versions
+        const processedTags = new Set();
+        const processedVersions = new Set();
+        let versionCount = 0;
+        let versionsHtml = '';
+
+        // First, process GitHub releases (limited to 5)
+        githubReleases.slice(0, 5).forEach(release => {
+            if (versionCount >= 5) return;
+
+            const tag = 'tag_name' in release ? release.tag_name : release.tag;
+            const catalogEntries = versionMap.get(tag) || [];
+            processedTags.add(tag);
+
+            // Add the base version to processed versions
+            const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '').split('-')[0];
+            const postfix = typeof tag === 'string' && tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
+            processedVersions.add(baseVersion);
+
+            const repoUrlElement = document.querySelector('#github-repo .git-repo-info');
+            const repoUrl = repoUrlElement?.getAttribute('href');
+            const githubUrl = repoUrl && repoUrl !== 'Not a Git repository' ? 
+                `${repoUrl}/releases/tag/${tag}` : undefined;
+            const releaseDate = 'created_at' in release && typeof release.created_at === 'string' ? 
+                new Date(release.created_at).toLocaleDateString() : '';
+
+            versionsHtml += `
+                <tr>
+                    <td class="github-version">
+                        <div class="version-tag ${githubUrl ? 'clickable' : ''}" data-release-url="${githubUrl || ''}">
+                            <div class="version-number">${baseVersion}</div>
+                            ${postfix ? `<div class="version-flavor">${postfix}</div>` : ''}
+                            ${releaseDate ? `<div class="release-date">${releaseDate}</div>` : ''}
+                        </div>
+                    </td>
+                    <td class="catalog-version">
+                        ${catalogEntries.length > 0 ? 
+                            catalogEntries.map(entry => {
+                                const flavorName = entry.flavor?.name || 'Unknown';
+                                const flavorLabel = entry.flavor?.label || flavorName;
+                                return `
+                                    <div class="version-tag" title="${entry.tgz_url || ''}">
+                                        <div class="version-number">${entry.version}</div>
+                                        <div class="version-flavor">${flavorLabel} (${flavorName})</div>
+                                    </div>
+                                `;
+                            }).join('') :
+                            `<div class="version-tag not-published">
+                                <div class="version-number">Not published</div>
+                            </div>`
+                        }
+                    </td>
+                </tr>`;
+            versionCount++;
+        });
+
+        versionsTable.innerHTML = versionsHtml || `
+            <tr>
+                <td colspan="2" class="empty-state">No version history available</td>
+            </tr>`;
+
+        // Add click handlers for GitHub release links
+        const releaseLinks = document.querySelectorAll('.version-tag.clickable');
+        releaseLinks.forEach(link => {
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const element = /** @type {HTMLElement} */ (event.currentTarget);
+                const url = element.getAttribute('data-release-url');
+                if (url) {
+                    vscode.postMessage({
+                        command: 'openUrl',
+                        url: url
+                    });
+                }
+            });
+        });
     }
 })(); 

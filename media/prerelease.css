@@ -234,24 +234,55 @@ button:hover {
 }
 
 .catalog-info {
-    padding: 12px;
+    padding: 16px;
     border: 1px solid var(--vscode-panel-border);
-    border-radius: var(--border-radius);
+    border-radius: 4px;
     background-color: var(--vscode-editor-background);
-    font-size: 0.9em;
-    transition: border-color var(--transition-speed) ease;
+    margin-bottom: 16px;
+}
+
+.catalog-info.error {
+    border-color: var(--vscode-inputValidation-errorBorder);
+    background-color: var(--vscode-inputValidation-errorBackground);
+}
+
+.catalog-info .warning-message {
+    color: var(--vscode-inputValidation-errorForeground);
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.info-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.info-row:last-child {
     margin-bottom: 0;
 }
 
-.catalog-info:hover {
-    border-color: var(--vscode-focusBorder);
+.info-label {
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    min-width: 100px;
 }
 
-.catalog-info p {
-    margin: 6px 0;
+.info-value {
     color: var(--vscode-foreground);
-    opacity: 0.9;
-    line-height: 1.4;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    padding: 16px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
 }
 
 .versions {
@@ -319,13 +350,6 @@ button:hover {
 
 .primary-button:hover {
     background-color: var(--vscode-button-primaryHoverBackground);
-}
-
-.empty-state {
-    text-align: center;
-    padding: 1rem;
-    color: var(--vscode-descriptionForeground);
-    font-style: italic;
 }
 
 .loading {
@@ -400,12 +424,6 @@ button:hover {
     }
 }
 
-.catalog-info.error {
-    border-color: var(--vscode-inputValidation-errorBorder);
-    background-color: var(--vscode-inputValidation-errorBackground);
-    padding: 16px;
-}
-
 .warning-message {
     color: var(--vscode-inputValidation-errorForeground);
     font-weight: 600;
@@ -447,92 +465,67 @@ select:disabled {
 }
 
 .versions-table {
-    margin-top: 0;
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
     border: 1px solid var(--vscode-panel-border);
-    border-radius: var(--border-radius);
-    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
     overflow: hidden;
 }
 
-.versions-table table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9em;
-}
-
-.versions-table th {
-    text-align: left;
-    padding: 8px 12px;
-    background-color: var(--vscode-editor-background);
-    border-bottom: 1px solid var(--vscode-panel-border);
-    font-weight: 600;
-    color: var(--vscode-foreground);
-}
-
 .versions-table td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--vscode-panel-border);
+    padding: 8px;
     vertical-align: top;
+    border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .versions-table tr:last-child td {
     border-bottom: none;
 }
 
-.versions-table tr:hover {
-    background-color: var(--vscode-list-hoverBackground);
+.versions-table .github-version,
+.versions-table .catalog-version {
+    width: 50%;
 }
 
 .versions-table .version-tag {
-    display: inline-flex;
-    flex-direction: column;
-    padding: 6px 10px;
-    border-radius: 3px;
-    background-color: var(--vscode-badge-background);
-    color: var(--vscode-badge-foreground);
-    font-family: var(--vscode-editor-font-family);
-    font-size: 0.9em;
-    margin-right: 8px;
-    min-width: 80px;
+    padding: 8px;
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    margin-bottom: 8px;
 }
 
-.versions-table .version-tag:last-child {
-    margin-right: 0;
+.versions-table .version-tag.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.versions-table .version-tag.clickable:hover {
+    background-color: var(--vscode-button-hoverBackground);
 }
 
 .versions-table .version-number {
-    font-weight: 600;
-    margin-bottom: 4px;
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    font-family: var(--vscode-editor-font-family);
+    font-weight: bold;
 }
 
 .versions-table .version-flavor {
-    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.versions-table .release-date {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.8em;
+    margin-top: 4px;
     opacity: 0.8;
 }
 
-.versions-table .github-version .version-tag {
-    background-color: var(--vscode-badge-background);
-    color: var(--vscode-badge-foreground);
-    min-width: 120px;
-}
-
-.versions-table .catalog-version {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.versions-table .version-tag.not-published {
-    background-color: var(--vscode-inputValidation-warningBackground);
-    border: 1px solid var(--vscode-inputValidation-warningBorder);
-    color: var(--vscode-inputValidation-warningForeground);
-    font-style: italic;
-}
-
-.versions-table .empty-state {
-    padding: 16px;
-    text-align: center;
-    color: var(--vscode-descriptionForeground);
+.versions-table .not-published {
+    opacity: 0.7;
     font-style: italic;
 }
 
@@ -639,25 +632,92 @@ button.catalog-button:hover:not(:disabled) {
 .next-version-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
+    padding: 0 0 0 16px;
+    margin-bottom: 16px;
 }
 
 .version-row {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
-    gap: 8px;
+    gap: 4px;
+    margin-bottom: 8px;
 }
 
 .version-label {
-    min-width: 60px;
-    color: var(--vscode-foreground);
-    opacity: 0.8;
-    font-weight: 500;
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    font-size: 13px;
 }
 
-.version-value {
-    color: var(--vscode-foreground);
+.version-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 16px;
+}
+
+.version-number {
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
     font-family: var(--vscode-editor-font-family);
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.release-status {
+    color: var(--vscode-gitDecoration-addedResourceForeground);
+    display: inline-block;
+    font-size: 13px;
+}
+
+.flavors-section {
+    margin-top: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
+.flavors-label {
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.flavor-item {
+    display: flex;
+    align-items: center;
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    font-family: var(--vscode-editor-font-family);
+    padding: 4px 0;
+    margin-left: 16px;
+    position: relative;
+    font-size: 13px;
+}
+
+.flavor-item::before {
+    content: "•";
+    position: absolute;
+    left: -8px;
+    color: var(--vscode-textLink-foreground);
+}
+
+.flavor-released {
+    color: var(--vscode-gitDecoration-addedResourceForeground);
+    margin-left: 8px;
+    font-size: 13px;
+}
+
+/* Style for the (Released) text */
+.version-value:has(+ .flavor-item)::after {
+    content: "(Released)";
+    color: var(--vscode-gitDecoration-untrackedResourceForeground);
+    margin-left: 8px;
 }
 
 .version-value.released {
@@ -667,9 +727,11 @@ button.catalog-button:hover:not(:disabled) {
 .released-flavors {
     font-size: 0.9em;
     color: var(--vscode-descriptionForeground);
-    font-style: italic;
+    font-style: normal;
     margin-left: 0;
-    padding-left: 60px;
+    padding-left: 0;
+    white-space: pre-line;
+    text-align: left;
 }
 
 .catalog-quick-info {
