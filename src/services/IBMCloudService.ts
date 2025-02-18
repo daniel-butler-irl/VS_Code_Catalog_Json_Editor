@@ -21,6 +21,41 @@ import { execAsync } from '../utils/execAsync';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// Type definitions for version mapping
+interface GitHubRelease {
+    tag_name: string;
+    tarball_url: string;
+    created_at: string;
+}
+
+interface CatalogVersion {
+    version: string;
+    flavor: {
+        name: string;
+        label: string;
+    };
+    tgz_url: string;
+    githubTag?: string;
+}
+
+interface VersionMappingSummary {
+    version: string;
+    githubRelease: {
+        tag: string;
+        tarball_url: string;
+    } | null;
+    catalogVersions: {
+        version: string;
+        flavor: {
+            name: string;
+            label: string;
+        };
+        tgz_url: string;
+        githubTag?: string;
+    }[] | null;
+    allFlavorsPublished?: boolean;
+}
+
 // Update type references in the code
 type OfferingVersion = IBMCloudOfferingVersion;
 
@@ -380,32 +415,103 @@ export class IBMCloudService {
         if (skipCache) {
             this.logger.debug('Skipping cache, clearing existing data', {
                 catalogId,
-                cacheKey
+                cacheKey,
+                skipCache
             }, 'preRelease');
             this.cacheService.delete(cacheKey);
-        }
+            // Also clear version caches when skipping cache
+            const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*');
+            this.cacheService.delete(versionCacheKey);
+            this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
 
-        // Try to get from cache first if not skipping cache
-        if (!skipCache) {
-            const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
-            this.logger.debug('Cache check result', {
-                catalogId,
-                cacheKey,
-                hasCachedData: !!cached,
-                cachedItemCount: cached?.length,
-                cachedVersions: cached?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
-            }, 'preRelease');
-
-            if (cached) {
-                this.logger.debug('Returning cached offerings', {
+            // Force fetch fresh data
+            try {
+                this.logger.debug('Fetching fresh offerings from API', {
                     catalogId,
-                    count: cached.length,
-                    versions: cached.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+                    timestamp: new Date().toISOString(),
+                    skipCache
                 }, 'preRelease');
-                return cached;
+
+                const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
+                    this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
+                );
+
+                this.logger.debug('Raw API response', {
+                    catalogId,
+                    status: offerings.status,
+                    resourceCount: offerings.result.resources?.length,
+                    rawVersions: offerings.result.resources?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
+                    skipCache
+                }, 'preRelease');
+
+                const resources = offerings.result.resources ?? [];
+                const offeringsPage: OfferingItem[] = resources.map((offering) => ({
+                    id: offering.id!,
+                    name: offering.name!,
+                    label: offering.label,
+                    shortDescription: offering.short_description,
+                    kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
+                    created: offering.created,
+                    updated: offering.updated,
+                    metadata: offering.metadata,
+                }));
+
+                // Log the mapped data before caching
+                this.logger.debug('Mapped offerings before caching', {
+                    catalogId,
+                    count: offeringsPage.length,
+                    versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
+                    skipCache
+                }, 'preRelease');
+
+                // Cache the offerings result
+                this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
+
+                this.logger.debug('Cached fresh offerings data', {
+                    catalogId,
+                    count: offeringsPage.length,
+                    timestamp: new Date().toISOString(),
+                    skipCache
+                }, 'preRelease');
+
+                return offeringsPage;
+            } catch (error) {
+                this.logger.error('Failed to get offerings', {
+                    error,
+                    catalogId,
+                    skipCache,
+                    errorDetails: error instanceof Error ? {
+                        message: error.message,
+                        stack: error.stack,
+                        name: error.name
+                    } : 'Unknown error type'
+                }, 'preRelease');
+                throw error;
             }
         }
 
+        // Try to get from cache if not skipping cache
+        const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
+        this.logger.debug('Cache check result', {
+            catalogId,
+            cacheKey,
+            hasCachedData: !!cached,
+            cachedItemCount: cached?.length,
+            cachedVersions: cached?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
+            skipCache
+        }, 'preRelease');
+
+        if (cached) {
+            this.logger.debug('Returning cached offerings', {
+                catalogId,
+                count: cached.length,
+                versions: cached.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
+                skipCache
+            }, 'preRelease');
+            return cached;
+        }
+
+        // If no cache, fetch fresh data
         try {
             this.logger.debug('Fetching fresh offerings from API', {
                 catalogId,
@@ -442,14 +548,14 @@ export class IBMCloudService {
                 versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
             }, 'preRelease');
 
-            // Cache the result with TTL
+            // Cache the offerings result
             this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
 
-            this.logger.debug('Successfully fetched and cached offerings', {
+            this.logger.debug('Cached fresh offerings data', {
                 catalogId,
                 count: offeringsPage.length,
                 timestamp: new Date().toISOString(),
-                versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
+                skipCache
             }, 'preRelease');
 
             return offeringsPage;
@@ -567,28 +673,55 @@ export class IBMCloudService {
      * @param catalogId The catalog identifier
      * @param offeringId The offering identifier
      * @param kindId The kind identifier
+     * @param skipCache If true, skip cache and force a fresh fetch
      * @returns Promise with the versions for the kind
      */
     public async getOfferingKindVersions(
         catalogId: string,
         offeringId: string,
-        kindId: string
+        kindId: string,
+        skipCache: boolean = false
     ): Promise<{ versions: OfferingVersion[] }> {
-        // Check cache first
-        const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
-        const cached = this.cacheService.get<{ versions: OfferingVersion[] }>(cacheKey);
-        if (cached) {
-            this.logger.debug('Using cached versions', {
+        // Update the cache key to be offering-specific
+        const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, offeringId);
+
+        this.logger.debug('Getting offering kind versions', {
+            catalogId,
+            offeringId,
+            kindId,
+            skipCache,
+            timestamp: new Date().toISOString()
+        }, 'preRelease');
+
+        if (skipCache) {
+            this.logger.debug('Skipping cache for versions', {
                 catalogId,
                 offeringId,
                 kindId,
-                versionCount: cached.versions.length
+                skipCache
             }, 'preRelease');
-            return cached;
+            this.cacheService.delete(versionCacheKey);
+            // Also clear the offerings cache to ensure we get fresh data
+            const offeringsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
+            this.cacheService.delete(offeringsCacheKey);
+            this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
+        } else {
+            const cached = this.cacheService.get<{ versions: OfferingVersion[] }>(versionCacheKey);
+            if (cached) {
+                this.logger.debug('Using cached versions', {
+                    catalogId,
+                    offeringId,
+                    kindId,
+                    versionCount: cached.versions.length,
+                    skipCache,
+                    versions: cached.versions.map(v => v.version)
+                }, 'preRelease');
+                return cached;
+            }
         }
 
         try {
-            const response = await this.withProgress(`Fetching versions`, () =>
+            const response = await this.withProgress(`Fetching versions for ${offeringId}`, () =>
                 this.catalogManagement.getOffering({
                     catalogIdentifier: catalogId,
                     offeringId: offeringId
@@ -615,6 +748,7 @@ export class IBMCloudService {
 
             this.logger.debug('Found kinds for version lookup', {
                 kindId,
+                offeringId,
                 foundKinds: matchingKinds.length,
                 kindDetails: matchingKinds.map(k => ({
                     target_kind: k.target_kind,
@@ -632,8 +766,8 @@ export class IBMCloudService {
 
             const result = { versions: allVersions };
 
-            // Cache the result with a 5-minute TTL
-            this.cacheService.set(cacheKey, result, {
+            // Cache the result with a 5-minute TTL, now using offering-specific key
+            this.cacheService.set(versionCacheKey, result, {
                 ttlSeconds: 300, // 5 minutes
                 persistent: false,
                 storagePrefix: 'offering_versions'
@@ -643,7 +777,8 @@ export class IBMCloudService {
                 catalogId,
                 offeringId,
                 kindId,
-                versionCount: allVersions.length
+                versionCount: allVersions.length,
+                freshFetch: skipCache
             }, 'preRelease');
 
             return result;
@@ -894,7 +1029,7 @@ export class IBMCloudService {
         },
     })
     public async getOfferingDetails(catalogId: string): Promise<CatalogResponse> {
-        const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
+        const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*');
         this.logger.debug(`Fetching offering details for catalog ID: ${catalogId}`);
 
         const cachedValue = this.cacheService.get<CatalogResponse>(cacheKey);
@@ -955,6 +1090,47 @@ export class IBMCloudService {
             return ibmError.message;
         }
         return 'An unknown error occurred';
+    }
+
+    private clearCacheDebounced = throttle(
+        async (catalogId: string) => {
+            this.logger.debug('Starting debounced cache clear operation', {
+                catalogId,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+
+            const cacheKeys = [
+                DynamicCacheKeys.OFFERINGS(catalogId),
+                DynamicCacheKeys.CATALOG_OFFERINGS(catalogId),
+                DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*'),
+                DynamicCacheKeys.OFFERING_VALIDATION(catalogId, '*'),
+                `offerings:${catalogId}` // Clear the deduplication cache key
+            ];
+
+            for (const key of cacheKeys) {
+                this.logger.debug('Clearing cache key', {
+                    catalogId,
+                    key
+                }, 'preRelease');
+                this.cacheService.delete(key);
+            }
+
+            this.logger.info('Cleared all offering-related caches', {
+                catalogId,
+                clearedKeys: cacheKeys,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+        },
+        1000, // 1 second debounce
+        { leading: true, trailing: false }
+    );
+
+    /**
+     * Clears the offering cache for a specific catalog
+     * @param catalogId The catalog ID to clear cache for
+     */
+    public async clearOfferingCache(catalogId: string): Promise<void> {
+        await this.clearCacheDebounced(catalogId);
     }
 
     /**
@@ -1053,34 +1229,94 @@ export class IBMCloudService {
                 await this.delay(1000);
             }
 
-            // Clear relevant caches after successful import
-            await this.clearOfferingCache(catalogId);
+            // Clear specific caches first
+            const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, offeringId);
+            const catalogOfferingsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
 
-            // Clear version and offering details cache
-            const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
+            // Clear all relevant caches
             this.cacheService.delete(versionCacheKey);
-            this.logger.debug('Cleared version and offering details cache after import', {
+            this.cacheService.delete(catalogOfferingsCacheKey);
+            this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
+
+            this.logger.debug('Cleared specific caches after import', {
                 catalogId,
                 offeringId,
-                version: options.version
+                version: options.version,
+                clearedCaches: [
+                    'version cache',
+                    'offerings cache',
+                    'deduplication cache'
+                ]
             }, 'preRelease');
 
-            // Clear catalog offerings cache
-            const catalogOfferingsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
+            // Force fetch fresh offerings data first
+            const offerings = await this.getOfferingsForCatalog(catalogId, true);
+            const offering = offerings.find(o => o.id === offeringId);
+
+            if (!offering) {
+                throw new Error(`Offering ${offeringId} not found after import`);
+            }
+
+            // Get fresh version data directly, bypassing cache
+            const freshVersionData = await this.getOfferingKindVersions(
+                catalogId,
+                offeringId,
+                'terraform',
+                true // Force skip cache
+            );
+
+            if (freshVersionData.versions.length) {
+                this.logger.debug('Fetched fresh version data after import', {
+                    catalogId,
+                    offeringId,
+                    versionCount: freshVersionData.versions.length,
+                    latestVersion: freshVersionData.versions[0]?.version,
+                    allVersions: freshVersionData.versions.map(v => v.version),
+                    timestamp: new Date().toISOString()
+                }, 'preRelease');
+            } else {
+                this.logger.warn('No versions found after import', {
+                    catalogId,
+                    offeringId,
+                    version: options.version,
+                    timestamp: new Date().toISOString()
+                }, 'preRelease');
+            }
+
+            // Add a small delay to ensure all API updates have propagated
+            await this.delay(2000);
+
+            // Clear caches one more time to ensure fresh data
+            await this.clearOfferingCache(catalogId);
+            this.cacheService.delete(versionCacheKey);
             this.cacheService.delete(catalogOfferingsCacheKey);
+            this.cacheService.delete(`offerings:${catalogId}`);
 
-            // Force a fresh fetch to ensure we have the latest data
-            await this.getOfferingsForCatalog(catalogId, true);
+            // Force one final fetch to ensure we have the latest data
+            const finalOfferings = await this.getOfferingsForCatalog(catalogId, true);
+            const finalOffering = finalOfferings.find(o => o.id === offeringId);
 
-            this.logger.info('Successfully imported all flavors and cleared caches', {
+            if (!finalOffering) {
+                throw new Error(`Offering ${offeringId} not found after final refresh`);
+            }
+
+            const finalVersionData = await this.getOfferingKindVersions(
+                catalogId,
+                offeringId,
+                'terraform',
+                true
+            );
+
+            this.logger.info('Successfully imported all flavors and refreshed data', {
                 catalogId,
                 offeringId,
                 version: options.version,
                 flavorCount: flavors.length,
-                clearedCaches: [
-                    'version and offering details cache',
-                    'catalog offerings cache'
-                ]
+                finalVersionCount: finalVersionData.versions.length,
+                refreshedData: [
+                    'offerings and versions'
+                ],
+                timestamp: new Date().toISOString()
             }, 'preRelease');
 
         } catch (error) {
@@ -1108,36 +1344,170 @@ export class IBMCloudService {
     }
 
     /**
-     * Clears the offering cache for a specific catalog
-     * @param catalogId The catalog ID to clear cache for
+     * Compares two semantic version strings.
+     * @param versionA First version string
+     * @param versionB Second version string
+     * @returns -1 if versionA < versionB, 0 if equal, 1 if versionA > versionB
      */
-    public async clearOfferingCache(catalogId: string): Promise<void> {
-        this.logger.debug('Starting cache clear operation', {
+    private compareSemVer(versionA: string, versionB: string): number {
+        const partsA = versionA.split('.').map(Number);
+        const partsB = versionB.split('.').map(Number);
+
+        for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+            const a = partsA[i] || 0;
+            const b = partsB[i] || 0;
+            if (a !== b) {
+                return a - b;
+            }
+        }
+        return 0;
+    }
+
+    private getVersionMappingSummary(
+        catalogId: string,
+        offeringId: string,
+        kindType: string,
+        githubReleases: GitHubRelease[],
+        catalogVersions: CatalogVersion[]
+    ): VersionMappingSummary[] {
+        // Sort GitHub releases by creation date (newest first)
+        const sortedGithubReleases = [...githubReleases].sort((a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+
+        // Sort catalog versions by semver (newest first)
+        const sortedCatalogVersions = [...catalogVersions].sort((a, b) =>
+            -this.compareSemVer(a.version, b.version)
+        );
+
+        // Get unique versions from catalog with their flavors
+        const versionMap = new Map<string, Set<string>>();
+        sortedCatalogVersions.forEach(v => {
+            if (!versionMap.has(v.version)) {
+                versionMap.set(v.version, new Set());
+            }
+            versionMap.get(v.version)?.add(v.flavor.name);
+        });
+
+        // Convert to array and sort by version
+        const uniqueCatalogVersions = Array.from(versionMap.entries())
+            .sort(([versionA], [versionB]) => -this.compareSemVer(versionA, versionB));
+
+        this.logger.debug('Unique catalog versions with flavors', {
             catalogId,
-            timestamp: new Date().toISOString()
+            offeringId,
+            versions: uniqueCatalogVersions.map(([version, flavors]) => ({
+                version,
+                flavorCount: flavors.size,
+                flavors: Array.from(flavors)
+            }))
         }, 'preRelease');
 
-        // Clear all offering-related caches
-        const cacheKeys = [
-            DynamicCacheKeys.OFFERINGS(catalogId),
-            DynamicCacheKeys.CATALOG_OFFERINGS(catalogId),
-            DynamicCacheKeys.OFFERING_DETAILS(catalogId),
-            DynamicCacheKeys.OFFERING_VALIDATION(catalogId, '*'),
-            `offerings:${catalogId}` // Clear the deduplication cache key
-        ];
+        const mappings: VersionMappingSummary[] = [];
 
-        for (const key of cacheKeys) {
-            this.logger.debug('Clearing cache key', {
-                catalogId,
-                key
-            }, 'preRelease');
-            this.cacheService.delete(key);
+        // Add the latest GitHub release first (if any)
+        if (sortedGithubReleases.length > 0) {
+            const latestGitHub = sortedGithubReleases[0];
+            const version = latestGitHub.tag_name.replace(/^v/, '').split('-')[0];
+
+            // Find any matching catalog versions
+            const matchingCatalogVersions = sortedCatalogVersions
+                .filter(v => v.version === version)
+                .map(v => ({
+                    version: v.version,
+                    flavor: v.flavor,
+                    tgz_url: v.tgz_url,
+                    githubTag: v.githubTag
+                }));
+
+            mappings.push({
+                version,
+                githubRelease: {
+                    tag: latestGitHub.tag_name,
+                    tarball_url: latestGitHub.tarball_url
+                },
+                catalogVersions: matchingCatalogVersions.length > 0 ? matchingCatalogVersions : null
+            });
         }
 
-        this.logger.info('Cleared all offering-related caches', {
+        // Add up to 4 latest catalog versions that aren't already included
+        for (const [version, flavors] of uniqueCatalogVersions) {
+            // Skip if this version is already in mappings
+            if (mappings.some(m => m.version === version)) {
+                continue;
+            }
+
+            // Get all catalog entries for this version
+            const catalogEntries = sortedCatalogVersions
+                .filter(v => v.version === version)
+                .map(v => ({
+                    version: v.version,
+                    flavor: v.flavor,
+                    tgz_url: v.tgz_url,
+                    githubTag: v.githubTag
+                }));
+
+            // Find matching GitHub release (if any)
+            const githubRelease = sortedGithubReleases.find(r => {
+                const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
+                return releaseVersion === version || r.tag_name === `v${version}`;
+            });
+
+            mappings.push({
+                version,
+                githubRelease: githubRelease ? {
+                    tag: githubRelease.tag_name,
+                    tarball_url: githubRelease.tarball_url
+                } : null,
+                catalogVersions: catalogEntries
+            });
+
+            // Stop after we have 5 total mappings
+            if (mappings.length >= 5) {
+                break;
+            }
+        }
+
+        // Log the final mapping summary
+        this.logger.debug('Final version mapping summary', {
             catalogId,
-            clearedKeys: cacheKeys,
-            timestamp: new Date().toISOString()
+            offeringId,
+            kindType,
+            totalMappings: mappings.length,
+            mappedVersions: mappings.map(v => ({
+                version: v.version,
+                hasGithubRelease: !!v.githubRelease,
+                githubTag: v.githubRelease?.tag,
+                catalogVersionCount: v.catalogVersions?.length || 0,
+                catalogFlavors: v.catalogVersions?.map(cv => cv.flavor.label)
+            }))
         }, 'preRelease');
+
+        // Add information about whether all flavors are published
+        const latestVersion = uniqueCatalogVersions[0];
+        if (latestVersion) {
+            const [version, flavors] = latestVersion;
+            const allFlavorsPublished = sortedCatalogVersions
+                .filter(v => v.version === version)
+                .every(v => flavors.has(v.flavor.name));
+
+            this.logger.debug('Latest version flavor status', {
+                version,
+                totalFlavors: flavors.size,
+                publishedFlavors: sortedCatalogVersions
+                    .filter(v => v.version === version)
+                    .map(v => v.flavor.name),
+                allFlavorsPublished
+            }, 'preRelease');
+
+            // Add this information to the mappings
+            mappings.forEach(m => {
+                if (m.version === version) {
+                    m.allFlavorsPublished = allFlavorsPublished;
+                }
+            });
+        }
+
+        return mappings;
     }
 }

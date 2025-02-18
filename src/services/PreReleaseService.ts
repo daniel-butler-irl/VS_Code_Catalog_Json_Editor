@@ -1437,6 +1437,7 @@ export class PreReleaseService {
     // Clear caches and force refresh of offerings
     await ibmCloudService.clearOfferingCache(details.catalogId!);
     await ibmCloudService.getOfferingsForCatalog(details.catalogId!, true);
+    
     this.logger.debug('Cleared offering cache and refreshed offerings', {
       catalogId: details.catalogId
     }, 'preRelease');

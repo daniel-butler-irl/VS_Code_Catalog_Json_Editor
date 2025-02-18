@@ -139,8 +139,8 @@ export const DynamicCacheKeys = {
     OFFERING_VALIDATION: (catalogId: string, offeringId: string) =>
         `${CacheKeys.OFFERING_VALIDATION}:${catalogId}:${offeringId}`,
 
-    OFFERING_DETAILS: (catalogId: string) =>
-        `${CacheKeys.OFFERING_DETAILS}:${catalogId}`,
+    OFFERING_DETAILS: (catalogId: string, offeringId: string) =>
+        `${CacheKeys.OFFERING_DETAILS}:${catalogId}:${offeringId}`,
 
     CATALOG_VALIDATION: (catalogId: string) =>
         `${CacheKeys.CATALOG_VALIDATION}:${catalogId}`,
