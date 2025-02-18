@@ -27,38 +27,21 @@ type OfferingVersion = IBMCloudOfferingVersion;
 interface ImportVersionOptions {
     zipurl: string;
     targetVersion: string;
-    repotype: string;
-    catalogIdentifier: string;
-    includeConfig?: boolean;
-    isVSI?: boolean;
-    tags?: string[];
-    keywords?: string[];
-    name?: string;
-    label?: string;
-    install_kind?: string;
-    target_kinds: string[];
-    format_kind: string;
-    product_kind: string;
-    product_kind_label?: string;
-    sha?: string;
     version: string;
+    catalogIdentifier: string;
     flavor: {
         metadata: {
             name: string;
             label: string;
-            index: number;
-            working_directory?: string;
+            install_type?: 'extension' | 'fullstack';
         }
     } | Array<{
         metadata: {
             name: string;
             label: string;
-            index: number;
-            working_directory?: string;
+            install_type?: 'extension' | 'fullstack';
         }
     }>;
-    working_directory: string;
-    install_type?: 'extension' | 'fullstack';
 }
 
 /**
@@ -521,8 +504,8 @@ export class IBMCloudService {
                 ? {
                     name: version.flavor.name,
                     label: version.flavor.label,
-                    label_i18n: version.flavor.label_i18n,
-                    index: version.flavor.index,
+                    description: version.flavor.description,
+                    install_type: version.flavor.install_type,
                 }
                 : undefined,
             created: version.created,
@@ -591,8 +574,21 @@ export class IBMCloudService {
         offeringId: string,
         kindId: string
     ): Promise<{ versions: OfferingVersion[] }> {
+        // Check cache first
+        const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
+        const cached = this.cacheService.get<{ versions: OfferingVersion[] }>(cacheKey);
+        if (cached) {
+            this.logger.debug('Using cached versions', {
+                catalogId,
+                offeringId,
+                kindId,
+                versionCount: cached.versions.length
+            }, 'preRelease');
+            return cached;
+        }
+
         try {
-            const response = await this.withProgress(`Fetching versions for kind ${kindId}`, () =>
+            const response = await this.withProgress(`Fetching versions`, () =>
                 this.catalogManagement.getOffering({
                     catalogIdentifier: catalogId,
                     offeringId: offeringId
@@ -634,9 +630,23 @@ export class IBMCloudService {
                 return [...acc, ...kindVersions];
             }, []);
 
-            return {
-                versions: allVersions
-            };
+            const result = { versions: allVersions };
+
+            // Cache the result with a 5-minute TTL
+            this.cacheService.set(cacheKey, result, {
+                ttlSeconds: 300, // 5 minutes
+                persistent: false,
+                storagePrefix: 'offering_versions'
+            });
+
+            this.logger.debug('Cached versions with 5-minute TTL', {
+                catalogId,
+                offeringId,
+                kindId,
+                versionCount: allVersions.length
+            }, 'preRelease');
+
+            return result;
         } catch (error) {
             this.logger.error('Failed to fetch kind versions', {
                 catalogId,
@@ -845,9 +855,9 @@ export class IBMCloudService {
                     if (version.flavor?.name === flavorName) {
                         flavorDetails = {
                             name: version.flavor.name,
-                            label: version.flavor.label || version.flavor.name,
-                            label_i18n: version.flavor.label_i18n,
-                            index: version.flavor.index ?? 0,
+                            label: version.flavor.label,
+                            description: version.flavor.description,
+                            install_type: version.flavor.install_type,
                         };
                         break;
                     }
@@ -968,49 +978,76 @@ export class IBMCloudService {
             // Import each flavor
             for (const flavor of flavors) {
                 const flavorName = flavor.metadata.name;
+                const flavorLabel = flavor.metadata.label;
+                const flavorInstallType = flavor.metadata.install_type || 'fullstack';
+
                 if (!flavorName) {
                     this.logger.warn('Skipping flavor with no name', { flavor }, 'preRelease');
                     continue;
                 }
-
-                // Use the format_kind from options
-                const formatKind = options.format_kind;
 
                 // Log the request we're about to make
                 this.logger.info('Making version import request', {
                     catalogId,
                     offeringId,
                     version: options.version,
-                    formatKind,
-                    targetKinds: ['terraform'],  // Always terraform
                     flavorName,
-                    flavorLabel: flavor.metadata.label,
-                    workingDirectory: flavor.metadata.working_directory
+                    flavorLabel,
+                    flavorInstallType,
+                    withInstallType: false
                 }, 'preRelease');
 
-                // Use the SDK to make the request
-                const response = await this.catalogManagement.importOfferingVersion({
-                    catalogIdentifier: catalogId,
-                    offeringId: offeringId,
-                    targetVersion: options.version,
-                    zipurl: options.zipurl,
-                    targetKinds: ['terraform'],  // Always terraform
-                    formatKind: formatKind,  // Can be 'stack' or 'terraform'
-                    productKind: 'solution',  // Always solution
-                    flavor: {
-                        name: flavorName,
-                        label: flavor.metadata.label || flavorName
-                    },
-                    workingDirectory: flavor.metadata.working_directory || options.working_directory
-                });
+                try {
+                    // First attempt without installType
+                    const response = await this.catalogManagement.importOfferingVersion({
+                        catalogIdentifier: catalogId,
+                        offeringId: offeringId,
+                        targetVersion: options.version,
+                        zipurl: options.zipurl,
+                        flavor: {
+                            name: flavorName,
+                            label: flavorLabel
+                        },
+                    });
 
-                this.logger.info('Successfully imported version for flavor', {
-                    catalogId,
-                    offeringId,
-                    version: options.version,
-                    flavorName,
-                    status: response.status
-                }, 'preRelease');
+                    this.logger.info('Successfully imported version for flavor without installType', {
+                        catalogId,
+                        offeringId,
+                        version: options.version,
+                        flavorName,
+                        status: response.status
+                    }, 'preRelease');
+                } catch (importError) {
+                    this.logger.warn('Import failed without installType, retrying with installType', {
+                        catalogId,
+                        offeringId,
+                        version: options.version,
+                        flavorName,
+                        error: this.formatError(importError)
+                    }, 'preRelease');
+
+                    // Second attempt with installType
+                    const response = await this.catalogManagement.importOfferingVersion({
+                        catalogIdentifier: catalogId,
+                        offeringId: offeringId,
+                        targetVersion: options.version,
+                        zipurl: options.zipurl,
+                        installType: flavorInstallType,
+                        flavor: {
+                            name: flavorName,
+                            label: flavorLabel
+                        },
+                    });
+
+                    this.logger.info('Successfully imported version for flavor with installType', {
+                        catalogId,
+                        offeringId,
+                        version: options.version,
+                        flavorName,
+                        status: response.status,
+                        installType: flavorInstallType
+                    }, 'preRelease');
+                }
 
                 // Add a small delay between flavor imports to prevent race conditions
                 await this.delay(1000);
@@ -1018,12 +1055,19 @@ export class IBMCloudService {
 
             // Clear relevant caches after successful import
             await this.clearOfferingCache(catalogId);
-            const cacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
-            this.cacheService.delete(cacheKey);
 
-            // Also clear version-related caches
-            const versionsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
-            this.cacheService.delete(versionsCacheKey);
+            // Clear version and offering details cache
+            const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId);
+            this.cacheService.delete(versionCacheKey);
+            this.logger.debug('Cleared version and offering details cache after import', {
+                catalogId,
+                offeringId,
+                version: options.version
+            }, 'preRelease');
+
+            // Clear catalog offerings cache
+            const catalogOfferingsCacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
+            this.cacheService.delete(catalogOfferingsCacheKey);
 
             // Force a fresh fetch to ensure we have the latest data
             await this.getOfferingsForCatalog(catalogId, true);
@@ -1032,7 +1076,11 @@ export class IBMCloudService {
                 catalogId,
                 offeringId,
                 version: options.version,
-                flavorCount: flavors.length
+                flavorCount: flavors.length,
+                clearedCaches: [
+                    'version and offering details cache',
+                    'catalog offerings cache'
+                ]
             }, 'preRelease');
 
         } catch (error) {

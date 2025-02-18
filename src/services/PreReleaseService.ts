@@ -23,8 +23,7 @@ import { OfferingVersion as IBMCloudOfferingVersion } from '../types/ibmCloud';
 interface CatalogFlavor {
   name: string;
   label: string;
-  working_directory: string;
-  format_kind: string;
+  install_type?: 'extension' | 'fullstack';
   selected?: boolean;
 }
 
@@ -45,15 +44,18 @@ interface VersionMappingSummary {
     tag: string;
     tarball_url: string;
   } | null;
-  catalogVersions: {
-    version: string;
-    flavor: {
-      name: string;
-      label: string;
-    };
-    tgz_url: string;
-    githubTag?: string;
-  }[] | null;
+  catalogVersions: CatalogVersionMapping[] | null;
+}
+
+interface CatalogVersionMapping {
+  version: string;
+  flavor: {
+    name: string;
+    label: string;
+    install_type?: 'extension' | 'fullstack';
+  };
+  tgz_url: string;
+  githubTag?: string;
 }
 
 export class PreReleaseService {
@@ -618,7 +620,7 @@ export class PreReleaseService {
               flavor: {
                 name: version.flavor?.name || '',  // Use flavor name instead of offering name
                 label: version.flavor?.label || version.flavor?.name || '',  // Use flavor label/name instead of offering label
-                format_kind: 'terraform'  // Default format kind
+                install_type: version.flavor?.install_type || 'fullstack'  // Default format kind
               },
               tgz_url: version.tgz_url,
               githubTag: tgzUrlTag
@@ -742,7 +744,7 @@ export class PreReleaseService {
         firstProductFlavors: catalogJson.products?.[0]?.flavors?.map(f => ({
           name: f.name,
           label: f.label,
-          working_directory: f.working_directory
+          install_type: f.install_type
         }))
       }, 'preRelease');
 
@@ -754,8 +756,7 @@ export class PreReleaseService {
       const flavors = product.flavors?.map(flavor => ({
         name: flavor.name,
         label: flavor.label || flavor.name,
-        working_directory: flavor.working_directory || '.',
-        format_kind: flavor.format_kind || 'terraform',
+        install_type: flavor.install_type || 'fullstack',
         selected: true  // All flavors selected by default
       })) || [];
 
@@ -766,7 +767,7 @@ export class PreReleaseService {
         flavors: flavors.map(f => ({
           name: f.name,
           label: f.label,
-          working_directory: f.working_directory,
+          install_type: f.install_type,
           selected: f.selected
         }))
       }, 'preRelease');
@@ -810,14 +811,14 @@ export class PreReleaseService {
     const availableFlavors = allFlavors.filter(flavor => {
       const exists = this.flavorExistsInVersion(versions, version, flavor.name);
       if (exists) {
-        // Find the existing version to get its format_kind
+        // Find the existing version to get its install_type
         const existingVersion = versions.find(v =>
           v.version === version &&
           v.flavor.name === flavor.name
         );
         alreadyImportedFlavors.push({
           ...flavor,
-          format_kind: existingVersion?.flavor.format_kind || flavor.format_kind
+          install_type: existingVersion?.flavor.install_type || 'fullstack'
         });
         return false;
       }
@@ -827,34 +828,7 @@ export class PreReleaseService {
     return { availableFlavors, alreadyImportedFlavors };
   }
 
-  /**
-   * Determines if a flavor should use stack or terraform format
-   * @param flavor The flavor to check
-   * @param extractedFiles List of files extracted from the tarball
-   * @returns The correct format_kind
-   */
-  private determineFormatKind(flavor: CatalogFlavor, extractedFiles: string[]): string {
-    this.logger.debug('Determining format kind for flavor', {
-      flavorName: flavor.name,
-      workingDirectory: flavor.working_directory,
-      existingFormatKind: flavor.format_kind,
-      extractedFiles
-    }, 'preRelease');
-
-    // loop through extracted files to determine format kind
-    // if file ends with flavor.working_directory/stack_definition.json, use stack
-    // otherwise, use terraform
-    for (const file of extractedFiles) {
-      if (file.endsWith(`${flavor.working_directory}/stack_definition.json`)) {
-        this.logger.debug('Detected stack format for flavor', { file }, 'preRelease');
-        return 'stack';
-      }
-    }
-    this.logger.debug('Detected terraform format for flavor', {}, 'preRelease');
-    return 'terraform';
-  }
-
-  private async selectFlavorsToImport(flavors: CatalogFlavor[], catalogVersions: CatalogVersion[], version: string, extractedFiles: string[]): Promise<CatalogFlavor[]> {
+  private async selectFlavorsToImport(flavors: CatalogFlavor[], catalogVersions: CatalogVersion[], version: string): Promise<CatalogFlavor[]> {
     this.logger.debug('Showing flavor selection dialog', {
       totalFlavors: flavors.length,
       flavors: flavors.map(f => ({ name: f.name, label: f.label }))
@@ -869,24 +843,13 @@ export class PreReleaseService {
 
     if (availableFlavors.length === 0) {
       const errorMessage = `All flavors are already imported for version ${version}:\n` +
-        alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${f.format_kind})`).join('\n');
+        alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
       throw new Error(errorMessage);
     }
 
-    // Determine format_kind for each flavor once here
-    const flavorsWithFormat = availableFlavors.map(flavor => {
-      const format_kind = this.determineFormatKind(flavor, extractedFiles);
-      return {
-        ...flavor,
-        label: flavor.label || flavor.name,  // Ensure label is never undefined
-        working_directory: flavor.working_directory || '.',  // Ensure working_directory is never undefined
-        format_kind  // Set determined format_kind
-      };
-    });
-
-    // Create QuickPick items using pre-determined format_kind
-    const items = flavorsWithFormat.map(flavor => ({
-      label: `${flavor.label}: ${flavor.name} (${flavor.format_kind})`,
+    // Create QuickPick items
+    const items = availableFlavors.map(flavor => ({
+      label: `${flavor.label}: ${flavor.name}`,
       picked: true,  // All flavors selected by default
       flavor
     }));
@@ -894,7 +857,7 @@ export class PreReleaseService {
     // Show the selection dialog with information about already imported flavors
     const placeHolder = alreadyImportedFlavors.length > 0
       ? `Already imported flavors for version ${version}:\n${alreadyImportedFlavors.map(f =>
-        `• ${f.label}: ${f.name} (${f.format_kind})`).join('\n')}\n\nSelect additional flavors to import:`
+        `• ${f.label}: ${f.name}`).join('\n')}\n\nSelect additional flavors to import:`
       : 'All flavors are selected by default';
 
     const selectedItems = await vscode.window.showQuickPick(items, {
@@ -915,9 +878,9 @@ export class PreReleaseService {
 
     this.logger.debug('Flavors selected', {
       selectedCount: selectedFlavors.length,
-      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label, format_kind: f.format_kind })),
+      selectedFlavors: selectedFlavors.map(f => ({ name: f.name, label: f.label, install_type: f.install_type })),
       alreadyImportedCount: alreadyImportedFlavors.length,
-      alreadyImportedFlavors: alreadyImportedFlavors.map(f => ({ name: f.name, label: f.label, format_kind: f.format_kind }))
+      alreadyImportedFlavors: alreadyImportedFlavors.map(f => ({ name: f.name, label: f.label, install_type: f.install_type }))
     }, 'preRelease');
 
     return selectedFlavors;
@@ -1031,7 +994,7 @@ export class PreReleaseService {
           // If no flavors are available, show error and return
           if (availableFlavors.length === 0) {
             const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
-              alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`).join('\n');
+              alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
             throw new Error(errorMessage);
           }
 
@@ -1039,8 +1002,7 @@ export class PreReleaseService {
           const selectedFlavors = await this.selectFlavorsToImport(
             availableFlavors,
             catalogDetails.versions,
-            details.version,
-            releaseDetails.extractedFiles
+            details.version
           );
 
           if (selectedFlavors.length === 0) {
@@ -1060,10 +1022,10 @@ export class PreReleaseService {
             `GitHub Release Tag: ${tagName}\n` +
             `Catalog Version: ${details.version}\n` +
             `Selected Flavors to Import:\n${selectedFlavors.map(f =>
-              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`
+              `  • ${f.label}: ${f.name}`
             ).join('\n')}` +
             (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
-              `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`
+              `  • ${f.label}: ${f.name}`
             ).join('\n')}` : '') +
             `\n\nNote: A separate version will be imported for each selected flavor.`;
 
@@ -1432,12 +1394,10 @@ export class PreReleaseService {
       this.logger.info('Importing flavor', {
         flavorName: flavor.name,
         flavorLabel: flavor.label,
-        workingDirectory: flavor.working_directory,
-        formatKind: flavor.format_kind
+        install_type: flavor.install_type || 'fullstack'
       }, 'preRelease');
 
       try {
-        // Use the pre-determined format_kind from the flavor object
         await ibmCloudService.importVersion(
           details.catalogId!,
           catalogDetails.offeringId,
@@ -1445,19 +1405,14 @@ export class PreReleaseService {
             zipurl: details.targetVersion!,
             targetVersion: details.targetVersion!,
             version: details.version,
-            repotype: 'git',
             catalogIdentifier: details.catalogId!,
-            target_kinds: [flavor.format_kind],  // Use format_kind for target_kinds
-            format_kind: flavor.format_kind,
-            product_kind: 'solution',
             flavor: {
               metadata: {
                 name: flavor.name,
                 label: flavor.label || flavor.name,
-                index: flavorsToImport.indexOf(flavor) + 1
+                install_type: flavor.install_type || 'fullstack'
               }
-            },
-            working_directory: flavor.working_directory
+            }
           }
         );
 
@@ -1478,11 +1433,6 @@ export class PreReleaseService {
         throw new Error(`Failed to import flavor ${flavor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
-
-    this.logger.debug('All flavors imported, starting cache clearing and refresh', {
-      catalogId: details.catalogId,
-      version: details.version
-    }, 'preRelease');
 
     // Clear caches and force refresh of offerings
     await ibmCloudService.clearOfferingCache(details.catalogId!);
@@ -1521,7 +1471,6 @@ export class PreReleaseService {
     const versionMappings = this.getVersionMappingSummary(
       details.catalogId!,
       updatedCatalogDetails.offeringId,
-      'terraform',
       githubReleases,
       updatedCatalogDetails.versions
     );
@@ -1530,7 +1479,9 @@ export class PreReleaseService {
       mappings: versionMappings.map(m => ({
         version: m.version,
         hasGithubRelease: !!m.githubRelease,
-        catalogVersionCount: m.catalogVersions?.length || 0
+        githubTag: m.githubRelease?.tag,
+        catalogVersionCount: m.catalogVersions?.length || 0,
+        catalogFlavors: m.catalogVersions?.map(cv => cv.flavor.label)
       }))
     }, 'preRelease');
 
@@ -1743,7 +1694,6 @@ export class PreReleaseService {
             versionMappings = this.getVersionMappingSummary(
               catalogId,
               catalogDetails.offeringId,
-              'terraform',
               githubReleases,
               catalogDetails.versions
             );
@@ -1928,12 +1878,16 @@ export class PreReleaseService {
         // If no flavors are available, show error and return
         if (availableFlavors.length === 0) {
           const errorMessage = `All flavors are already imported for version ${data.version}:\n` +
-            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name} (${this.determineFormatKind(f, releaseDetails.extractedFiles)})`).join('\n');
+            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
           throw new Error(errorMessage);
         }
 
         // Show flavor selection dialog with only available flavors
-        const selectedFlavors = await this.selectFlavorsToImport(availableFlavors, catalogDetails.versions, data.version, releaseDetails.extractedFiles);
+        const selectedFlavors = await this.selectFlavorsToImport(
+          availableFlavors,
+          catalogDetails.versions,
+          data.version
+        );
 
         if (selectedFlavors.length === 0) {
           this.logger.info('Pre-release creation cancelled - no flavors selected', { tagName });
@@ -1952,10 +1906,10 @@ export class PreReleaseService {
           `GitHub Release Tag: ${tagName}\n` +
           `Catalog Version: ${data.version}\n` +
           `Selected Flavors to Import:\n${selectedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${f.format_kind})`  // Use pre-determined format_kind
+            `  • ${f.label}: ${f.name}`
           ).join('\n')}` +
           (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
-            `  • ${f.label}: ${f.name} (${f.format_kind})`  // Use existing format_kind
+            `  • ${f.label}: ${f.name}`
           ).join('\n')}` : '') +
           `\n\nNote: A separate version will be imported for each selected flavor.`;
 
@@ -2176,7 +2130,6 @@ export class PreReleaseService {
             versionMappings = this.getVersionMappingSummary(
               selectedCatalogId,
               catalogDetails.offeringId,
-              'terraform',
               githubReleases,
               catalogDetails.versions
             );
@@ -2195,7 +2148,7 @@ export class PreReleaseService {
       // Update UI with all data
       await this.view.webview.postMessage({
         command: 'updateData',
-        releases: githubReleases.slice(0, 5), // Ensure we only return 5 releases
+        releases: githubReleases.slice(0, 5), // Ensure we only return 5 GitHub releases
         catalogs: catalogData.catalogs,
         catalogDetails: catalogDetails ? {
           ...catalogDetails,
@@ -2328,9 +2281,9 @@ export class PreReleaseService {
         const urlPatterns = {
           // Standard SSH format: git@github.com:owner/repo.git
           standardSsh: /git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/,
-          // SSH with protocol: ssh://git@github.com/owner/repo.git
+          // SSH with protocol: ssh:\/\/git@github.com\/owner\/repo.git
           protocolSsh: /ssh:\/\/git@([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/,
-          // HTTPS format: https?:\/\/github.com/owner/repo.git
+          // HTTPS format: https?:\/\/github.com\/owner\/repo.git
           https: /https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?$/
         };
 
@@ -2599,7 +2552,6 @@ export class PreReleaseService {
   private getVersionMappingSummary(
     catalogId: string,
     offeringId: string,
-    kindType: string,
     githubReleases: GitHubRelease[],
     catalogVersions: CatalogVersion[]
   ): VersionMappingSummary[] {
@@ -2609,9 +2561,9 @@ export class PreReleaseService {
     );
 
     // Sort catalog versions by semver (newest first)
-    const sortedCatalogVersions = [...catalogVersions].sort((a, b) =>
-      -this.compareSemVer(a.version, b.version)
-    );
+    const sortedCatalogVersions = [...catalogVersions]
+      .filter(v => v.tgz_url)  // Filter out versions without tgz_url
+      .sort((a, b) => -this.compareSemVer(a.version, b.version));
 
     // Get unique versions from catalog
     const uniqueCatalogVersions = Array.from(new Set(
@@ -2630,19 +2582,25 @@ export class PreReleaseService {
         .filter(v => v.version === version)
         .map(v => ({
           version: v.version,
-          flavor: v.flavor,
-          tgz_url: v.tgz_url,
+          flavor: {
+            name: v.flavor.name,
+            label: v.flavor.label,
+            install_type: v.flavor.install_type
+          },
+          tgz_url: v.tgz_url!,
           githubTag: v.githubTag
         }));
 
-      mappings.push({
-        version,
-        githubRelease: {
-          tag: latestGitHub.tag_name,
-          tarball_url: latestGitHub.tarball_url
-        },
-        catalogVersions: matchingCatalogVersions.length > 0 ? matchingCatalogVersions : null
-      });
+      if (matchingCatalogVersions.length > 0) {
+        mappings.push({
+          version,
+          githubRelease: {
+            tag: latestGitHub.tag_name,
+            tarball_url: latestGitHub.tarball_url
+          },
+          catalogVersions: matchingCatalogVersions
+        });
+      }
     }
 
     // Add up to 4 latest catalog versions that aren't already included
@@ -2652,51 +2610,42 @@ export class PreReleaseService {
         continue;
       }
 
-      // Get all catalog entries for this version
-      const catalogEntries = sortedCatalogVersions
-        .filter(v => v.version === version)
+      // Get all catalog entries for this version with valid tgz_url
+      const catalogEntries: CatalogVersionMapping[] = sortedCatalogVersions
+        .filter(v => v.version === version && typeof v.tgz_url === 'string')
         .map(v => ({
           version: v.version,
-          flavor: v.flavor,
-          tgz_url: v.tgz_url,
+          flavor: {
+            name: v.flavor.name,
+            label: v.flavor.label,
+            install_type: v.flavor.install_type
+          },
+          tgz_url: v.tgz_url as string,  // We know it exists and is a string from the filter
           githubTag: v.githubTag
         }));
 
-      // Find matching GitHub release (if any)
-      const githubRelease = sortedGithubReleases.find(r => {
-        const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
-        return releaseVersion === version || r.tag_name === `v${version}`;
-      });
+      if (catalogEntries.length > 0) {
+        // Find matching GitHub release (if any)
+        const githubRelease = sortedGithubReleases.find(r => {
+          const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
+          return releaseVersion === version || r.tag_name === `v${version}`;
+        });
 
-      mappings.push({
-        version,
-        githubRelease: githubRelease ? {
-          tag: githubRelease.tag_name,
-          tarball_url: githubRelease.tarball_url
-        } : null,
-        catalogVersions: catalogEntries
-      });
+        mappings.push({
+          version,
+          githubRelease: githubRelease ? {
+            tag: githubRelease.tag_name,
+            tarball_url: githubRelease.tarball_url
+          } : null,
+          catalogVersions: catalogEntries
+        });
+      }
 
       // Stop after we have 5 total mappings
       if (mappings.length >= 5) {
         break;
       }
     }
-
-    // Log the final mapping summary
-    this.logger.debug('Final version mapping summary', {
-      catalogId,
-      offeringId,
-      kindType,
-      totalMappings: mappings.length,
-      mappedVersions: mappings.map(v => ({
-        version: v.version,
-        hasGithubRelease: !!v.githubRelease,
-        githubTag: v.githubRelease?.tag,
-        catalogVersionCount: v.catalogVersions?.length || 0,
-        catalogFlavors: v.catalogVersions?.map(cv => cv.flavor.label)
-      }))
-    }, 'preRelease');
 
     return mappings;
   }
@@ -2787,7 +2736,7 @@ export class PreReleaseService {
             catalogVersions: catalogVersions.length > 0 ? catalogVersions.map(v => ({
               version: v.version,
               flavor: v.flavor,
-              tgz_url: v.tgz_url,
+              tgz_url: v.tgz_url as string,
               githubTag: v.githubTag
             })) : null
           });

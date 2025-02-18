@@ -85,8 +85,6 @@ export interface Configuration {
 export interface OfferingFlavor {
     name: string;
     label: string;
-    label_i18n?: Record<string, string>;
-    index?: number;
-    description?: string;
-    displayName?: string;
+    description: string;
+    install_type?: 'extension' | 'fullstack';
 }

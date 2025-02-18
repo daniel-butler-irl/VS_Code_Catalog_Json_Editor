@@ -3,15 +3,14 @@ import { OfferingVersion as IBMCloudOfferingVersion } from '../ibmCloud';
 export interface PreReleaseDetails {
   version: string;
   postfix: string;
-  publishToCatalog: boolean;
-  releaseGithub: boolean;
+  publishToCatalog?: boolean;
+  releaseGithub?: boolean;
   targetVersion?: string;
   catalogId?: string;
   selectedFlavors?: Array<{
     name: string;
     label: string;
-    working_directory: string;
-    format_kind: string;
+    install_type?: 'extension' | 'fullstack';
     selected?: boolean;
   }>;
   skipConfirmation?: boolean;
@@ -38,10 +37,16 @@ export interface OfferingFlavor {
 }
 
 // Extend the IBM Cloud version for catalog-specific needs
-export interface CatalogVersion extends Omit<IBMCloudOfferingVersion, 'flavor'> {
-  tgz_url: string;
-  flavor: OfferingFlavor;
-  githubTag?: string;  // Optional GitHub tag associated with this version
+export interface CatalogVersion {
+  id: string;
+  version: string;
+  flavor: {
+    name: string;
+    label: string;
+    install_type?: 'extension' | 'fullstack';
+  };
+  tgz_url?: string;
+  githubTag?: string;
 }
 
 export interface CatalogDetails {

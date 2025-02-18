@@ -2780,18 +2780,12 @@ export class CatalogService {
     ): string {
         const parts: string[] = [];
 
-        if (details?.label_i18n?.['en']) {
-            parts.push(details.label_i18n['en']);
-        }
-
         if (details?.name && details.name !== details?.label) {
             parts.push(`Name: ${details.name}`);
         }
 
-        if (details?.description) {
-            parts.push(`Description: ${details.description}`);
-        } else {
-            parts.push(`Description: No description available`);
+        if (details?.install_type) {
+            parts.push(`Type: ${details.install_type}`);
         }
 
         return parts.length > 0 ? parts.join(' • ') : 'No additional details available';
