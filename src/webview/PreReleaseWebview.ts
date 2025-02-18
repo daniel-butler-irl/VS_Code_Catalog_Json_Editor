@@ -30,7 +30,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   private lastSentGitHubDetails: { branch?: string; repoUrl?: string } = {};
   private lastAuthCheck: number = 0;
   private gitHubDetailsTimeout: NodeJS.Timeout | undefined;
-  private static readonly AUTH_CHECK_INTERVAL = 30000; // 30 seconds between auth checks
+  private static readonly AUTH_CHECK_INTERVAL = 5000; // Reduce to 5 seconds for background checks
   private static readonly DEBOUNCE_DELAY = 1000; // 1 second debounce for GitHub details
 
   private constructor(
@@ -110,28 +110,44 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         });
       }
 
-      // Get GitHub details first - this will also update the UI
-      this.logger.debug('Fetching initial GitHub details', {}, 'preRelease');
-      await this.sendGitHubDetails();
+      // Check authentication state first
+      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
+      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
 
-      // Get the webview state to restore the previously selected catalog
-      if (this.view?.webview) {
-        this.logger.debug('Restoring webview state', {}, 'preRelease');
-        const state = await this.getWebviewState();
-        if (state?.selectedCatalogId) {
-          this.logger.debug('Restoring catalog selection', { catalogId: state.selectedCatalogId }, 'preRelease');
-          await this.handleCatalogSelection(state.selectedCatalogId);
-        } else {
-          // If no catalog is selected, ensure buttons are in correct state
-          const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
-          const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
-          await this.updateButtonStates(githubAuth, catalogAuth);
+      // Update button states based on auth status
+      await this.updateButtonStates(githubAuth, catalogAuth);
+
+      // Only proceed with initialization if authenticated
+      if (catalogAuth) {
+        // Get GitHub details first - this will also update the UI
+        this.logger.debug('Fetching initial GitHub details', {}, 'preRelease');
+        await this.sendGitHubDetails();
+
+        // Get the webview state to restore the previously selected catalog
+        if (this.view?.webview) {
+          this.logger.debug('Restoring webview state', {}, 'preRelease');
+          const state = await this.getWebviewState();
+          if (state?.selectedCatalogId) {
+            this.logger.debug('Restoring catalog selection', { catalogId: state.selectedCatalogId }, 'preRelease');
+            await this.handleCatalogSelection(state.selectedCatalogId);
+          }
+        }
+
+        // Initial refresh without auth check
+        this.logger.debug('Performing initial refresh', {}, 'preRelease');
+        await this.refresh();
+      } else {
+        // Clear any existing state if not authenticated
+        if (this.view?.webview) {
+          await this.view.webview.postMessage({
+            command: 'clearState'
+          });
+          await this.view.webview.postMessage({
+            command: 'setLoadingState',
+            loading: false
+          });
         }
       }
-
-      // Initial refresh without auth check
-      this.logger.debug('Performing initial refresh', {}, 'preRelease');
-      await this.refresh();
 
       this.isInitialized = true;
       this.logger.info('Webview initialization complete', {}, 'preRelease');
@@ -142,19 +158,10 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         stack: error instanceof Error ? error.stack : undefined
       }, 'preRelease');
 
-      if (this.view) {
+      if (this.view?.webview) {
         await this.view.webview.postMessage({
           command: 'showError',
           error: 'Failed to initialize Pre-Release Manager. Please try refreshing.'
-        });
-      }
-    } finally {
-      // Hide loading state after initialization attempt
-      if (this.view) {
-        this.logger.debug('Clearing loading state after initialization', {}, 'preRelease');
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: false
         });
       }
     }
@@ -247,11 +254,25 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   }
 
   public async refresh(): Promise<void> {
-    if (!this.view) {
+    if (!this.view?.webview) {
       return;
     }
 
     try {
+      // Check authentication state
+      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
+      if (!catalogAuth) {
+        // Clear state and show unauthenticated state
+        await this.view.webview.postMessage({
+          command: 'clearState'
+        });
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false
+        });
+        return;
+      }
+
       // Show loading state
       await this.view.webview.postMessage({
         command: 'setLoadingState',
@@ -673,7 +694,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           await this.sendBranchName();
           break;
         case 'checkAuthentication':
-          await this.sendAuthenticationStatus();
+          await this.sendAuthenticationStatus(true);
           break;
         case 'loginGitHub':
           await this.handleGitHubLogin();
@@ -733,11 +754,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           break;
         case 'githubAuth':
           await vscode.commands.executeCommand(message.data?.isLoggedIn ? 'ibmCatalog.logoutGithub' : 'ibmCatalog.loginGithub');
-          await this.sendAuthenticationStatus();
+          await this.sendAuthenticationStatus(true);
           break;
         case 'catalogAuth':
           await vscode.commands.executeCommand(message.data?.isLoggedIn ? 'ibmCatalog.logout' : 'ibmCatalog.login');
-          await this.sendAuthenticationStatus();
+          await this.sendAuthenticationStatus(true);
           break;
         default:
           this.logger.warn('Unknown message command received', {
@@ -755,14 +776,14 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     }
   }
 
-  public async sendAuthenticationStatus(): Promise<void> {
+  public async sendAuthenticationStatus(force: boolean = false): Promise<void> {
     if (!this.view?.visible) {
       return;
     }
 
-    // Check if enough time has passed since the last auth check
+    // Only throttle routine checks, not forced updates
     const now = Date.now();
-    if (now - this.lastAuthCheck < PreReleaseWebview.AUTH_CHECK_INTERVAL) {
+    if (!force && now - this.lastAuthCheck < PreReleaseWebview.AUTH_CHECK_INTERVAL) {
       return;
     }
 
@@ -787,23 +808,26 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         }
       });
 
-      this.updateButtonStates(githubAuth, catalogAuth);
+      await this.updateButtonStates(githubAuth, catalogAuth);
       this.lastAuthCheck = now;
     } catch (error) {
-      // Only log authentication errors as they are important for debugging
       this.logger.error('Authentication check failed', {
         error: error instanceof Error ? error.message : String(error)
       }, 'preRelease');
     }
   }
 
-  private updateButtonStates(githubAuth: boolean, catalogAuth: boolean): void {
-    if (this.view?.webview) {
-      // Get current catalog selection state
-      const state = this.getWebviewState();
-      const hasCatalogSelected = state !== undefined && state.then(s => !!s?.selectedCatalogId);
+  private async updateButtonStates(githubAuth: boolean, catalogAuth: boolean): Promise<void> {
+    if (!this.view?.webview) {
+      return;
+    }
 
-      this.view.webview.postMessage({
+    try {
+      // Get current catalog selection state
+      const state = await this.getWebviewState();
+      const hasCatalogSelected = !!state?.selectedCatalogId;
+
+      await this.view.webview.postMessage({
         command: 'updateButtonStates',
         data: {
           githubAuth,
@@ -814,6 +838,8 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           enableGithubButtons: githubAuth
         }
       });
+    } catch (error) {
+      this.logger.error('Failed to update button states', { error }, 'preRelease');
     }
   }
 

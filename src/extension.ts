@@ -23,6 +23,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger.info('Starting IBM Catalog Extension activation');
 
     try {
+        // Create status bar item early to show activation progress and store in context
+        const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+        context.subscriptions.push(statusBarItem);
+        statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
+        statusBarItem.show();
+
+        // Store statusBarItem in context for reuse
+        context.workspaceState.update('ibmCatalog.statusBarItem', statusBarItem);
+
         // Register essential commands immediately before any other initialization
         registerEssentialCommands(context);
 
@@ -38,12 +47,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         const uiStateService = UIStateService.getInstance(context);
         context.subscriptions.push(uiStateService);
-
-        // Create status bar item early to show activation progress
-        const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-        statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
-        statusBarItem.show();
-        context.subscriptions.push(statusBarItem);
 
         // Initialize PreReleaseService early
         logger.debug('Initializing PreReleaseService');
@@ -131,7 +134,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         context.subscriptions.push(
             vscode.commands.registerCommand('ibmCatalog.setLogLevel', async () => {
                 const logger = LoggingService.getInstance();
-                const currentLevel = logger.getLogLevel();
+                const currentLevel = logger.getLogLevel(); 4;
 
                 const levels = [
                     { label: `DEBUG${currentLevel === LogLevel.DEBUG ? ' ✓' : ''}`, level: LogLevel.DEBUG },
@@ -188,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         logger.info('IBM Catalog Extension activated successfully');
         statusBarItem.text = '$(check) IBM Catalog Extension Ready';
-        setTimeout(() => updateStatusBar(statusBarItem, context), 2000);
+        await updateStatusBar(statusBarItem, context);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
@@ -203,10 +206,56 @@ function registerEssentialCommands(
         vscode.commands.registerCommand('ibmCatalog.login', async () => {
             try {
                 await AuthService.login(context);
+
+                // Update context and UI immediately
                 await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', true);
+
+                // Clear caches
+                const cacheService = CacheService.getInstance();
+                await cacheService.clearAll();
+
+                // Update status bar
+                const statusBarItem = context.workspaceState.get('ibmCatalog.statusBarItem') as vscode.StatusBarItem;
+                if (statusBarItem) {
+                    await updateStatusBar(statusBarItem, context);
+                }
+
+                // Force immediate refresh of PreReleaseWebview
+                const preReleaseView = PreReleaseWebview.getInstance();
+                if (preReleaseView) {
+                    await preReleaseView.sendAuthenticationStatus(true);
+                    await preReleaseView.refresh();
+                }
+
                 vscode.window.showInformationMessage('Successfully logged in to IBM Cloud');
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to login: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        }),
+        // Register logout command
+        vscode.commands.registerCommand('ibmCatalog.logout', async () => {
+            try {
+                await AuthService.logout(context);
+
+                // Update context and UI immediately
+                await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
+
+                // Update status bar
+                const statusBarItem = context.workspaceState.get('ibmCatalog.statusBarItem') as vscode.StatusBarItem;
+                if (statusBarItem) {
+                    await updateStatusBar(statusBarItem, context);
+                }
+
+                // Force immediate refresh of PreReleaseWebview
+                const preReleaseView = PreReleaseWebview.getInstance();
+                if (preReleaseView) {
+                    await preReleaseView.sendAuthenticationStatus(true);
+                    await preReleaseView.refresh();
+                }
+
+                vscode.window.showInformationMessage('Successfully logged out from IBM Cloud');
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to logout: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
         }),
         // Register GitHub login command
@@ -216,6 +265,7 @@ function registerEssentialCommands(
                 if (preReleaseView) {
                     await preReleaseView.handleGitHubLogin();
                     await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', true);
+                    await preReleaseView.sendAuthenticationStatus(true);
                     vscode.window.showInformationMessage('Successfully logged in to GitHub');
                 }
             } catch (error) {
@@ -239,11 +289,11 @@ function registerEssentialCommands(
                     );
                 }
 
-                // Update context and UI after user acknowledges
+                // Update context and UI immediately
                 await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
                 const preReleaseView = PreReleaseWebview.getInstance();
                 if (preReleaseView) {
-                    await preReleaseView.sendAuthenticationStatus();
+                    await preReleaseView.sendAuthenticationStatus(true);
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to logout from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
