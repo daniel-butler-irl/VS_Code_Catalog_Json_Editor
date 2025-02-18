@@ -442,7 +442,8 @@ export class PreReleaseService {
             tag_name: release.tag_name,
             name: release.name || '',
             created_at: release.created_at,
-            tarball_url: release.tarball_url || ''
+            tarball_url: release.tarball_url || '',
+            html_url: release.html_url || ''
           });
         }
       });
@@ -1186,7 +1187,8 @@ export class PreReleaseService {
         tag_name: response.data.tag_name,
         name: response.data.name || '',
         created_at: response.data.created_at,
-        tarball_url: response.data.tarball_url || ''
+        tarball_url: response.data.tarball_url || '',
+        html_url: response.data.html_url || ''
       };
     } catch (error) {
       if ((error as any).status === 404) {

@@ -9,6 +9,7 @@ interface WebviewMessage {
     isLoggedIn?: boolean;
   };
   catalogId?: string;
+  url?: string;
 }
 
 interface PreReleaseDetails {
@@ -695,6 +696,12 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           break;
         case 'checkAuthentication':
           await this.sendAuthenticationStatus(true);
+          break;
+        case 'openUrl':
+          if (message.url) {
+            this.logger.debug('Opening URL', { url: message.url }, 'preRelease');
+            await vscode.env.openExternal(vscode.Uri.parse(message.url));
+          }
           break;
         case 'loginGitHub':
           await this.handleGitHubLogin();

@@ -22,6 +22,7 @@ export interface GitHubRelease {
   name: string;
   created_at: string;
   tarball_url: string;
+  html_url: string;
 }
 
 // Define the flavor interface directly

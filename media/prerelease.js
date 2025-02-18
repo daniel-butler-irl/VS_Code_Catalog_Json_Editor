@@ -712,12 +712,22 @@
             const postfix = typeof tag === 'string' && tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
             processedVersions.add(baseVersion);
 
+            const repoUrlElement = document.querySelector('#github-repo .git-repo-info');
+            const repoUrl = repoUrlElement?.getAttribute('href');
+            console.debug('GitHub URL construction:', { repoUrl, repoUrlElement, tag });
+            const githubUrl = repoUrl && repoUrl !== 'Not a Git repository' ? 
+                `${repoUrl}/releases/tag/${tag}` : undefined;
+            console.debug('Constructed GitHub URL:', { githubUrl });
+            const releaseDate = 'created_at' in release && typeof release.created_at === 'string' ? 
+                new Date(release.created_at).toLocaleDateString() : '';
+
             versionsHtml += `
                 <tr>
                     <td class="github-version">
-                        <div class="version-tag">
+                        <div class="version-tag ${githubUrl ? 'clickable' : ''}" data-release-url="${githubUrl || ''}">
                             <div class="version-number">${baseVersion}</div>
                             ${postfix ? `<div class="version-flavor">${postfix}</div>` : ''}
+                            ${releaseDate ? `<div class="release-date">${releaseDate}</div>` : ''}
                         </div>
                     </td>
                     <td class="catalog-version">
@@ -792,6 +802,40 @@
             <tr>
                 <td colspan="2" class="empty-state">No version history available</td>
             </tr>`;
+
+        // Add click handlers for GitHub release links
+        const releaseLinks = document.querySelectorAll('.version-tag.clickable');
+        console.debug('Setting up click handlers:', { 
+            clickableElements: releaseLinks.length,
+            elements: Array.from(releaseLinks).map(el => ({
+                url: el.getAttribute('data-release-url'),
+                classes: el.className
+            }))
+        });
+        releaseLinks.forEach(link => {
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const element = /** @type {HTMLElement} */ (event.currentTarget);
+                const url = element.getAttribute('data-release-url');
+                console.debug('Release link clicked:', { 
+                    url, 
+                    element,
+                    classes: element.className,
+                    attributes: Array.from(element.attributes).map(attr => `${attr.name}=${attr.value}`)
+                });
+                if (url) {
+                    console.debug('Opening URL:', url);
+                    // Use vscode.env.openExternal command to open URLs
+                    vscode.postMessage({
+                        command: 'openUrl',
+                        url: url
+                    });
+                } else {
+                    console.debug('No URL found for clicked element');
+                }
+            });
+        });
     }
 
     // Add semver comparison function
