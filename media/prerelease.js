@@ -427,12 +427,12 @@
         }
         if (githubBtn) {
             githubBtn.disabled = false;
-            githubBtn.textContent = 'Create Pre-Release';
+            githubBtn.textContent = 'Create GitHub Pre-Release';
             githubBtn.classList.remove('loading');
         }
         if (catalogBtn) {
             catalogBtn.disabled = false;
-            catalogBtn.textContent = 'Import to Catalog';
+            catalogBtn.textContent = 'Import to IBM Cloud Catalog';
             catalogBtn.classList.remove('loading');
         }
         if (getLatestBtn) {
@@ -947,12 +947,12 @@
         // Disable all buttons during operation
         if (githubBtn) {
             githubBtn.disabled = true;
-            githubBtn.textContent = 'Creating...';
+            githubBtn.innerHTML = 'Create GitHub Pre-Release <span class="loading-dots"></span>';
             githubBtn.classList.add('loading');
         }
         if (catalogBtn) {
             catalogBtn.disabled = true;
-            catalogBtn.textContent = 'Creating...';
+            catalogBtn.innerHTML = 'Import to IBM Cloud Catalog <span class="loading-dots"></span>';
             catalogBtn.classList.add('loading');
         }
         if (getLatestBtn) {

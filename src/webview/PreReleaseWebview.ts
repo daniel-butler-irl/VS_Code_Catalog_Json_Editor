@@ -573,10 +573,10 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
                     </div>
                     <div class="button-container">
                         <button id="githubBtn" class="action-button" disabled>
-                            Create Pre-Release
+                            Create GitHub Pre-Release
                         </button>
                         <button id="catalogBtn" class="action-button" disabled>
-                            Import to Catalog
+                            Import to IBM Cloud Catalog
                         </button>
                         <button id="getLatestBtn" class="action-button">
                             Get Latest Releases
@@ -835,7 +835,10 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           // Only enable catalog-related buttons if a catalog is selected
           enableCatalogButtons: hasCatalogSelected && catalogAuth,
           // GitHub buttons can be enabled if authenticated, regardless of catalog selection
-          enableGithubButtons: githubAuth
+          enableGithubButtons: githubAuth,
+          // Add button text to ensure consistency
+          githubBtnText: 'Create GitHub Pre-Release',
+          catalogBtnText: 'Import to IBM Cloud Catalog'
         }
       });
     } catch (error) {
