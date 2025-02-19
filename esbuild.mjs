@@ -38,10 +38,40 @@ const baseConfig = {
     sourcemap,
     sourcesContent: sourcemap,
     platform: 'node',
-    logLevel: 'silent',
+    logLevel: production ? 'info' : 'warning',
+    mainFields: ['module', 'main'],
     plugins: [esbuildProblemMatcherPlugin],
+    external: [
+        'vscode',
+        'fs',
+        'path',
+        'os',
+        'crypto',
+        'util',
+        'child_process',
+        'http',
+        'https',
+        'url',
+        'net',
+        'tls',
+        'zlib',
+        'timers',
+        'timers/promises'
+    ],
     define: {
         'process.env.NODE_ENV': production ? '"production"' : '"development"'
+    },
+    treeShaking: true,
+    splitting: false,
+    metafile: true,
+    tsconfig: './tsconfig.json',
+    resolveExtensions: ['.ts', '.js'],
+    conditions: ['node', 'import', 'require'],
+    alias: {
+        '@services': './src/services',
+        '@models': './src/models',
+        '@utils': './src/utils',
+        '@types': './src/types'
     }
 };
 
@@ -71,26 +101,9 @@ async function buildExtension() {
                 ...baseConfig,
                 entryPoints: ['src/extension.ts'],
                 outfile: 'dist/extension.js',
-                external: [
-                    'vscode',
-                    'fs',
-                    'path',
-                    'os',
-                    'crypto',
-                    'util',
-                    'child_process',
-                    'http',
-                    'https',
-                    'url',
-                    'net',
-                    'tls',
-                    'zlib',
-                    'timers',
-                    'timers/promises'
-                ],
+                external: baseConfig.external,
                 bundle: true,
                 platform: 'node',
-                mainFields: ['module', 'main'],
                 metafile: true,
                 loader: {
                     '.node': 'file'
