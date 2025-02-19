@@ -30,8 +30,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
         statusBarItem.show();
 
-        logger.debug('Storing status bar item in workspace state');
-        await context.workspaceState.update('ibmCatalog.statusBarItem', statusBarItem);
+        logger.debug('Storing status bar item properties in workspace state');
+        await context.workspaceState.update('ibmCatalog.statusBarItem.text', statusBarItem.text);
+        await context.workspaceState.update('ibmCatalog.statusBarItem.alignment', vscode.StatusBarAlignment.Left);
+        context.subscriptions.push(statusBarItem);
+        statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
+        statusBarItem.show();
 
         logger.debug('Registering essential commands');
         registerEssentialCommands(context);
@@ -384,6 +388,22 @@ function registerRemainingCommands(
             clickState.clearClickState();
             if (item.isEditable()) {
                 void vscode.commands.executeCommand('ibmCatalog.editElement', item);
+            } else {
+                logger.debug('Single click detected, setting up timer', {
+                    itemId: clickedItemId,
+                    threshold: DOUBLE_CLICK_THRESHOLD
+                });
+                clickState.clearClickState();
+                // Create a new timer but don't store it in context
+                clickState.clickTimeout = setTimeout(() => {
+                    logger.debug('Single click timer expired, executing command', {
+                        itemId: clickedItemId
+                    });
+                    void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
+                    clickState.clickTimeout = null;
+                }, DOUBLE_CLICK_THRESHOLD);
+                clickState.lastClickTime = now;
+                clickState.lastClickedItemId = clickedItemId;
             }
         } else {
             logger.debug('Single click detected, setting up timer', {
@@ -511,6 +531,32 @@ function registerRemainingCommands(
                     editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
                 }
             });
+        }),
+        vscode.commands.registerCommand('ibmCatalog.setLogLevel', async () => {
+            const levels = [
+                { label: 'DEBUG', value: LogLevel.DEBUG },
+                { label: 'INFO', value: LogLevel.INFO },
+                { label: 'WARN', value: LogLevel.WARN },
+                { label: 'ERROR', value: LogLevel.ERROR }
+            ];
+            const selected = await vscode.window.showQuickPick(levels, {
+                placeHolder: 'Select log level'
+            });
+            if (selected) {
+                logger.setLogLevel(selected.value);
+                void vscode.window.showInformationMessage(`Log level set to ${selected.label}`);
+            }
+        }),
+        vscode.commands.registerCommand('ibmCatalog.deleteElement', async (node: CatalogTreeItem) => {
+            try {
+                await catalogService.deleteElement(node);
+                treeProvider.refresh();
+                void vscode.window.showInformationMessage('Element deleted successfully');
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                logger.error('Failed to delete element', { error });
+                void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
+            }
         }),
         vscode.commands.registerCommand('ibmCatalog.treeItemClicked', handleTreeItemClick),
         ...(fileWatcher ? [fileWatcher] : [])

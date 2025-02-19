@@ -54,14 +54,14 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
     private initializeWatcher(): void {
         // Handle file changes
         this.fileWatcher.onDidChange(
-            this.debounceFileChange.bind(this),
+            this.handleFileChange.bind(this),
             this,
             []
         );
 
         // Handle file creation
         this.fileWatcher.onDidCreate(
-            this.debounceFileChange.bind(this),
+            this.handleFileChange.bind(this),
             this,
             []
         );
@@ -78,19 +78,21 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
      * Debounces file change events to prevent multiple rapid updates
      * @param uri The URI of the changed file
      */
-    private debounceFileChange(uri: vscode.Uri): void {
+    private clearDebounceTimer(): void {
+        if (this.debounceTimer !== null) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+    }
+
+    private handleFileChange(uri: vscode.Uri): void {
         if (this.isDisposed) {
             return;
         }
 
-        // Clear any existing timer
-        if (this.debounceTimer !== null) {
-            clearTimeout(this.debounceTimer);
-        }
-
-        // Set new timer
+        this.clearDebounceTimer();
         this.debounceTimer = setTimeout(() => {
-            this.handleFileChange(uri).catch(error => {
+            void this.onFileChange(uri).catch(error => {
                 vscode.window.showErrorMessage(
                     `Error handling file change: ${error instanceof Error ? error.message : 'Unknown error'}`
                 );
@@ -98,11 +100,25 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
         }, this.debounceDelay);
     }
 
+    private handleFileDelete(uri: vscode.Uri): void {
+        if (this.isDisposed) {
+            return;
+        }
+
+        this.clearDebounceTimer();
+        this.debounceTimer = setTimeout(() => {
+            void this.onFileDelete(uri).catch(error => {
+                vscode.window.showErrorMessage(
+                    `Error handling file deletion: ${error instanceof Error ? error.message : 'Unknown error'}`
+                );
+            });
+        }, this.debounceDelay);
+    }
     /**
      * Handles file change events
      * @param uri The URI of the changed file
      */
-    private async handleFileChange(uri: vscode.Uri): Promise<void> {
+    private async onFileChange(uri: vscode.Uri): Promise<void> {
         if (this.isDisposed) {
             return;
         }
@@ -127,22 +143,17 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
         }
     }
 
+    private async onFileDelete(uri: vscode.Uri): Promise<void> {
+        await this.catalogService.handleFileDeletion(uri);
+        this.treeProvider.refresh();
+        // Update the context variable
+        vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
+    }
     /**
      * Handles file deletion events
      * @param uri The URI of the deleted file
      */
-    private handleFileDelete(uri: vscode.Uri): void {
-        if (this.debounceTimer !== null) {
-            clearTimeout(this.debounceTimer);
-        }
-        this.debounceTimer = setTimeout(async () => {
-            this.debounceTimer = null;
-            await this.catalogService.handleFileDeletion(uri);
-            this.treeProvider.refresh();
-            // Update the context variable
-            vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
-        }, this.debounceDelay);
-    }
+
 
     /**
      * Checks if a URI matches our target file pattern

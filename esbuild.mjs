@@ -38,12 +38,16 @@ const baseConfig = {
     sourcemap,
     sourcesContent: sourcemap,
     platform: 'node',
-    logLevel: production ? 'info' : 'warning',
     mainFields: ['module', 'main'],
+    resolveExtensions: ['.ts', '.js'],
+    conditions: ['node', 'import', 'require'],
+    logLevel: production ? 'info' : 'warning',
+
     plugins: [esbuildProblemMatcherPlugin],
     external: [
         'vscode',
         'fs',
+        'fs/promises',
         'path',
         'os',
         'crypto',
@@ -55,15 +59,23 @@ const baseConfig = {
         'net',
         'tls',
         'zlib',
-        'timers',
-        'timers/promises'
+        'events',
+        'stream',
+        'buffer',
+        'assert',
+        'async_hooks'
     ],
     define: {
-        'process.env.NODE_ENV': production ? '"production"' : '"development"'
+        'process.env.NODE_ENV': production ? '"production"' : '"development"',
+        'global': 'globalThis'
     },
     treeShaking: true,
     splitting: false,
     metafile: true,
+    target: ['node18'],
+    banner: {
+        js: '(() => { try { require("source-map-support").install() } catch(err) { console.warn("source-map-support is not available") } })();'
+    },
     tsconfig: './tsconfig.json',
     resolveExtensions: ['.ts', '.js'],
     conditions: ['node', 'import', 'require'],

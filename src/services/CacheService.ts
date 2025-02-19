@@ -72,13 +72,59 @@ export class CacheService {
      * @param value - The value to cache.
      * @param config - Configuration for cache entry.
      */
+    private safeSerialize(value: any): any {
+        try {
+            // Use a WeakSet to track circular references
+            const seen = new WeakSet();
+            return JSON.parse(JSON.stringify(value, (key, val) => {
+                // Skip internal Node.js timer properties that cause circular references
+                if (key.startsWith('_')) {
+                    return undefined;
+                }
+
+                if (val !== null && typeof val === 'object') {
+                    // Handle Timer/Timeout objects
+                    if (val.constructor && ['Timer', 'Timeout'].includes(val.constructor.name)) {
+                        return '[Timer]';
+                    }
+
+                    if (seen.has(val)) {
+                        return '[Circular]';
+                    }
+                    seen.add(val);
+                }
+
+                // Handle special cases that can't be serialized
+                if (val instanceof Error) {
+                    return {
+                        message: val.message,
+                        stack: val.stack,
+                        name: val.name
+                    };
+                }
+                if (val instanceof RegExp) {
+                    return val.toString();
+                }
+                if (typeof val === 'function') {
+                    return '[Function]';
+                }
+                return val;
+            }));
+        } catch (error) {
+            this.logger.error('Failed to serialize cache value', error);
+            return null;
+        }
+    }
+
     public set(key: string, value: any, config: CacheConfig): void {
         const prefixedKey = this.CACHE_PREFIX + key;
         const expiry = Date.now() + config.ttlSeconds * 1000;
-        this.cache.set(prefixedKey, { value, expiry, config });
+        // Safely serialize the value before storing
+        const safeValue = this.safeSerialize(value);
+        this.cache.set(prefixedKey, { value: safeValue, expiry, config });
 
         if (config.persistent && this.context) {
-            void this.persistCacheEntry(prefixedKey, value, expiry);
+            void this.persistCacheEntry(prefixedKey, safeValue, expiry);
         }
 
         this.logger.debug(`Cache SET for key: ${prefixedKey}`);
@@ -93,7 +139,9 @@ export class CacheService {
     private async persistCacheEntry(key: string, value: any, expiry: number): Promise<void> {
         if (!this.context) { return; }
         try {
-            await this.context.globalState.update(key, { value, expiry });
+            // Safely serialize the value to handle circular references
+            const safeValue = this.safeSerialize(value);
+            await this.context.globalState.update(key, { value: safeValue, expiry });
             this.logger.debug(`Persisted cache entry: ${key}`);
         } catch (error) {
             this.logger.error(`Failed to persist cache entry: ${key}`, error);
