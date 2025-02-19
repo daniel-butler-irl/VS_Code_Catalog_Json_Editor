@@ -84,7 +84,9 @@ async function buildExtension() {
                     'url',
                     'net',
                     'tls',
-                    'zlib'
+                    'zlib',
+                    'timers',
+                    'timers/promises'
                 ],
                 bundle: true,
                 platform: 'node',
