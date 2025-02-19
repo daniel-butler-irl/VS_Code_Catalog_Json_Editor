@@ -401,20 +401,25 @@ function registerRemainingCommands(
     const highlightService = new EditorHighlightService();
     highlightService.setTreeView(treeView);
 
-    // Track tree view selection using WeakMap to prevent circular references
+    // Track tree view selection using a simple state object
     const clickState = {
         lastClickTime: null as number | null,
         lastClickedItemId: null as string | null,
-        singleClickTimer: null as NodeJS.Timeout | null
+        clickTimeout: null as number | null,
+        clearClickState: function () {
+            if (this.clickTimeout !== null) {
+                window.clearTimeout(this.clickTimeout);
+                this.clickTimeout = null;
+            }
+            this.lastClickTime = null;
+            this.lastClickedItemId = null;
+        }
     };
 
     // Ensure cleanup of timer on deactivation
     context.subscriptions.push({
         dispose: () => {
-            if (clickState.singleClickTimer) {
-                clearTimeout(clickState.singleClickTimer);
-                clickState.singleClickTimer = null;
-            }
+            clickState.clearClickState();
         }
     });
 
@@ -425,23 +430,16 @@ function registerRemainingCommands(
 
         if (clickState.lastClickTime && clickState.lastClickedItemId === clickedItemId &&
             now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
-            if (clickState.singleClickTimer) {
-                clearTimeout(clickState.singleClickTimer);
-                clickState.singleClickTimer = null;
-            }
+            clickState.clearClickState();
             if (item.isEditable()) {
                 void vscode.commands.executeCommand('ibmCatalog.editElement', item);
             }
-            clickState.lastClickTime = null;
-            clickState.lastClickedItemId = null;
         } else {
-            if (clickState.singleClickTimer) {
-                clearTimeout(clickState.singleClickTimer);
-            }
+            clickState.clearClickState();
             // Create a new timer but don't store it in context
-            clickState.singleClickTimer = setTimeout(() => {
+            clickState.clickTimeout = window.setTimeout(() => {
                 void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
-                clickState.singleClickTimer = null;
+                clickState.clickTimeout = null;
             }, DOUBLE_CLICK_THRESHOLD);
             clickState.lastClickTime = now;
             clickState.lastClickedItemId = clickedItemId;

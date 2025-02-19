@@ -29,7 +29,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private readonly expandedNodes = new Map<string, boolean>();
     private readonly memoizedPaths = new Map<string, string>();
     private readonly memoizedSchemaMetadata = new Map<string, SchemaMetadata | undefined>();
-    private batchStateUpdateTimer: NodeJS.Timeout | null = null;
+    private batchUpdateTimeout: number | null = null;
     private isDisposed = false;
 
     /**
@@ -158,12 +158,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private queueStateUpdate(): void {
         if (this.isDisposed) { return; }
 
-        if (this.batchStateUpdateTimer) {
-            clearTimeout(this.batchStateUpdateTimer);
-            this.batchStateUpdateTimer = null;
+        if (this.batchUpdateTimeout !== null) {
+            window.clearTimeout(this.batchUpdateTimeout);
+            this.batchUpdateTimeout = null;
         }
 
-        this.batchStateUpdateTimer = setTimeout(async () => {
+        this.batchUpdateTimeout = window.setTimeout(async () => {
             if (this.isDisposed) { return; }
 
             try {
@@ -173,7 +173,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             } catch (error) {
                 this.logger.error('Failed to save expanded state', error);
             } finally {
-                this.batchStateUpdateTimer = null;
+                this.batchUpdateTimeout = null;
             }
         }, 250);
     }
@@ -457,9 +457,9 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     public dispose(): void {
         this.isDisposed = true;
-        if (this.batchStateUpdateTimer) {
-            clearTimeout(this.batchStateUpdateTimer);
-            this.batchStateUpdateTimer = null;
+        if (this.batchUpdateTimeout !== null) {
+            window.clearTimeout(this.batchUpdateTimeout);
+            this.batchUpdateTimeout = null;
         }
         this.clearCaches();
         this._onDidChangeTreeData.dispose();
