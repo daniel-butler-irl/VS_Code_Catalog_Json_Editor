@@ -24,7 +24,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
     // Queue management properties
     private static validationQueue: Set<CatalogTreeItem> = new Set();
     private static isProcessingQueue: boolean = false;
-    private static queueProcessor?: NodeJS.Timeout;
+    private static queueProcessor?: ReturnType<typeof setInterval>;
     private static readonly QUEUE_PROCESS_DELAY = 100; // ms between validations
 
     private static readonly debugChannel = vscode.window.createOutputChannel('IBM Catalog Debug');
