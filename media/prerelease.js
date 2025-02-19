@@ -522,11 +522,6 @@
             updateButtonStates();
         }
 
-        // Remove loading state
-        if (mainContent) {
-            mainContent.classList.remove('loading-state');
-        }
-
         // Don't update catalog details if we don't have a selected catalog
         if (!catalogSelect?.value) {
             if (catalogDetailsDiv) {
@@ -1252,7 +1247,25 @@
             return;
         }
         catalogDetails = message.catalogDetails;
+        
+        // Clear loading states
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
+        }
+        if (catalogDetailsDiv) {
+            // Remove any loading messages
+            const loadingElement = catalogDetailsDiv.querySelector('.loading');
+            if (loadingElement) {
+                loadingElement.remove();
+            }
+        }
+        hideLoading(); // Ensure loading overlay is hidden
+        
+        // Update the catalog details
         updateCatalogDetails(catalogDetails);
+        
+        // Re-enable controls
+        enableAllControls();
     }
 
     // Add proper handler for next version updates
