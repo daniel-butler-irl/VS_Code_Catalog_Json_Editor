@@ -425,6 +425,7 @@ function registerRemainingCommands(
             if (singleClickTimer) {
                 clearTimeout(singleClickTimer);
             }
+            // Create a new timer but don't store it in context
             singleClickTimer = setTimeout(() => {
                 void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
                 singleClickTimer = null;
@@ -433,6 +434,16 @@ function registerRemainingCommands(
             lastClickedItemId = clickedItemId;
         }
     }
+
+    // Ensure cleanup of timer on deactivation
+    context.subscriptions.push({
+        dispose: () => {
+            if (singleClickTimer) {
+                clearTimeout(singleClickTimer);
+                singleClickTimer = null;
+            }
+        }
+    });
 
     context.subscriptions.push(
         vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
@@ -444,6 +455,65 @@ function registerRemainingCommands(
             void schemaService.refreshSchema();
             treeProvider.refresh();
             vscode.window.showInformationMessage('IBM Catalog cache cleared');
+        }),
+        vscode.commands.registerCommand('ibmCatalog.refresh', () => {
+            treeProvider.refresh();
+        }),
+        vscode.commands.registerCommand('ibmCatalog.locateCatalogFile', async () => {
+            const uris = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                filters: {
+                    'JSON files': ['json']
+                },
+                title: 'Select IBM Catalog JSON File'
+            });
+            if (uris && uris.length > 0 && vscode.workspace.workspaceFolders?.[0]) {
+                await catalogService.initialize();
+                await catalogService.reloadCatalogData();
+                treeProvider.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('ibmCatalog.createCatalogFile', async () => {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                void vscode.window.showErrorMessage('No workspace folder open');
+                return;
+            }
+            const defaultUri = vscode.Uri.joinPath(workspaceFolders[0].uri, 'ibm_catalog.json');
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri,
+                filters: {
+                    'JSON files': ['json']
+                },
+                title: 'Create IBM Catalog JSON File'
+            });
+            if (uri) {
+                // Create an empty catalog file
+                await vscode.workspace.fs.writeFile(uri, Buffer.from('{}', 'utf8'));
+                await catalogService.initialize();
+                await catalogService.reloadCatalogData();
+                treeProvider.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('ibmCatalog.openPreReleasePanel', () => {
+            void vscode.commands.executeCommand('workbench.view.extension.ibm-catalog-explorer');
+        }),
+        vscode.commands.registerCommand('ibmCatalog.createPreRelease', async () => {
+            const preReleaseService = PreReleaseService.getInstance(context);
+            const details = {
+                version: '0.0.0',
+                postfix: 'beta.1',
+                publishToCatalog: false,
+                releaseGithub: true,
+                description: 'Pre-release version',
+                draft: true
+            };
+            await preReleaseService.createPreRelease(details);
+        }),
+        vscode.commands.registerCommand('ibmCatalog.showPreReleaseLogs', () => {
+            logger.show('preRelease');
         }),
         vscode.commands.registerCommand('ibmCatalog.editElement', async (node: CatalogTreeItem) => {
             const catalogFilePath = catalogService.getCatalogFilePath();
