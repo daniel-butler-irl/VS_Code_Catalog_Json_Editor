@@ -99,11 +99,14 @@
         // Initialize auth status display
         const githubStatus = document.getElementById('githubAuthStatus');
         const catalogStatus = document.getElementById('catalogAuthStatus');
-        if (githubStatus) {
-            githubStatus.querySelector('.auth-text').textContent = 'GitHub: Checking...';
+        const githubAuthText = githubStatus?.querySelector('.auth-text');
+        const catalogAuthText = catalogStatus?.querySelector('.auth-text');
+        
+        if (githubAuthText) {
+            githubAuthText.textContent = 'GitHub: Checking...';
         }
-        if (catalogStatus) {
-            catalogStatus.querySelector('.auth-text').textContent = 'IBM Cloud: Checking...';
+        if (catalogAuthText) {
+            catalogAuthText.textContent = 'IBM Cloud: Checking...';
         }
 
         // Add click handlers for auth buttons
@@ -605,7 +608,7 @@
         const versionFlavors = catalogVersions
             ?.filter(v => v.version === proposedVersion)
             .map(v => v.flavor)
-            .filter(f => f); // Filter out undefined/null flavors
+            .filter(f => f);
 
         nextVersionDiv.innerHTML = `
             <div class="next-version-info">
@@ -637,40 +640,43 @@
         `;
 
         // Render catalog info
-        const catalogDetailsDiv = document.getElementById('catalog-details');
-        if (catalogDetailsDiv) {
-            if (!details.versions || details.versions.length === 0) {
-                catalogDetailsDiv.innerHTML = '<p class="empty-state">No version history available</p>';
-                return;
-            }
+        const catalogDetailsDiv = document.getElementById('catalogDetails');
+        if (!catalogDetailsDiv) return;
 
-            if (details.offeringNotFound) {
-                catalogDetailsDiv.innerHTML = `
-                    <div class="catalog-info error">
-                        <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
-                        <p>Publishing to this catalog will not be available.</p>
-                    </div>
-                `;
-                return;
-            }
+        if (!details) {
+            catalogDetailsDiv.innerHTML = '<p class="empty-state">No catalog details available</p>';
+            return;
+        }
 
+        if (details.offeringNotFound) {
             catalogDetailsDiv.innerHTML = `
-                <div class="catalog-info">
-                    <div class="info-row">
-                        <span class="info-label">Name:</span>
-                        <span class="info-value">${details.name || 'Not set'}</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Offering ID:</span>
-                        <span class="info-value">${details.offeringId || 'Not set'}</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Label:</span>
-                        <span class="info-value">${details.label || 'Not set'}</span>
-                    </div>
+                <div class="catalog-info error">
+                    <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
+                    <p>Publishing to this catalog will not be available.</p>
                 </div>
             `;
+            if (catalogBtn) {
+                catalogBtn.disabled = true;
+            }
+            return;
         }
+
+        catalogDetailsDiv.innerHTML = `
+            <div class="catalog-info">
+                <div class="info-row">
+                    <span class="info-label">Name:</span>
+                    <span class="info-value">${details.name || 'Not set'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Offering ID:</span>
+                    <span class="info-value">${details.offeringId || 'Not set'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Label:</span>
+                    <span class="info-value">${details.label || 'Not set'}</span>
+                </div>
+            </div>
+        `;
 
         // Render the versions table
         renderVersionsTable(details, githubReleases);
@@ -958,14 +964,16 @@
         const catalogStatus = document.getElementById('catalogAuthStatus');
         const githubButton = document.getElementById('githubAuthButton');
         const catalogButton = document.getElementById('catalogAuthButton');
+        const githubAuthText = githubStatus?.querySelector('.auth-text');
+        const catalogAuthText = catalogStatus?.querySelector('.auth-text');
 
-        if (githubStatus && githubButton) {
-            githubStatus.querySelector('.auth-text').textContent = data.github.text;
+        if (githubStatus && githubButton && githubAuthText) {
+            githubAuthText.textContent = data.github.text;
             githubButton.textContent = data.github.isLoggedIn ? 'Logout' : 'Login';
         }
 
-        if (catalogStatus && catalogButton) {
-            catalogStatus.querySelector('.auth-text').textContent = data.catalog.text;
+        if (catalogStatus && catalogButton && catalogAuthText) {
+            catalogAuthText.textContent = data.catalog.text;
             catalogButton.textContent = data.catalog.isLoggedIn ? 'Logout' : 'Login';
         }
 
@@ -1056,6 +1064,8 @@
 
     function updateBranchInfo(branchInfo) {
         const branchInfoDiv = document.getElementById('branchInfo');
+        if (!branchInfoDiv) return;
+
         if (!branchInfo || !branchInfo.name) {
             branchInfoDiv.innerHTML = `
                 <div class="error">
@@ -1139,7 +1149,7 @@
             if (loadingText) {
                 loadingText.textContent = message.message || 'Loading...';
             }
-            if (errorText instanceof HTMLElement) {
+            if (errorText && errorText instanceof HTMLElement) {
                 errorText.textContent = '';
                 errorText.style.display = 'none';
             }
@@ -1147,7 +1157,7 @@
         } else {
             loadingView.style.display = 'none';
             mainContainer.style.display = 'block';
-            if (message.error && errorText instanceof HTMLElement) {
+            if (message.error && errorText && errorText instanceof HTMLElement) {
                 errorText.textContent = message.error;
                 errorText.style.display = 'block';
             }
@@ -1213,6 +1223,7 @@
 
     // Remove the old handleCatalogSelect reference and add proper handler
     function handleCatalogSelect() {
+        if (!catalogSelect) return;
         const selectedCatalogId = catalogSelect.value;
         vscode.postMessage({ 
             command: 'selectCatalog',
@@ -1378,4 +1389,4 @@
             });
         });
     }
-})(); 
+})();
