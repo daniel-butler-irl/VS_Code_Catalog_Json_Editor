@@ -30,6 +30,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private readonly memoizedPaths = new Map<string, string>();
     private readonly memoizedSchemaMetadata = new Map<string, SchemaMetadata | undefined>();
     private batchStateUpdateTimer: NodeJS.Timeout | null = null;
+    private isDisposed = false;
 
     /**
      * Creates a new CatalogTreeProvider instance.
@@ -62,6 +63,13 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 }
             })
         );
+
+        // Ensure cleanup on disposal
+        context.subscriptions.push({
+            dispose: () => {
+                this.dispose();
+            }
+        });
     }
 
     //
@@ -148,19 +156,25 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Prevents rapid consecutive saves for better performance.
      */
     private queueStateUpdate(): void {
+        if (this.isDisposed) { return; }
+
         if (this.batchStateUpdateTimer) {
             clearTimeout(this.batchStateUpdateTimer);
+            this.batchStateUpdateTimer = null;
         }
 
         this.batchStateUpdateTimer = setTimeout(async () => {
+            if (this.isDisposed) { return; }
+
             try {
                 await this.uiStateService.updateTreeState({
                     expandedNodes: Array.from(this.expandedNodes.keys())
                 });
             } catch (error) {
                 this.logger.error('Failed to save expanded state', error);
+            } finally {
+                this.batchStateUpdateTimer = null;
             }
-            this.batchStateUpdateTimer = null;
         }, 250);
     }
 
@@ -442,8 +456,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Disposes of resources and cleans up event handlers.
      */
     public dispose(): void {
+        this.isDisposed = true;
         if (this.batchStateUpdateTimer) {
             clearTimeout(this.batchStateUpdateTimer);
+            this.batchStateUpdateTimer = null;
         }
         this.clearCaches();
         this._onDidChangeTreeData.dispose();

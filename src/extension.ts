@@ -401,49 +401,52 @@ function registerRemainingCommands(
     const highlightService = new EditorHighlightService();
     highlightService.setTreeView(treeView);
 
-    // Track tree view selection
-    let lastClickTime: number | null = null;
-    let lastClickedItemId: string | null = null;
-    let singleClickTimer: NodeJS.Timeout | null = null;
+    // Track tree view selection using WeakMap to prevent circular references
+    const clickState = {
+        lastClickTime: null as number | null,
+        lastClickedItemId: null as string | null,
+        singleClickTimer: null as NodeJS.Timeout | null
+    };
+
+    // Ensure cleanup of timer on deactivation
+    context.subscriptions.push({
+        dispose: () => {
+            if (clickState.singleClickTimer) {
+                clearTimeout(clickState.singleClickTimer);
+                clickState.singleClickTimer = null;
+            }
+        }
+    });
 
     function handleTreeItemClick(item: CatalogTreeItem): void {
         const now = Date.now();
         const DOUBLE_CLICK_THRESHOLD = 500;
         const clickedItemId = item.id || item.jsonPath;
 
-        if (lastClickTime && lastClickedItemId === clickedItemId && now - lastClickTime < DOUBLE_CLICK_THRESHOLD) {
-            if (singleClickTimer) {
-                clearTimeout(singleClickTimer);
-                singleClickTimer = null;
+        if (clickState.lastClickTime && clickState.lastClickedItemId === clickedItemId &&
+            now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
+            if (clickState.singleClickTimer) {
+                clearTimeout(clickState.singleClickTimer);
+                clickState.singleClickTimer = null;
             }
             if (item.isEditable()) {
                 void vscode.commands.executeCommand('ibmCatalog.editElement', item);
             }
-            lastClickTime = null;
-            lastClickedItemId = null;
+            clickState.lastClickTime = null;
+            clickState.lastClickedItemId = null;
         } else {
-            if (singleClickTimer) {
-                clearTimeout(singleClickTimer);
+            if (clickState.singleClickTimer) {
+                clearTimeout(clickState.singleClickTimer);
             }
             // Create a new timer but don't store it in context
-            singleClickTimer = setTimeout(() => {
+            clickState.singleClickTimer = setTimeout(() => {
                 void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
-                singleClickTimer = null;
+                clickState.singleClickTimer = null;
             }, DOUBLE_CLICK_THRESHOLD);
-            lastClickTime = now;
-            lastClickedItemId = clickedItemId;
+            clickState.lastClickTime = now;
+            clickState.lastClickedItemId = clickedItemId;
         }
     }
-
-    // Ensure cleanup of timer on deactivation
-    context.subscriptions.push({
-        dispose: () => {
-            if (singleClickTimer) {
-                clearTimeout(singleClickTimer);
-                singleClickTimer = null;
-            }
-        }
-    });
 
     context.subscriptions.push(
         vscode.commands.registerCommand('ibmCatalog.showLogs', () => {
