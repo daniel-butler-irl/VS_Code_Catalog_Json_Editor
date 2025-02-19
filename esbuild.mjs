@@ -51,12 +51,6 @@ async function copyAssets() {
         if (!test) {
             await copy('media', 'dist/media', { overwrite: true }).catch(() => {});
             await copy('schemas', 'dist/schemas', { overwrite: true }).catch(() => {});
-            // Copy package.json for dependency resolution
-            await copy('package.json', 'dist/package.json', { overwrite: true });
-            // Install production dependencies in dist folder
-            console.log('Installing production dependencies...');
-            const { execSync } = await import('child_process');
-            execSync('npm install --omit=dev', { cwd: 'dist', stdio: 'inherit' });
             console.log('Assets copied successfully');
         }
     } catch (err) {
@@ -77,7 +71,21 @@ async function buildExtension() {
                 ...baseConfig,
                 entryPoints: ['src/extension.ts'],
                 outfile: 'dist/extension.js',
-                external: ['vscode'], // Only exclude vscode from bundling
+                external: [
+                    'vscode',
+                    'fs',
+                    'path',
+                    'os',
+                    'crypto',
+                    'util',
+                    'child_process',
+                    'http',
+                    'https',
+                    'url',
+                    'net',
+                    'tls',
+                    'zlib'
+                ],
                 bundle: true,
                 platform: 'node',
                 mainFields: ['module', 'main'],
@@ -121,4 +129,4 @@ async function buildExtension() {
     }
 }
 
-buildExtension(); 
+buildExtension();
