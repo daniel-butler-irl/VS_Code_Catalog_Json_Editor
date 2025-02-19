@@ -111,6 +111,21 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         });
       }
 
+      // Check for workspace first
+      if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+        if (this.view?.webview) {
+          await this.view.webview.postMessage({
+            command: 'showError',
+            error: 'Please open a workspace to use the Pre-Release Manager.'
+          });
+          await this.view.webview.postMessage({
+            command: 'setLoadingState',
+            loading: false
+          });
+        }
+        return;
+      }
+
       // Check authentication state first
       const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
       const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
@@ -911,4 +926,4 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
   }
-} 
+}
