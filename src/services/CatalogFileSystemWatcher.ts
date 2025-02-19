@@ -65,7 +65,7 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
         }
 
         // Clear any existing timer
-        if (this.debounceTimer) {
+        if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
         }
 
@@ -108,7 +108,7 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
      * @param uri The URI of the deleted file
      */
     private handleFileDelete(uri: vscode.Uri): void {
-        if (this.debounceTimer) {
+        if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
         }
         this.debounceTimer = setTimeout(async () => {
@@ -135,7 +135,7 @@ export class CatalogFileSystemWatcher implements vscode.Disposable {
     public dispose(): void {
         this.isDisposed = true;
 
-        if (this.debounceTimer) {
+        if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;
         }

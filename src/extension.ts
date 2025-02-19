@@ -325,18 +325,25 @@ function registerRemainingCommands(
     const highlightService = new EditorHighlightService();
     highlightService.setTreeView(treeView);
 
-    // Track tree view selection using a simple state object
-    const clickState = {
-        lastClickTime: null as number | null,
-        lastClickedItemId: null as string | null,
-        clickTimeout: null as number | null,
+    // Track tree view selection using a type-safe state object
+    interface ClickState {
+        lastClickTime: number | null;
+        lastClickedItemId: string | null;
+        clickTimeout: NodeJS.Timeout | null;
+        clearClickState: () => void;
+    }
+
+    const clickState: ClickState = {
+        lastClickTime: null,
+        lastClickedItemId: null,
+        clickTimeout: null,
         clearClickState: function () {
             logger.debug('Clearing click state', {
                 hadTimer: this.clickTimeout !== null,
                 lastClickedItemId: this.lastClickedItemId
             });
             if (this.clickTimeout !== null) {
-                window.clearTimeout(this.clickTimeout);
+                clearTimeout(this.clickTimeout);
                 this.clickTimeout = null;
             }
             this.lastClickTime = null;
@@ -385,7 +392,7 @@ function registerRemainingCommands(
             });
             clickState.clearClickState();
             // Create a new timer but don't store it in context
-            clickState.clickTimeout = window.setTimeout(() => {
+            clickState.clickTimeout = setTimeout(() => {
                 logger.debug('Single click timer expired, executing command', {
                     itemId: clickedItemId
                 });
