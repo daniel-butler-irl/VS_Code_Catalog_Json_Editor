@@ -20,58 +20,56 @@ import { PreReleaseService } from './services/PreReleaseService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const logger = LoggingService.getInstance();
+    logger.setLogLevel(LogLevel.DEBUG); // Set to debug level during activation
     logger.info('Starting IBM Catalog Extension activation');
 
     try {
-        // Create status bar item early to show activation progress and store in context
+        logger.debug('Creating status bar item');
         const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
         context.subscriptions.push(statusBarItem);
         statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
         statusBarItem.show();
 
-        // Store statusBarItem in context for reuse
-        context.workspaceState.update('ibmCatalog.statusBarItem', statusBarItem);
+        logger.debug('Storing status bar item in workspace state');
+        await context.workspaceState.update('ibmCatalog.statusBarItem', statusBarItem);
 
-        // Register essential commands immediately before any other initialization
+        logger.debug('Registering essential commands');
         registerEssentialCommands(context);
 
-        // Set initial loading state
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', false);
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false);
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false);
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false);
+        logger.debug('Setting initial loading state');
+        await Promise.all([
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', false),
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false),
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', false),
+            vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false)
+        ]);
 
-        // Initialize core services first
+        logger.debug('Initializing core services');
         const cacheService = CacheService.getInstance();
         cacheService.setContext(context);
 
         const uiStateService = UIStateService.getInstance(context);
         context.subscriptions.push(uiStateService);
 
-        // Initialize PreReleaseService early
         logger.debug('Initializing PreReleaseService');
         await PreReleaseService.initialize(context);
-        logger.debug('PreReleaseService initialized');
 
-        // Only check IBM Cloud authentication status on startup
+        logger.debug('Checking IBM Cloud authentication status');
         const isLoggedIn = await AuthService.isLoggedIn(context);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
 
-        // Initialize schema service in the background
+        logger.debug('Initializing schema and catalog services');
         const schemaService = new SchemaService();
         const schemaInitPromise = schemaService.initialize();
-
-        // Initialize catalog service with basic setup
-        logger.debug('Initializing CatalogService');
         const catalogService = new CatalogService(context);
         const catalogInitPromise = catalogService.initialize();
 
-        // Initialize PreReleaseWebview after PreReleaseService
+        logger.debug('Initializing PreReleaseWebview');
         const preReleaseService = PreReleaseService.getInstance(context);
         const preReleaseWebview = PreReleaseWebview.initialize(context, logger, preReleaseService);
 
-        // Register the PreReleaseWebview provider with error handling
         try {
+            logger.debug('Registering PreReleaseWebview provider');
             context.subscriptions.push(
                 vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
                     webviewOptions: {
@@ -79,120 +77,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     }
                 })
             );
-            logger.debug('PreReleaseWebview provider registered successfully');
         } catch (error) {
             logger.error('Failed to register PreReleaseWebview provider', { error });
-            // Continue activation - PreRelease feature will be disabled
         }
 
-        // Create tree provider with minimal initial state
+        logger.debug('Creating tree provider');
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
         const treeView = vscode.window.createTreeView('ibmCatalogTree', {
             treeDataProvider: treeProvider,
             showCollapseAll: true
         });
 
-        // Connect the tree provider to the FileSystemService early
+        logger.debug('Connecting tree provider to FileSystemService');
         const fileSystemService = FileSystemService.getInstance(context);
         fileSystemService.setTreeProvider(treeProvider);
 
-        // Wait for critical services to initialize
+        logger.debug('Waiting for critical services to initialize');
         const [catalogInitialized] = await Promise.all([
             catalogInitPromise,
             schemaInitPromise
         ]);
 
-        // Update workspace context after initialization
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', true);
-        await vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', Boolean(catalogService.getCatalogFilePath()));
-
         if (!catalogInitialized) {
             logger.warn('CatalogService initialization incomplete');
         }
 
-        // Initialize remaining services and features asynchronously
-        initializeRemainingFeatures(context, catalogService, treeProvider, treeView, statusBarItem);
-
-        // Add authentication state change listener
-        context.subscriptions.push(
-            vscode.authentication.onDidChangeSessions(async e => {
-                if (e.provider.id === 'github') {
-                    // Check current GitHub auth state
-                    const isGithubLoggedIn = await AuthService.isGitHubLoggedIn(context);
-                    await vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', isGithubLoggedIn);
-
-                    // Update PreReleaseWebview auth status if it exists
-                    const preReleaseView = PreReleaseWebview.getInstance();
-                    if (preReleaseView) {
-                        await preReleaseView.sendAuthenticationStatus();
-                    }
-                }
-            })
-        );
-
-        // Register setLogLevel command
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.setLogLevel', async () => {
-                const logger = LoggingService.getInstance();
-                const currentLevel = logger.getLogLevel(); 4;
-
-                const levels = [
-                    { label: `DEBUG${currentLevel === LogLevel.DEBUG ? ' ✓' : ''}`, level: LogLevel.DEBUG },
-                    { label: `INFO${currentLevel === LogLevel.INFO ? ' ✓' : ''}`, level: LogLevel.INFO },
-                    { label: `WARN${currentLevel === LogLevel.WARN ? ' ✓' : ''}`, level: LogLevel.WARN },
-                    { label: `ERROR${currentLevel === LogLevel.ERROR ? ' ✓' : ''}`, level: LogLevel.ERROR }
-                ];
-
-                const selectedItem = await vscode.window.showQuickPick(levels, {
-                    placeHolder: 'Select log level',
-                    title: `Set Log Level (Current: ${LogLevel[currentLevel]})`,
-                });
-
-                if (selectedItem) {
-                    logger.setLogLevel(selectedItem.level);
-                    vscode.window.showInformationMessage(`Log level set to: ${selectedItem.label.replace(' ✓', '')}`);
-
-                    // Log a test message at the new level
-                    logger.debug('Debug logging test message', {
-                        previousLevel: LogLevel[currentLevel],
-                        newLogLevel: LogLevel[selectedItem.level],
-                        timestamp: new Date().toISOString()
-                    }, 'preRelease');
-
-                    // Show channel selection prompt
-                    const channels = [
-                        { label: 'IBM Catalog', value: 'main' },
-                        { label: 'IBM Catalog Pre-release', value: 'preRelease' }
-                    ];
-
-                    const selectedChannel = await vscode.window.showQuickPick(channels, {
-                        placeHolder: 'Select log channel to show',
-                        title: 'Show Log Channel'
-                    });
-
-                    if (selectedChannel) {
-                        logger.show(selectedChannel.value as 'main' | 'preRelease');
-                    }
-                }
-            })
-        );
-
-        // Register delete element command
-        context.subscriptions.push(
-            vscode.commands.registerCommand('ibmCatalog.deleteElement', async (node: CatalogTreeItem) => {
-                try {
-                    await catalogService.deleteElement(node);
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : 'Unknown error';
-                    void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
-                }
-            })
-        );
+        logger.debug('Initializing remaining features');
+        await initializeRemainingFeatures(context, catalogService, treeProvider, treeView, statusBarItem);
 
         logger.info('IBM Catalog Extension activated successfully');
         statusBarItem.text = '$(check) IBM Catalog Extension Ready';
         await updateStatusBar(statusBarItem, context);
+
+        // Reset log level to INFO after activation
+        logger.setLogLevel(LogLevel.INFO);
     } catch (error) {
+        logger.error('Failed to activate extension', {
+            error,
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+            errorStack: error instanceof Error ? error.stack : undefined
+        });
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
     }
@@ -407,6 +331,10 @@ function registerRemainingCommands(
         lastClickedItemId: null as string | null,
         clickTimeout: null as number | null,
         clearClickState: function () {
+            logger.debug('Clearing click state', {
+                hadTimer: this.clickTimeout !== null,
+                lastClickedItemId: this.lastClickedItemId
+            });
             if (this.clickTimeout !== null) {
                 window.clearTimeout(this.clickTimeout);
                 this.clickTimeout = null;
@@ -419,6 +347,10 @@ function registerRemainingCommands(
     // Ensure cleanup of timer on deactivation
     context.subscriptions.push({
         dispose: () => {
+            logger.debug('Disposing click state handler', {
+                hadTimer: clickState.clickTimeout !== null,
+                lastClickedItemId: clickState.lastClickedItemId
+            });
             clickState.clearClickState();
         }
     });
@@ -428,16 +360,35 @@ function registerRemainingCommands(
         const DOUBLE_CLICK_THRESHOLD = 500;
         const clickedItemId = item.id || item.jsonPath;
 
+        logger.debug('Tree item clicked', {
+            itemId: clickedItemId,
+            itemPath: item.jsonPath,
+            lastClickTime: clickState.lastClickTime,
+            timeSinceLastClick: clickState.lastClickTime ? now - clickState.lastClickTime : null,
+            hasActiveTimer: clickState.clickTimeout !== null
+        });
+
         if (clickState.lastClickTime && clickState.lastClickedItemId === clickedItemId &&
             now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
+            logger.debug('Double click detected', {
+                itemId: clickedItemId,
+                timeBetweenClicks: now - clickState.lastClickTime
+            });
             clickState.clearClickState();
             if (item.isEditable()) {
                 void vscode.commands.executeCommand('ibmCatalog.editElement', item);
             }
         } else {
+            logger.debug('Single click detected, setting up timer', {
+                itemId: clickedItemId,
+                threshold: DOUBLE_CLICK_THRESHOLD
+            });
             clickState.clearClickState();
             // Create a new timer but don't store it in context
             clickState.clickTimeout = window.setTimeout(() => {
+                logger.debug('Single click timer expired, executing command', {
+                    itemId: clickedItemId
+                });
                 void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
                 clickState.clickTimeout = null;
             }, DOUBLE_CLICK_THRESHOLD);

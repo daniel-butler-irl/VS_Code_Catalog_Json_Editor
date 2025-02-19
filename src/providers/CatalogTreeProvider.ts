@@ -42,15 +42,27 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         private readonly schemaService: SchemaService
     ) {
         this.logger = LoggingService.getInstance();
+        this.logger.debug('Initializing CatalogTreeProvider', {
+            hasContext: !!context,
+            hasCatalogService: !!catalogService,
+            hasSchemaService: !!schemaService
+        });
         this.uiStateService = UIStateService.getInstance(context);
 
         // Initialize expanded nodes from persistent storage
-        this.uiStateService.getTreeState().expandedNodes.forEach(node => {
+        const treeState = this.uiStateService.getTreeState();
+        this.logger.debug('Loading tree state', {
+            expandedNodesCount: treeState.expandedNodes.length,
+            expandedNodes: treeState.expandedNodes
+        });
+
+        treeState.expandedNodes.forEach(node => {
             this.expandedNodes.set(node, true);
         });
 
         // Setup content change handler with cache invalidation
         this.catalogService.onDidChangeContent(() => {
+            this.logger.debug('Content changed, clearing caches');
             this.clearCaches();
             this.refresh();
         });
@@ -67,6 +79,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         // Ensure cleanup on disposal
         context.subscriptions.push({
             dispose: () => {
+                this.logger.debug('Disposing CatalogTreeProvider');
                 this.dispose();
             }
         });
@@ -156,22 +169,37 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Prevents rapid consecutive saves for better performance.
      */
     private queueStateUpdate(): void {
-        if (this.isDisposed) { return; }
+        if (this.isDisposed) {
+            this.logger.debug('Skipping state update - provider is disposed');
+            return;
+        }
+
+        this.logger.debug('Queueing state update', {
+            hasExistingTimer: this.batchUpdateTimeout !== null,
+            expandedNodesCount: this.expandedNodes.size
+        });
 
         if (this.batchUpdateTimeout !== null) {
+            this.logger.debug('Clearing existing timer');
             window.clearTimeout(this.batchUpdateTimeout);
             this.batchUpdateTimeout = null;
         }
 
         this.batchUpdateTimeout = window.setTimeout(async () => {
-            if (this.isDisposed) { return; }
+            if (this.isDisposed) {
+                this.logger.debug('Skipping queued update - provider was disposed');
+                return;
+            }
 
             try {
-                await this.uiStateService.updateTreeState({
-                    expandedNodes: Array.from(this.expandedNodes.keys())
+                const expandedNodes = Array.from(this.expandedNodes.keys());
+                this.logger.debug('Updating tree state', {
+                    expandedNodesCount: expandedNodes.length,
+                    expandedNodes
                 });
+                await this.uiStateService.updateTreeState({ expandedNodes });
             } catch (error) {
-                this.logger.error('Failed to save expanded state', error);
+                this.logger.error('Failed to save expanded state', { error });
             } finally {
                 this.batchUpdateTimeout = null;
             }
@@ -456,6 +484,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Disposes of resources and cleans up event handlers.
      */
     public dispose(): void {
+        this.logger.debug('Disposing CatalogTreeProvider', {
+            hasTimer: this.batchUpdateTimeout !== null,
+            expandedNodesCount: this.expandedNodes.size
+        });
         this.isDisposed = true;
         if (this.batchUpdateTimeout !== null) {
             window.clearTimeout(this.batchUpdateTimeout);
