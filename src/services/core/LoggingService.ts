@@ -78,49 +78,12 @@ export class LoggingService {
         return formattedMessage;
     }
 
-    /**
-     * Logs a debug message
-     * @param message The message to log
-     * @param data Optional data to include in the log
-     */
-    public debug(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
-        if (this.logLevel <= LogLevel.DEBUG) {
-            const formattedMessage = this.formatMessage('DEBUG', message, data);
-            if (channel === 'preRelease') {
-                this.preReleaseChannel.appendLine(formattedMessage);
-            } else {
-                this.mainChannel.appendLine(formattedMessage);
-            }
-        }
-    }
-
-    /**
-     * Logs an info message
-     * @param message The message to log
-     * @param data Optional data to include in the log
-     */
-    public info(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
-        if (this.logLevel <= LogLevel.INFO) {
-            const formattedMessage = this.formatMessage('INFO', message, data);
-            if (channel === 'preRelease') {
-                this.preReleaseChannel.appendLine(formattedMessage);
-            } else {
-                this.mainChannel.appendLine(formattedMessage);
-            }
-        }
-    }
-
-    /**
-     * Logs a warning message
-     * @param message The message to log
-     * @param data Optional data to include in the log
-     */
-    public warn(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
-        if (this.logLevel <= LogLevel.WARN) {
+    private logMessage(level: LogLevel, message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+        if (this.logLevel <= level) {
             const formattedData = data instanceof Error || (data && typeof data !== 'object')
                 ? this.formatError(data)
                 : data as Record<string, unknown>;
-            const formattedMessage = this.formatMessage('WARN', message, formattedData);
+            const formattedMessage = this.formatMessage(LogLevel[level], message, formattedData);
             if (channel === 'preRelease') {
                 this.preReleaseChannel.appendLine(formattedMessage);
             } else {
@@ -129,24 +92,21 @@ export class LoggingService {
         }
     }
 
-    /**
-     * Logs an error message
-     * @param message The message to log
-     * @param error The error object or message
-     * @param data Optional additional data
-     */
-    public error(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
-        const formattedData = data instanceof Error || (data && typeof data !== 'object')
-            ? this.formatError(data)
-            : data as Record<string, unknown>;
-        const formattedMessage = this.formatMessage('ERROR', message, formattedData);
-        if (channel === 'preRelease') {
-            this.preReleaseChannel.appendLine(formattedMessage);
-        } else {
-            this.mainChannel.appendLine(formattedMessage);
-        }
+    public debug(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
+        this.logMessage(LogLevel.DEBUG, message, data, channel);
     }
 
+    public info(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
+        this.logMessage(LogLevel.INFO, message, data, channel);
+    }
+
+    public warn(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+        this.logMessage(LogLevel.WARN, message, data, channel);
+    }
+
+    public error(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+        this.logMessage(LogLevel.ERROR, message, data, channel);
+    }
     private formatError(error: unknown): Record<string, unknown> {
         if (error instanceof Error) {
             return {

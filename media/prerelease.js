@@ -73,6 +73,12 @@
             mainContainer.style.display = 'none';
         }
         
+        // Initialize state
+        const savedState = vscode.getState();
+        if (savedState) {
+            state.selectedCatalogId = savedState.selectedCatalogId || '';
+        }
+        
         // Initialize inputs - version should be enabled from start
         if (versionInput) {
             versionInput.disabled = false;
@@ -286,6 +292,27 @@
     window.addEventListener('message', event => {
         const message = event.data;
         
+        // Handle polling messages silently without validation
+        if (message?.command === 'getBranchName' || message?.command === 'checkAuthentication') {
+            return;
+        }
+
+        // Handle state response
+        if (message?.command === 'stateResponse') {
+            if (message.state && typeof message.state === 'object') {
+                state.selectedCatalogId = message.state.selectedCatalogId || '';
+                vscode.setState(state);
+                console.debug('State updated:', state);
+            }
+            return;
+        }
+
+        // For other messages, validate and handle normally
+        if (!message || typeof message.command !== 'string') {
+            console.warn('Invalid message format:', message);
+            return;
+        }
+        
         try {
             switch (message.command) {
                 case 'updateButtonStates':
@@ -303,7 +330,19 @@
                     handleCatalogDetailsUpdate(message);
                     break;
                 case 'updateData':
-                    handleDataUpdate(message);
+                    if (message.loading) {
+                        if (mainContent) {
+                            mainContent.classList.add('loading-state');
+                        }
+                        if (catalogDetailsDiv) {
+                            catalogDetailsDiv.innerHTML = '<p class="loading">Loading catalog details...</p>';
+                        }
+                    } else {
+                        handleDataUpdate(message);
+                        if (mainContent) {
+                            mainContent.classList.remove('loading-state');
+                        }
+                    }
                     break;
                 case 'updateNextVersion':
                     handleNextVersionUpdate(message);
@@ -324,7 +363,7 @@
                     handleReleaseComplete(message.success, message.error, message.cancelled);
                     break;
                 default:
-                    console.warn('Unknown message command:', message.command);
+                    console.debug('Unknown message command:', message.command);
             }
         } catch (error) {
             console.error('Error handling message:', error);
@@ -1300,72 +1339,85 @@
             return;
         }
 
-        // Create a map of GitHub tags to catalog versions
+        // Create a map of versions to their details
         const versionMap = new Map();
+        
+        // First, map all catalog versions
         details.versions.forEach(version => {
-            if (version.githubTag) {
-                if (!versionMap.has(version.githubTag)) {
-                    versionMap.set(version.githubTag, []);
-                }
-                versionMap.get(version.githubTag).push(version);
+            const baseVersion = version.version;
+            if (!versionMap.has(baseVersion)) {
+                versionMap.set(baseVersion, {
+                    version: baseVersion,
+                    githubRelease: null,
+                    catalogVersions: []
+                });
+            }
+            versionMap.get(baseVersion).catalogVersions.push(version);
+        });
+
+        // Then map GitHub releases
+        githubReleases.forEach(release => {
+            const baseVersion = release.tag_name.replace(/^v/, '').split('-')[0];
+            if (!versionMap.has(baseVersion)) {
+                versionMap.set(baseVersion, {
+                    version: baseVersion,
+                    githubRelease: release,
+                    catalogVersions: []
+                });
+            } else {
+                versionMap.get(baseVersion).githubRelease = release;
             }
         });
 
-        // Create a set of processed GitHub tags and versions
-        const processedTags = new Set();
-        const processedVersions = new Set();
-        let versionCount = 0;
-        let versionsHtml = '';
+        // Sort versions by semver
+        const sortedVersions = Array.from(versionMap.entries())
+            .sort(([a], [b]) => -semverCompare(a, b))
+            .slice(0, 5); // Show only the latest 5 versions
 
-        // First, process GitHub releases (limited to 5)
-        githubReleases.slice(0, 5).forEach(release => {
-            if (versionCount >= 5) return;
-
-            const tag = 'tag_name' in release ? release.tag_name : release.tag;
-            const catalogEntries = versionMap.get(tag) || [];
-            processedTags.add(tag);
-
-            // Add the base version to processed versions
-            const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '').split('-')[0];
-            const postfix = typeof tag === 'string' && tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
-            processedVersions.add(baseVersion);
+        const versionsHtml = sortedVersions.map(([version, data]) => {
+            const githubRelease = data.githubRelease;
+            const catalogEntries = data.catalogVersions;
+            const releaseDate = githubRelease?.created_at ? 
+                new Date(githubRelease.created_at).toLocaleDateString() : '';
+            const tag = githubRelease?.tag_name || '';
+            const postfix = tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
 
             const repoUrlElement = document.querySelector('#github-repo .git-repo-info');
             const repoUrl = repoUrlElement?.getAttribute('href');
-            const githubUrl = repoUrl && repoUrl !== 'Not a Git repository' ? 
+            const githubUrl = repoUrl && repoUrl !== 'Not a Git repository' && tag ? 
                 `${repoUrl}/releases/tag/${tag}` : undefined;
-            const releaseDate = 'created_at' in release && typeof release.created_at === 'string' ? 
-                new Date(release.created_at).toLocaleDateString() : '';
 
-            versionsHtml += `
+            return `
                 <tr>
                     <td class="github-version">
-                        <div class="version-tag ${githubUrl ? 'clickable' : ''}" data-release-url="${githubUrl || ''}">
-                            <div class="version-number">${baseVersion}</div>
-                            ${postfix ? `<div class="version-flavor">${postfix}</div>` : ''}
-                            ${releaseDate ? `<div class="release-date">${releaseDate}</div>` : ''}
-                        </div>
+                        ${githubRelease ? `
+                            <div class="version-tag ${githubUrl ? 'clickable' : ''}" data-release-url="${githubUrl || ''}">
+                                <div class="version-number">${version}</div>
+                                ${postfix ? `<div class="version-flavor">${postfix}</div>` : ''}
+                                ${releaseDate ? `<div class="release-date">${releaseDate}</div>` : ''}
+                            </div>
+                        ` : `
+                            <div class="version-tag not-published">
+                                <div class="version-number">${version}</div>
+                                <div class="version-flavor">Not published</div>
+                            </div>
+                        `}
                     </td>
                     <td class="catalog-version">
                         ${catalogEntries.length > 0 ? 
-                            catalogEntries.map(entry => {
-                                const flavorName = entry.flavor?.name || 'Unknown';
-                                const flavorLabel = entry.flavor?.label || flavorName;
-                                return `
-                                    <div class="version-tag" title="${entry.tgz_url || ''}">
-                                        <div class="version-number">${entry.version}</div>
-                                        <div class="version-flavor">${flavorLabel} (${flavorName})</div>
-                                    </div>
-                                `;
-                            }).join('') :
-                            `<div class="version-tag not-published">
+                            catalogEntries.map(entry => `
+                                <div class="version-tag">
+                                    <div class="version-number">${entry.version}</div>
+                                    <div class="version-flavor">${entry.flavor?.label || entry.flavor?.name || 'Unknown'}</div>
+                                </div>
+                            `).join('') : `
+                            <div class="version-tag not-published">
                                 <div class="version-number">Not published</div>
-                            </div>`
-                        }
+                            </div>
+                        `}
                     </td>
                 </tr>`;
-            versionCount++;
-        });
+        }).join('');
 
         versionsTable.innerHTML = versionsHtml || `
             <tr>

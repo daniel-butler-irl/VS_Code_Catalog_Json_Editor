@@ -27,8 +27,6 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private static queueProcessor?: ReturnType<typeof setInterval>;
     private static readonly QUEUE_PROCESS_DELAY = 100; // ms between validations
 
-    private static readonly debugChannel = vscode.window.createOutputChannel('IBM Catalog Debug');
-
     public readonly parent?: CatalogTreeItem;
     public readonly catalogId?: string;
 

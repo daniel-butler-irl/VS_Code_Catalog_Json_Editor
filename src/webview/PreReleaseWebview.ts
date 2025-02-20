@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { PreReleaseService } from '../services/PreReleaseService';
 import { LoggingService } from '../services/core/LoggingService';
+import { CatalogDetails } from '../types/catalog/prerelease';
 
 interface WebviewMessage {
   command: string;
@@ -10,6 +11,25 @@ interface WebviewMessage {
   };
   catalogId?: string;
   url?: string;
+  state?: { selectedCatalogId: string };
+  error?: string;
+  loading?: boolean;
+}
+
+interface WebviewResponse {
+  command: string;
+  success?: boolean;
+  error?: string;
+  loading?: boolean;
+  message?: string;
+  cancelled?: boolean;
+  state?: { selectedCatalogId: string };
+  branch?: string;
+  repoUrl?: string;
+  releases?: any[];
+  catalogs?: Array<{ id: string; label: string; shortDescription?: string }>;
+  offerings?: CatalogDetails[];
+  catalogDetails?: { catalogId: string; offerings: CatalogDetails[] } | null;
 }
 
 interface PreReleaseDetails {
@@ -101,14 +121,13 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     try {
       this.logger.debug('Starting webview initialization', {}, 'preRelease');
 
-      // Show loading state immediately
+      // Show the panel immediately
       if (this.view) {
-        this.logger.debug('Setting initial loading state', {}, 'preRelease');
+        // Hide loading state and show main container
         await this.view.webview.postMessage({
           command: 'setLoadingState',
-          loading: true,
-          message: 'Initializing Pre-Release Manager...'
-        });
+          loading: false
+        } as WebviewResponse);
       }
 
       // Check for workspace first
@@ -117,67 +136,102 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           await this.view.webview.postMessage({
             command: 'showError',
             error: 'Please open a workspace to use the Pre-Release Manager.'
-          });
-          await this.view.webview.postMessage({
-            command: 'setLoadingState',
-            loading: false
-          });
+          } as WebviewResponse);
         }
         return;
       }
 
-      // Check authentication state first
-      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
-      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
-
-      // Update button states based on auth status
-      await this.updateButtonStates(githubAuth, catalogAuth);
-
-      // Only proceed with initialization if authenticated
-      if (catalogAuth) {
-        // Get GitHub details first - this will also update the UI
-        this.logger.debug('Fetching initial GitHub details', {}, 'preRelease');
-        await this.sendGitHubDetails();
-
-        // Get the webview state to restore the previously selected catalog
-        if (this.view?.webview) {
-          this.logger.debug('Restoring webview state', {}, 'preRelease');
-          const state = await this.getWebviewState();
-          if (state?.selectedCatalogId) {
-            this.logger.debug('Restoring catalog selection', { catalogId: state.selectedCatalogId }, 'preRelease');
-            await this.handleCatalogSelection(state.selectedCatalogId);
-          }
-        }
-
-        // Initial refresh without auth check
-        this.logger.debug('Performing initial refresh', {}, 'preRelease');
-        await this.refresh();
-      } else {
-        // Clear any existing state if not authenticated
-        if (this.view?.webview) {
-          await this.view.webview.postMessage({
-            command: 'clearState'
-          });
-          await this.view.webview.postMessage({
-            command: 'setLoadingState',
-            loading: false
-          });
-        }
-      }
+      // Start async operations in the background
+      void this.initializeAsync();
 
       this.isInitialized = true;
-      this.logger.info('Webview initialization complete', {}, 'preRelease');
+      this.logger.info('Initial webview setup complete', {}, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to initialize Pre-Release webview', {
         error,
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
+        errorStack: error instanceof Error ? error.stack : undefined
       }, 'preRelease');
 
       if (this.view?.webview) {
         await this.view.webview.postMessage({
           command: 'showError',
-          error: 'Failed to initialize Pre-Release Manager. Please try refreshing.'
+          error: error instanceof Error ? error.message : 'Failed to initialize Pre-Release Manager. Please try refreshing.'
+        } as WebviewResponse);
+      }
+
+      throw error;
+    }
+  }
+
+  private async initializeAsync(): Promise<void> {
+    try {
+      // Check authentication state and get GitHub details in parallel
+      const [catalogAuth, githubAuth, state] = await Promise.all([
+        this.preReleaseService.isCatalogAuthenticated(),
+        this.preReleaseService.isGitHubAuthenticated(),
+        this.getWebviewState()
+      ]).catch(error => {
+        this.logger.error('Failed to check authentication state', { error }, 'preRelease');
+        return [false, false, undefined] as [boolean, boolean, undefined];
+      });
+
+      // Update button states based on auth status
+      if (this.view?.webview) {
+        await this.updateButtonStates(githubAuth || false, catalogAuth || false);
+      }
+
+      // Only proceed with catalog data fetching if authenticated
+      if (catalogAuth) {
+        // Get GitHub details first - this will also update the UI
+        this.logger.debug('Fetching initial GitHub details', {}, 'preRelease');
+        await this.sendGitHubDetails();
+
+        // Fetch catalog data
+        const catalogData = await this.preReleaseService.getCatalogDetails();
+        this.logger.debug('Initial catalog data fetched', {
+          catalogCount: catalogData.catalogs.length,
+          catalogs: catalogData.catalogs
+        }, 'preRelease');
+
+        // Update UI with catalog list immediately
+        if (this.view?.webview) {
+          await this.view.webview.postMessage({
+            command: 'updateData',
+            catalogs: catalogData.catalogs,
+            loading: false
+          });
+
+          // If there's a selected catalog, fetch its details
+          if (state && 'selectedCatalogId' in state && state.selectedCatalogId) {
+            this.logger.debug('Restoring catalog selection', { catalogId: state.selectedCatalogId }, 'preRelease');
+            // Get releases in parallel with catalog details
+            const [catalogDetails, releases] = await Promise.all([
+              this.preReleaseService.getSelectedCatalogDetails(state.selectedCatalogId),
+              this.preReleaseService.getLastPreReleases()
+            ]);
+
+            // Send a single update with all data
+            await this.view.webview.postMessage({
+              command: 'updateData',
+              catalogs: catalogData.catalogs,
+              catalogDetails,
+              releases,
+              state: { selectedCatalogId: state.selectedCatalogId },
+              loading: false
+            });
+          }
+        }
+      }
+
+      this.logger.info('Async webview initialization complete', {}, 'preRelease');
+    } catch (error) {
+      this.logger.error('Error in async initialization', { error }, 'preRelease');
+      // Don't throw error - let the UI remain functional
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: error instanceof Error ? error.message : 'Failed to initialize'
         });
       }
     }
@@ -198,7 +252,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       try {
         const branch = await this.preReleaseService.getCurrentBranch();
         const repoInfo = await this.preReleaseService.getRepositoryInfo();
-        const repoUrl = repoInfo ? `http://github.com/${repoInfo.owner}/${repoInfo.name}` : 'Not a Git repository';
+        const repoUrl = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.name}` : 'Not a Git repository';
 
         // Check if details have changed before sending update
         if (this.lastSentGitHubDetails.branch !== branch || this.lastSentGitHubDetails.repoUrl !== repoUrl) {
@@ -206,7 +260,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
             command: 'updateGitHubDetails',
             branch: branch || 'Not a Git repository',
             repoUrl
-          });
+          } as WebviewResponse);
 
           // Update cached values
           this.lastSentGitHubDetails = { branch, repoUrl };
@@ -233,7 +287,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           await this.view?.webview.postMessage({
             command: 'updateGitHubDetails',
             ...errorState
-          });
+          } as WebviewResponse);
 
           // Update cached values for error state
           this.lastSentGitHubDetails = errorState;
@@ -245,27 +299,52 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
   private getWebviewState(): Promise<{ selectedCatalogId: string } | undefined> {
     return new Promise((resolve) => {
       if (!this.view?.webview) {
+        this.logger.debug('No webview available for state request', {}, 'preRelease');
         resolve(undefined);
         return;
       }
 
       let disposable: vscode.Disposable | undefined;
+      let timeoutId: NodeJS.Timeout | undefined;
 
-      const handler = (e: any) => {
-        if (e.data.command === 'stateResponse') {
-          disposable?.dispose();  // Remove the handler
-          resolve(e.data.state);
+      const cleanup = () => {
+        if (disposable) {
+          disposable.dispose();
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
         }
       };
 
-      disposable = this.view.webview.onDidReceiveMessage(handler);
-      this.view.webview.postMessage({ command: 'getState' });
+      // Handle message response
+      const handler = (e: any) => {
+        if (e.command === 'stateResponse' && e.state) {
+          cleanup();
+          this.logger.debug('Received state response', { state: e.state }, 'preRelease');
+          resolve(e.state);
+        }
+      };
 
-      // Add timeout to prevent hanging
-      setTimeout(() => {
-        disposable?.dispose();  // Remove the handler
-        resolve(undefined);
-      }, 5000);
+      // Register message handler
+      disposable = this.view.webview.onDidReceiveMessage(handler);
+
+      // Set timeout for state request
+      timeoutId = setTimeout(() => {
+        cleanup();
+        this.logger.debug('State request timed out, using default state', {}, 'preRelease');
+        resolve({ selectedCatalogId: '' });
+      }, 2000); // Reduced timeout to 2 seconds
+
+      // Send state request with proper Promise handling
+      Promise.resolve(this.view.webview.postMessage({ command: 'getState' }))
+        .then(() => {
+          this.logger.debug('State request sent successfully', {}, 'preRelease');
+        })
+        .catch((error: Error) => {
+          this.logger.error('Failed to send state request', { error }, 'preRelease');
+          cleanup();
+          resolve({ selectedCatalogId: '' });
+        });
     });
   }
 
@@ -281,11 +360,11 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         // Clear state and show unauthenticated state
         await this.view.webview.postMessage({
           command: 'clearState'
-        });
+        } as WebviewResponse);
         await this.view.webview.postMessage({
           command: 'setLoadingState',
           loading: false
-        });
+        } as WebviewResponse);
         return;
       }
 
@@ -294,70 +373,80 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         command: 'setLoadingState',
         loading: true,
         message: 'Refreshing data...'
-      });
+      } as WebviewResponse);
 
       // Clear any existing error state during refresh
       await this.view.webview.postMessage({
         command: 'showError',
         error: undefined
-      });
+      } as WebviewResponse);
 
       // Always get fresh GitHub details first
       await this.sendGitHubDetails();
 
-      const [releases, catalogData] = await Promise.allSettled([
-        this.preReleaseService.getLastPreReleases().catch(error => {
-          this.logger.warn('Failed to fetch releases, showing empty state', { error }, 'preRelease');
-          return [];
-        }),
-        this.preReleaseService.getCatalogDetails().catch(error => {
-          this.logger.warn('Failed to fetch catalog details, showing empty state', { error }, 'preRelease');
-          return {
-            catalogs: [],
-            selectedCatalog: {
-              catalogId: '',
-              offeringId: '',
-              name: '',
-              label: '',
-              versions: []
-            }
-          };
-        })
-      ]);
+      // Get the current state to check if a catalog is selected
+      const state = await this.getWebviewState();
+      const selectedCatalogId = state?.selectedCatalogId;
 
-      this.logger.debug('Updating UI with fetched data', {
-        releasesStatus: releases.status,
-        catalogDataStatus: catalogData.status,
-        releaseCount: releases.status === 'fulfilled' ? releases.value.length : 0,
-        catalogCount: catalogData.status === 'fulfilled' ? catalogData.value.catalogs.length : 0
-      }, 'preRelease');
+      // Get catalog list first
+      const catalogData = await this.preReleaseService.getCatalogDetails().catch(error => {
+        this.logger.warn('Failed to fetch catalog details, showing empty state', { error }, 'preRelease');
+        return {
+          catalogs: [],
+          selectedCatalog: null
+        };
+      });
 
+      // Send catalog list update to UI immediately
       await this.view.webview.postMessage({
         command: 'updateData',
-        releases: releases.status === 'fulfilled' ? releases.value : [],
-        catalogs: catalogData.status === 'fulfilled' ? catalogData.value.catalogs : [],
-        catalogDetails: catalogData.status === 'fulfilled' ? catalogData.value.selectedCatalog : {
-          catalogId: '',
-          offeringId: '',
-          name: '',
-          label: '',
-          versions: []
-        }
-      });
+        catalogs: catalogData.catalogs
+      } as WebviewResponse);
 
-      this.logger.info('Pre-release panel refresh complete', {}, 'preRelease');
-    } catch (error) {
-      this.logger.error('Error refreshing pre-release data', error, 'preRelease');
-      await this.view.webview.postMessage({
-        command: 'showError',
-        error: 'Failed to refresh data. Please try again.'
-      });
-    } finally {
-      // Hide loading state after refresh
+      // Only fetch offerings and releases if a catalog is selected
+      let offerings: CatalogDetails[] = [];
+      let releases: any[] = [];
+
+      if (selectedCatalogId) {
+        // Fetch offerings for selected catalog
+        const catalogDetails = await this.preReleaseService.getSelectedCatalogDetails(selectedCatalogId).catch((error: unknown) => {
+          this.logger.warn('Failed to fetch catalog details, showing empty state', {
+            error: error instanceof Error ? error.message : String(error)
+          }, 'preRelease');
+          return null;
+        });
+        offerings = catalogDetails ? [catalogDetails] : [];
+
+        // Fetch releases
+        releases = await this.preReleaseService.getLastPreReleases().catch(error => {
+          this.logger.warn('Failed to fetch releases, showing empty state', { error }, 'preRelease');
+          return [];
+        });
+
+        // Send detailed update with offerings and releases
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          catalogs: catalogData.catalogs,
+          offerings,
+          releases,
+          state: { selectedCatalogId }
+        } as WebviewResponse);
+      }
+
+      // Hide loading state
       await this.view.webview.postMessage({
         command: 'setLoadingState',
         loading: false
-      });
+      } as WebviewResponse);
+
+    } catch (error) {
+      this.logger.error('Error refreshing data', { error }, 'preRelease');
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: error instanceof Error ? error.message : 'Failed to refresh data'
+        } as WebviewResponse);
+      }
     }
   }
 
@@ -394,7 +483,7 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           command: 'setLoadingState',
           loading: true,
           message: 'Creating pre-release...'
-        });
+        } as WebviewResponse);
       }
 
       this.logger.info('Creating pre-release', { version: `v${data.version}-${data.postfix}` }, 'preRelease');
@@ -419,13 +508,13 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
             await this.view.webview.postMessage({
               command: 'releaseComplete',
               success: true
-            });
+            } as WebviewResponse);
 
             // Clear loading state
             await this.view.webview.postMessage({
               command: 'setLoadingState',
               loading: false
-            });
+            } as WebviewResponse);
           }
         } else {
           // Operation was cancelled by user, reset the UI state
@@ -439,13 +528,13 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
               command: 'releaseComplete',
               success: false,
               cancelled: true
-            });
+            } as WebviewResponse);
 
             // Clear loading state
             await this.view.webview.postMessage({
               command: 'setLoadingState',
               loading: false
-            });
+            } as WebviewResponse);
           }
         }
       } catch (error) {
@@ -464,47 +553,55 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           }
         }
 
-        this.logger.error('Failed to create pre-release', { error }, 'preRelease');
+        this.logger.error('Failed to create pre-release', {
+          error,
+          errorMessage,
+          version: data.version,
+          postfix: data.postfix
+        }, 'preRelease');
 
-        // Show error in VS Code UI
-        vscode.window.showErrorMessage(errorMessage);
-
-        // Show error in webview and reset state
+        // Notify webview of failure
         if (this.view) {
           await this.view.webview.postMessage({
             command: 'releaseComplete',
             success: false,
             error: errorMessage
-          });
+          } as WebviewResponse);
 
           // Clear loading state
           await this.view.webview.postMessage({
             command: 'setLoadingState',
             loading: false
-          });
+          } as WebviewResponse);
         }
+
+        throw new Error(errorMessage);
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      this.logger.error('Failed to handle pre-release creation', { error }, 'preRelease');
+      // Handle any errors that occurred during the process
+      this.logger.error('Error in handleCreatePreRelease', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        version: data.version,
+        postfix: data.postfix
+      }, 'preRelease');
 
-      // Show error in VS Code UI
-      vscode.window.showErrorMessage(errorMessage);
-
-      // Show error in webview and reset state
+      // Ensure the webview is notified of the error
       if (this.view) {
         await this.view.webview.postMessage({
           command: 'releaseComplete',
           success: false,
-          error: errorMessage
-        });
+          error: error instanceof Error ? error.message : 'An unexpected error occurred'
+        } as WebviewResponse);
 
         // Clear loading state
         await this.view.webview.postMessage({
           command: 'setLoadingState',
           loading: false
-        });
+        } as WebviewResponse);
       }
+
+      throw error;
     }
   }
 
@@ -643,62 +740,145 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
     try {
       this.logger.debug('Fetching catalog details', { catalogId }, 'preRelease');
 
-      // Force a refresh when selecting a catalog to ensure fresh data
-      await this.preReleaseService.handleForceRefresh(catalogId);
+      // Show loading state immediately
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          loading: true,
+          state: { selectedCatalogId: catalogId }
+        });
+      }
 
-      // Do a full refresh to get fresh version mapping data
-      await this.refresh();
+      // Get catalog details and releases in parallel
+      const [catalogDetails, releases] = await Promise.all([
+        this.preReleaseService.getSelectedCatalogDetails(catalogId),
+        this.preReleaseService.getLastPreReleases()
+      ]);
 
-      // Then get the catalog details with fresh data
-      const catalogDetails = await this.preReleaseService.getSelectedCatalogDetails(catalogId);
+      // Get auth status and catalogs in parallel
+      const [githubAuth, catalogAuth, catalogs] = await Promise.all([
+        this.preReleaseService.isGitHubAuthenticated(),
+        this.preReleaseService.isCatalogAuthenticated(),
+        this.preReleaseService.getCatalogDetails().then(data => data.catalogs)
+      ]);
 
       this.logger.debug('Updating catalog details in UI', {
         catalogId,
         name: catalogDetails.name,
         offeringId: catalogDetails.offeringId,
-        versionCount: catalogDetails.versions?.length ?? 0
+        versionCount: catalogDetails.versions?.length ?? 0,
+        releaseCount: releases.length
       }, 'preRelease');
 
-      await this.view?.webview.postMessage({
-        command: 'updateCatalogDetails',
-        catalogDetails
-      });
+      // Send a single update with all data
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          catalogs,
+          catalogDetails,
+          releases,
+          state: { selectedCatalogId: catalogId },
+          loading: false
+        });
 
-      // Update button states after catalog selection
-      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
-      const catalogAuth = await this.preReleaseService.isCatalogAuthenticated();
-      await this.updateButtonStates(githubAuth, catalogAuth);
+        // Update button states
+        await this.updateButtonStates(githubAuth, catalogAuth);
+      }
 
-      this.logger.info('Successfully updated catalog details', { catalogId }, 'preRelease');
+      this.logger.info('Successfully updated catalog details and releases', {
+        catalogId,
+        releaseCount: releases.length
+      }, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to get catalog details', { error, catalogId }, 'preRelease');
-      this.view?.webview.postMessage({
-        command: 'showError',
-        error: error instanceof Error ? error.message : 'Failed to get catalog details'
-      });
+
+      if (this.view?.webview) {
+        // Clear loading state first
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          loading: false
+        });
+
+        // Then show error
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: error instanceof Error ? error.message : 'Failed to get catalog details'
+        });
+
+        // Reset state
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          state: { selectedCatalogId: '' }
+        });
+      }
     }
   }
 
   private async handleGetLatestClick(): Promise<void> {
     try {
       const state = await this.getWebviewState();
-      if (state?.selectedCatalogId) {
-        // Force a full refresh to clear caches and get fresh data
-        await this.preReleaseService.handleForceRefresh(state.selectedCatalogId);
-        await this.refresh();
-      } else {
-        await this.refresh();
+      const selectedCatalogId = state?.selectedCatalogId;
+
+      if (selectedCatalogId) {
+        // Show loading state in versions table only
+        if (this.view?.webview) {
+          await this.view.webview.postMessage({
+            command: 'updateData',
+            loading: true
+          });
+        }
+
+        // Force a full refresh to clear caches
+        await this.preReleaseService.handleForceRefresh(selectedCatalogId);
+
+        // Fetch fresh data
+        const [catalogDetails, releases] = await Promise.all([
+          this.preReleaseService.getSelectedCatalogDetails(selectedCatalogId),
+          this.preReleaseService.getLastPreReleases()
+        ]);
+
+        this.logger.debug('Got latest releases', {
+          catalogId: selectedCatalogId,
+          releaseCount: releases.length,
+          versionCount: catalogDetails.versions?.length ?? 0
+        }, 'preRelease');
+
+        // Update UI with fresh data
+        if (this.view?.webview) {
+          await this.view.webview.postMessage({
+            command: 'updateData',
+            catalogDetails,
+            releases,
+            state: { selectedCatalogId },
+            loading: false
+          });
+        }
       }
+
+      this.logger.info('Successfully fetched latest releases', {
+        catalogId: selectedCatalogId
+      }, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to get latest releases', { error }, 'preRelease');
-      this.view?.webview.postMessage({
-        command: 'showError',
-        error: error instanceof Error ? error.message : 'Failed to get latest releases'
-      });
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: error instanceof Error ? error.message : 'Failed to get latest releases'
+        });
+        // Clear loading state on error
+        await this.view.webview.postMessage({
+          command: 'updateData',
+          loading: false
+        });
+      }
     }
   }
 
   private async handleMessage(message: WebviewMessage): Promise<void> {
+    if (!this.view?.webview) {
+      return;
+    }
+
     try {
       // Only log non-getBranchName and non-checkAuthentication messages to avoid noise
       if (message.command !== 'getBranchName' && message.command !== 'checkAuthentication') {
@@ -706,6 +886,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       }
 
       switch (message.command) {
+        case 'stateResponse':
+          // State response is handled by getWebviewState, no need to do anything here
+          break;
         case 'getBranchName':
           await this.sendBranchName();
           break;
@@ -791,10 +974,12 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
       }
     } catch (error) {
       this.logger.error('Error handling message', { error, message }, 'preRelease');
-      this.view?.webview.postMessage({
-        command: 'showError',
-        error: error instanceof Error ? error.message : 'An error occurred'
-      });
+      if (this.view?.webview) {
+        await this.view.webview.postMessage({
+          command: 'showError',
+          error: error instanceof Error ? error.message : 'An error occurred'
+        });
+      }
     }
   }
 

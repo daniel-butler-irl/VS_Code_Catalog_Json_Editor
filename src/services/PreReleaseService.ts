@@ -94,17 +94,90 @@ export class PreReleaseService {
         // Initialize GitHub authentication
         await PreReleaseService.instance.initializeGitHub();
 
-        // Pre-initialize IBM Cloud Service if already authenticated
+        // Pre-initialize IBM Cloud Service and fetch catalogs if already authenticated
         const apiKey = await AuthService.getApiKey(context);
+        PreReleaseService.instance.logger.debug('Checking IBM Cloud authentication status', {
+          hasApiKey: !!apiKey
+        }, 'preRelease');
+
         if (apiKey) {
           PreReleaseService.instance.ibmCloudService = new IBMCloudService(apiKey);
-          PreReleaseService.instance.logger.debug('IBM Cloud service pre-initialized', {}, 'preRelease');
+          PreReleaseService.instance.logger.debug('IBM Cloud service pre-initialized', {
+            apiKeyLength: apiKey.length,
+            timestamp: new Date().toISOString()
+          }, 'preRelease');
+
+          // Fetch and cache available catalogs during initialization
+          // Do this in the background to avoid blocking initialization
+          void (async () => {
+            try {
+              const ibmCloudService = PreReleaseService.instance.ibmCloudService;
+              if (!ibmCloudService) {
+                PreReleaseService.instance.logger.warn('IBM Cloud service not available for catalog fetch', {
+                  timestamp: new Date().toISOString()
+                }, 'preRelease');
+                return;
+              }
+
+              // Create a promise that will reject after 30 seconds
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('Catalog fetch timed out')), 30000);
+              });
+
+              PreReleaseService.instance.logger.debug('Fetching available catalogs', {
+                timestamp: new Date().toISOString()
+              }, 'preRelease');
+
+              // Race the catalog fetch against the timeout
+              const privateCatalogs = await Promise.race([
+                ibmCloudService.getAvailablePrivateCatalogs(),
+                timeoutPromise
+              ]).catch(error => {
+                PreReleaseService.instance.logger.warn('Failed to fetch private catalogs', {
+                  error,
+                  errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                  errorStack: error instanceof Error ? error.stack : undefined,
+                  timestamp: new Date().toISOString()
+                }, 'preRelease');
+                return [];
+              });
+
+              if (privateCatalogs.length > 0) {
+                PreReleaseService.instance.logger.info('Pre-fetched catalogs during initialization', {
+                  count: privateCatalogs.length,
+                  catalogs: privateCatalogs.map(c => ({ id: c.id, label: c.label })),
+                  timestamp: new Date().toISOString()
+                }, 'preRelease');
+              } else {
+                PreReleaseService.instance.logger.warn('No private catalogs found during initialization', {
+                  timestamp: new Date().toISOString()
+                }, 'preRelease');
+              }
+            } catch (error) {
+              PreReleaseService.instance.logger.error('Failed to pre-fetch catalogs during initialization', {
+                error,
+                errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                errorStack: error instanceof Error ? error.stack : undefined,
+                timestamp: new Date().toISOString()
+              }, 'preRelease');
+            }
+          })();
+        } else {
+          PreReleaseService.instance.logger.warn('No API key found during initialization', {
+            timestamp: new Date().toISOString()
+          }, 'preRelease');
         }
 
-        PreReleaseService.instance.logger.info('PreReleaseService initialized successfully', {}, 'preRelease');
+        PreReleaseService.instance.logger.info('PreReleaseService initialized successfully', {
+          timestamp: new Date().toISOString()
+        }, 'preRelease');
       } catch (error) {
-        PreReleaseService.instance.logger.warn('PreReleaseService initialization had non-critical errors', { error }, 'preRelease');
-        // Don't throw - allow the service to initialize with reduced functionality
+        PreReleaseService.instance.logger.error('PreReleaseService initialization had errors', {
+          error,
+          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorStack: error instanceof Error ? error.stack : undefined,
+          timestamp: new Date().toISOString()
+        }, 'preRelease');
       }
     }
     return PreReleaseService.instance;

@@ -296,14 +296,6 @@ export class IBMCloudService {
     }
 
     /**
-     * Validates a catalog ID using cached data only.
-     * Does not trigger any API lookup.
-     * @param catalogId - ID of the catalog to validate.
-     * @returns Promise<boolean> - True if catalog ID is valid, false otherwise.
-     */
-    // src/services/IBMCloudService.ts
-
-    /**
      * Validates a catalog ID using cached data.
      * @param catalogId - The catalog ID to validate
      * @returns Promise<boolean> indicating if the catalog ID is valid
@@ -423,84 +415,10 @@ export class IBMCloudService {
             const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*');
             this.cacheService.delete(versionCacheKey);
             this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
-
-            // Force fetch fresh data
-            try {
-                this.logger.debug('Fetching fresh offerings from API', {
-                    catalogId,
-                    timestamp: new Date().toISOString(),
-                    skipCache
-                }, 'preRelease');
-
-                const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
-                    this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
-                );
-
-                this.logger.debug('Raw API response', {
-                    catalogId,
-                    status: offerings.status,
-                    resourceCount: offerings.result.resources?.length,
-                    rawVersions: offerings.result.resources?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
-                    skipCache
-                }, 'preRelease');
-
-                const resources = offerings.result.resources ?? [];
-                const offeringsPage: OfferingItem[] = resources.map((offering) => ({
-                    id: offering.id!,
-                    name: offering.name!,
-                    label: offering.label,
-                    shortDescription: offering.short_description,
-                    kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
-                    created: offering.created,
-                    updated: offering.updated,
-                    metadata: offering.metadata,
-                }));
-
-                // Log the mapped data before caching
-                this.logger.debug('Mapped offerings before caching', {
-                    catalogId,
-                    count: offeringsPage.length,
-                    versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
-                    skipCache
-                }, 'preRelease');
-
-                // Cache the offerings result
-                this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
-
-                this.logger.debug('Cached fresh offerings data', {
-                    catalogId,
-                    count: offeringsPage.length,
-                    timestamp: new Date().toISOString(),
-                    skipCache
-                }, 'preRelease');
-
-                return offeringsPage;
-            } catch (error) {
-                this.logger.error('Failed to get offerings', {
-                    error,
-                    catalogId,
-                    skipCache,
-                    errorDetails: error instanceof Error ? {
-                        message: error.message,
-                        stack: error.stack,
-                        name: error.name
-                    } : 'Unknown error type'
-                }, 'preRelease');
-                throw error;
-            }
         }
 
         // Try to get from cache if not skipping cache
         const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
-        this.logger.debug('Cache check result', {
-            catalogId,
-            cacheKey,
-            hasCachedData: !!cached,
-            cachedItemCount: cached?.length,
-            cachedVersions: cached?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
-            skipCache
-        }, 'preRelease');
-
         if (cached) {
             this.logger.debug('Returning cached offerings', {
                 catalogId,
@@ -511,16 +429,37 @@ export class IBMCloudService {
             return cached;
         }
 
-        // If no cache, fetch fresh data
+        // If no cache or skipCache is true, fetch fresh data
         try {
             this.logger.debug('Fetching fresh offerings from API', {
                 catalogId,
                 timestamp: new Date().toISOString()
             }, 'preRelease');
 
-            const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, () =>
+            // Create a promise that will reject after 30 seconds
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('Request timed out')), 30000);
+            });
+
+            // Create the actual API request promise
+            const requestPromise = this.withProgress(`Fetching offerings for ${catalogId}`, () =>
                 this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
             );
+
+            // Race between the timeout and the actual request
+            const offerings = await Promise.race([requestPromise, timeoutPromise]).catch(error => {
+                this.logger.warn('Failed to fetch offerings from API', {
+                    error,
+                    catalogId,
+                    errorDetails: error instanceof Error ? {
+                        message: error.message,
+                        stack: error.stack,
+                        name: error.name
+                    } : 'Unknown error type',
+                    timestamp: new Date().toISOString()
+                }, 'preRelease');
+                return { result: { resources: [] }, status: 'error' };
+            });
 
             this.logger.debug('Raw API response', {
                 catalogId,
@@ -541,22 +480,21 @@ export class IBMCloudService {
                 metadata: offering.metadata,
             }));
 
-            // Log the mapped data before caching
-            this.logger.debug('Mapped offerings before caching', {
-                catalogId,
-                count: offeringsPage.length,
-                versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
-            }, 'preRelease');
-
-            // Cache the offerings result
-            this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
-
-            this.logger.debug('Cached fresh offerings data', {
-                catalogId,
-                count: offeringsPage.length,
-                timestamp: new Date().toISOString(),
-                skipCache
-            }, 'preRelease');
+            // Cache the offerings result only if we got at least one offering
+            if (offeringsPage.length > 0) {
+                this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
+                this.logger.debug('Cached fresh offerings data', {
+                    catalogId,
+                    count: offeringsPage.length,
+                    timestamp: new Date().toISOString(),
+                    skipCache
+                }, 'preRelease');
+            } else {
+                this.logger.warn('No offerings found for catalog', {
+                    catalogId,
+                    timestamp: new Date().toISOString()
+                }, 'preRelease');
+            }
 
             return offeringsPage;
         } catch (error) {
@@ -569,7 +507,9 @@ export class IBMCloudService {
                     name: error.name
                 } : 'Unknown error type'
             }, 'preRelease');
-            throw error;
+
+            // Return empty array instead of throwing
+            return [];
         }
     }
 
@@ -793,6 +733,12 @@ export class IBMCloudService {
         }
     }
 
+    /**
+     * Gets a list of public catalogs.
+     * Note: This method is not used for pre-release functionality as publishing to public catalogs
+     * requires special permissions and is handled through different channels.
+     * @returns Promise<CatalogItem[]> - Array of public catalogs.
+     */
     public async getAvailablePublicCatalogs(): Promise<CatalogItem[]> {
         this.logger.debug('Fetching available public catalogs');
 
@@ -830,51 +776,64 @@ export class IBMCloudService {
             return publicCatalogs;
         } catch (error) {
             this.logger.error('Failed to fetch available public catalogs', error);
-            throw error;
+            return [];
         }
     }
 
+    /**
+     * Gets a list of private catalogs.
+     * This is the primary method used by the pre-release service since pre-releases
+     * can only be published to private catalogs. Public catalogs require special
+     * permissions and are handled through different channels.
+     * @returns Promise<CatalogItem[]> - Array of private catalogs.
+     */
     public async getAvailablePrivateCatalogs(): Promise<CatalogItem[]> {
-        this.logger.debug('Fetching available private catalogs');
-
-        const cachedCatalogs = this.cacheService.get<CatalogItem[]>(CacheKeys.CATALOG);
-        if (cachedCatalogs?.some(catalog => !catalog.isPublic)) {
-            const privateCatalogs = cachedCatalogs.filter(catalog => !catalog.isPublic);
-            this.logger.debug('Using cached private catalogs', { count: privateCatalogs.length });
-            return privateCatalogs;
-        }
-
+        this.logger.debug('Fetching available private catalogs', { timestamp: new Date().toISOString(), method: 'getAvailablePrivateCatalogs' }, 'preRelease');
         try {
-            const response = await this.withProgress('Fetching private catalogs', () =>
+            const catalogs = await this.withProgress('Fetching catalogs', () =>
                 this.catalogManagement.listCatalogs()
             );
-
-            const privateCatalogs: CatalogItem[] = (response.result.resources ?? [])
-                .filter((catalog) => !catalog.disabled && catalog.id && catalog.label)
-                .map((catalog) => ({
-                    id: catalog.id!,
-                    label: catalog.label!,
-                    shortDescription: catalog.short_description,
-                    disabled: catalog.disabled,
-                    isPublic: false,
-                }));
-
-            // Merge with any existing public catalogs
-            const existingCatalogs = this.cacheService.get<CatalogItem[]>(CacheKeys.CATALOG) || [];
-            const mergedCatalogs = [...existingCatalogs.filter(c => c.isPublic), ...privateCatalogs];
-
-            this.cacheService.set(CacheKeys.CATALOG, mergedCatalogs, CacheConfigurations[CacheKeys.CATALOG]);
-
-            this.logger.debug('Successfully fetched private catalogs', { count: privateCatalogs.length });
-            return privateCatalogs;
+            this.logger.debug('Raw catalog API response', {
+                status: catalogs.status,
+                resourceCount: catalogs.result.resources?.length,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+            const resources = catalogs.result.resources ?? [];
+            const catalogItems = resources.map((catalog) => ({
+                id: catalog.id!,
+                name: catalog.id!, // Using id as name since name property doesn't exist on Catalog type
+                label: catalog.label,
+                shortDescription: catalog.short_description,
+                owningAccount: catalog.owning_account,
+                created: catalog.created,
+                updated: catalog.updated
+            }));
+            this.logger.info('Successfully fetched private catalogs', {
+                count: catalogItems.length,
+                catalogs: catalogItems.map(c => ({ id: c.id, name: c.name })),
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+            return catalogItems.map(item => ({
+                ...item,
+                label: item.label || item.name, // Ensure label is never undefined by falling back to name
+                shortDescription: item.shortDescription || '',
+                isPublic: false // Private catalogs are not public by definition
+            }));
         } catch (error) {
-            this.logger.error('Failed to fetch available private catalogs', error);
-            throw error;
+            this.logger.error('Failed to fetch private catalogs', {
+                error,
+                errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                errorStack: error instanceof Error ? error.stack : undefined,
+                timestamp: new Date().toISOString()
+            }, 'preRelease');
+            return [];
         }
     }
 
     /**
      * Fetches all available catalogs (both private and public).
+     * Note: For general catalog management functionality. Pre-release service should use
+     * getAvailablePrivateCatalogs() directly since it only works with private catalogs.
      * @returns Promise<CatalogItem[]> - Array of all available catalogs.
      */
     public async getAvailableCatalogs(): Promise<CatalogItem[]> {
@@ -888,19 +847,45 @@ export class IBMCloudService {
         }
 
         try {
+            // Create timeout promises for both requests
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('Request timed out')), 30000);
+            });
+
+            // Create the actual request promises
+            const publicCatalogsPromise = this.getAvailablePublicCatalogs().catch(error => {
+                this.logger.error('Failed to fetch public catalogs', error);
+                return [];
+            });
+
+            const privateCatalogsPromise = this.getAvailablePrivateCatalogs().catch(error => {
+                this.logger.error('Failed to fetch private catalogs', error);
+                return [];
+            });
+
+            // Race each request against the timeout
             const [publicCatalogs, privateCatalogs] = await Promise.all([
-                this.getAvailablePublicCatalogs(),
-                this.getAvailablePrivateCatalogs(),
+                Promise.race([publicCatalogsPromise, timeoutPromise]),
+                Promise.race([privateCatalogsPromise, timeoutPromise])
             ]);
 
             const allCatalogs = [...publicCatalogs, ...privateCatalogs];
-            this.logger.debug('Successfully fetched all catalogs', { count: allCatalogs.length });
-            this.cacheService.set(cacheKey, allCatalogs, CacheConfigurations[CacheKeys.CATALOG]);
+            this.logger.debug('Successfully fetched all catalogs', {
+                count: allCatalogs.length,
+                publicCount: publicCatalogs.length,
+                privateCount: privateCatalogs.length
+            });
+
+            // Only cache if we have at least some catalogs
+            if (allCatalogs.length > 0) {
+                this.cacheService.set(cacheKey, allCatalogs, CacheConfigurations[CacheKeys.CATALOG]);
+            }
 
             return allCatalogs;
         } catch (error) {
             this.logger.error('Failed to fetch all available catalogs', error);
-            throw error;
+            // Return empty array instead of throwing
+            return [];
         }
     }
 
