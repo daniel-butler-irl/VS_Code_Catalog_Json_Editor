@@ -1651,106 +1651,6 @@ export class PreReleaseService {
     }
   }
 
-  private async handleMessage(message: WebviewMessage): Promise<void> {
-    try {
-      // Validate message structure first
-      if (!message || typeof message.command !== 'string') {
-        this.logger.error('Invalid message received', { message }, 'preRelease');
-        if (this.view) {
-          await this.view.webview.postMessage({
-            command: 'setLoadingState',
-            loading: false,
-            error: 'Invalid message format'
-          });
-        }
-        return;
-      }
-
-      this.logger.debug('Handling message', { command: message.command, hasData: !!message.data }, 'preRelease');
-
-      switch (message.command) {
-        case 'getBranchName':
-          await this.sendBranchName();
-          break;
-        case 'refresh':
-          await this.refresh();
-          break;
-        case 'selectCatalog':
-          if (!message.catalogId) {
-            this.logger.error('Missing catalogId for selectCatalog command', { message }, 'preRelease');
-            if (this.view) {
-              await this.view.webview.postMessage({
-                command: 'setLoadingState',
-                loading: false,
-                error: 'No catalog selected'
-              });
-            }
-            return;
-          }
-          await this.handleCatalogSelection(message.catalogId);
-          break;
-        case 'createPreRelease':
-          // Extract data from either message.data or direct properties
-          const releaseData: PreReleaseDetails = message.data || {
-            version: message.version || '',
-            postfix: message.postfix || '',
-            publishToCatalog: message.publishToCatalog || false,
-            releaseGithub: message.releaseGithub || false,
-            catalogId: message.catalogId
-          };
-
-          this.logger.debug('Processing createPreRelease command', { releaseData }, 'preRelease');
-
-          if (!releaseData || !releaseData.version || !releaseData.postfix) {
-            this.logger.error('Missing data for createPreRelease command', { message, releaseData }, 'preRelease');
-            if (this.view) {
-              await this.view.webview.postMessage({
-                command: 'setLoadingState',
-                loading: false,
-                error: 'Missing release details. Please fill in all required fields.'
-              });
-            }
-            return;
-          }
-          await this.handleCreatePreRelease(releaseData);
-          break;
-        case 'setup':
-          await this.handleSetup();
-          break;
-        case 'forceRefresh':
-          await this.handleForceRefresh(message.catalogId);
-          break;
-        default:
-          this.logger.warn('Unknown message command received', {
-            command: message.command,
-            messageType: typeof message,
-            hasData: !!message.data
-          }, 'preRelease');
-          break;
-      }
-    } catch (error) {
-      // Log the error with full context
-      this.logger.error('Error handling message', {
-        error,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        errorStack: error instanceof Error ? error.stack : undefined,
-        command: message.command,
-        messageData: message.data
-      }, 'preRelease');
-
-      // Show error in UI
-      if (this.view) {
-        await this.view.webview.postMessage({
-          command: 'setLoadingState',
-          loading: false,
-          error: error instanceof Error ? error.message : 'An error occurred'
-        });
-      }
-
-      // Always ensure the view is refreshed to a consistent state
-      await this.refresh();
-    }
-  }
 
   public async handleForceRefresh(catalogId?: string): Promise<void> {
     this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
@@ -2153,15 +2053,19 @@ export class PreReleaseService {
           versionMappings
         };
 
-        // Update catalog details first
-        await this.view.webview.postMessage({
-          command: 'updateCatalogDetails',
-          catalogDetails: detailsWithMappings
-        });
+        // Get all catalogs for consistent state update
+        const catalogs = await this.getCatalogDetails().then(data => data.catalogs);
 
-        // Then update loading state
+        // Send a single updateData message with all information
         await this.view.webview.postMessage({
-          command: 'setLoadingState',
+          command: 'updateData',
+          catalogs,
+          catalogDetails: {
+            catalogId,
+            offerings: [detailsWithMappings]
+          },
+          releases: githubReleases,
+          state: { selectedCatalogId: catalogId },
           loading: false
         });
       }
@@ -2177,10 +2081,12 @@ export class PreReleaseService {
       this.logger.error('Failed to get catalog details', { error, catalogId }, 'preRelease');
 
       if (this.view) {
+        // Send error through updateData for consistent error handling
         await this.view.webview.postMessage({
-          command: 'setLoadingState',
+          command: 'updateData',
           loading: false,
-          error: error instanceof Error ? error.message : 'Failed to get catalog details'
+          error: error instanceof Error ? error.message : 'Failed to get catalog details',
+          state: { selectedCatalogId: '' }
         });
       }
     }
@@ -2773,137 +2679,5 @@ export class PreReleaseService {
    * @param catalogId Optional catalog ID to get catalog versions
    * @returns Latest versions from both sources with mappings
    */
-  private async getLatestVersions(catalogId?: string): Promise<{
-    githubReleases: GitHubRelease[];
-    catalogDetails?: CatalogDetails;
-    versionMappings: VersionMappingSummary[];
-  }> {
-    try {
-      // Get GitHub releases
-      const githubReleases = await this.getGitHubReleases().catch(error => {
-        this.logger.warn('Failed to fetch GitHub releases', { error }, 'preRelease');
-        return [];
-      });
 
-      this.logger.debug('Retrieved GitHub releases', {
-        totalReleases: githubReleases.length,
-        releases: githubReleases.map(r => ({
-          tag: r.tag_name,
-          created_at: r.created_at
-        }))
-      }, 'preRelease');
-
-      // Get catalog details if catalogId is provided
-      let catalogDetails: CatalogDetails | undefined;
-      if (catalogId) {
-        catalogDetails = await this.getSelectedCatalogDetails(catalogId).catch(error => {
-          this.logger.warn('Failed to fetch catalog details', { error }, 'preRelease');
-          return undefined;
-        });
-      }
-
-      // Create version mappings
-      const versionMappings: VersionMappingSummary[] = [];
-      if (catalogDetails?.versions) {
-        this.logger.debug('Processing catalog versions', {
-          totalCatalogVersions: catalogDetails.versions.length,
-          versions: catalogDetails.versions.map(v => ({
-            version: v.version,
-            flavor: v.flavor.name,
-            githubTag: v.githubTag
-          }))
-        }, 'preRelease');
-
-        // Get all unique versions
-        const allVersions = new Set([
-          ...githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0]),
-          ...catalogDetails.versions.map(v => v.version)
-        ]);
-
-        this.logger.debug('Unique versions before filtering', {
-          totalUniqueVersions: allVersions.size,
-          versions: Array.from(allVersions)
-        }, 'preRelease');
-
-        // Sort versions by semver (newest first) and take latest 5
-        const sortedVersions = Array.from(allVersions)
-          .filter(v => semver.valid(v))
-          .sort((a, b) => semver.rcompare(a, b))
-          .slice(0, 5); // Limit to 5 versions
-
-        this.logger.debug('Sorted and limited versions', {
-          totalVersions: sortedVersions.length,
-          versions: sortedVersions
-        }, 'preRelease');
-
-        // Create mapping for each version
-        for (const version of sortedVersions) {
-          const githubRelease = githubReleases.find(r => {
-            const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
-            return releaseVersion === version;
-          });
-
-          const catalogVersions = catalogDetails.versions.filter(v => v.version === version);
-
-          versionMappings.push({
-            version,
-            githubRelease: githubRelease ? {
-              tag: githubRelease.tag_name,
-              tarball_url: githubRelease.tarball_url
-            } : null,
-            catalogVersions: catalogVersions.length > 0 ? catalogVersions.map(v => ({
-              version: v.version,
-              flavor: v.flavor,
-              tgz_url: v.tgz_url as string,
-              githubTag: v.githubTag
-            })) : null
-          });
-        }
-
-        // Ensure we only have 5 version mappings
-        if (versionMappings.length > 5) {
-          this.logger.warn('More than 5 version mappings found before trimming', {
-            totalMappings: versionMappings.length,
-            mappings: versionMappings.map(m => m.version)
-          }, 'preRelease');
-          versionMappings.length = 5;
-        }
-
-        this.logger.debug('Final version mappings to be sent to UI', {
-          totalMappings: versionMappings.length,
-          mappings: versionMappings.map(m => ({
-            version: m.version,
-            hasGithubRelease: !!m.githubRelease,
-            githubTag: m.githubRelease?.tag,
-            catalogVersionCount: m.catalogVersions?.length || 0,
-            catalogVersions: m.catalogVersions?.map(cv => ({
-              version: cv.version,
-              flavor: cv.flavor.name
-            }))
-          }))
-        }, 'preRelease');
-
-        // Update version input with next suggested version if available
-        if (sortedVersions.length > 0 && this.view) {
-          const latestVersion = sortedVersions[0];
-          const nextVersion = this.suggestNextVersion(latestVersion);
-
-          // Send message to update version input
-          await this.view.webview.postMessage({
-            command: 'updateNextVersion',
-            version: nextVersion
-          });
-        }
-      }
-
-      return {
-        githubReleases: githubReleases.slice(0, 5), // Ensure we only return 5 GitHub releases
-        catalogDetails,
-        versionMappings
-      };
-    } catch (error) {
-      this.logger.error('Failed to get latest versions', { error }, 'preRelease');
-      throw error;
-    }
-  }
 }
