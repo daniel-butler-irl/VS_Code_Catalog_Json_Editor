@@ -291,7 +291,8 @@
     // Handle messages from the extension
     window.addEventListener('message', event => {
         const message = event.data;
-        
+        console.debug('Received message:', message);
+
         // Handle polling messages silently without validation
         if (message?.command === 'getBranchName' || message?.command === 'checkAuthentication') {
             return;
@@ -330,19 +331,7 @@
                     handleCatalogDetailsUpdate(message);
                     break;
                 case 'updateData':
-                    if (message.loading) {
-                        if (mainContent) {
-                            mainContent.classList.add('loading-state');
-                        }
-                        if (catalogDetailsDiv) {
-                            catalogDetailsDiv.innerHTML = '<p class="loading">Loading catalog details...</p>';
-                        }
-                    } else {
-                        handleDataUpdate(message);
-                        if (mainContent) {
-                            mainContent.classList.remove('loading-state');
-                        }
-                    }
+                    handleDataUpdate(message);
                     break;
                 case 'updateNextVersion':
                     handleNextVersionUpdate(message);
@@ -354,7 +343,7 @@
                     handleSetLoadingState(message);
                     break;
                 case 'showError':
-                    handleError(message.error);
+                    handleError(message);
                     break;
                 case 'refreshComplete':
                     handleRefreshComplete();
@@ -376,7 +365,7 @@
         }
     });
 
-    function handleUpdateData(message) {
+    function handleDataUpdate(message) {
         if (!mainContent || !catalogSelect || !versionInput || !postfixInput) {
             console.error('Required elements not found');
             return;
@@ -392,6 +381,13 @@
         // Store releases for later use
         lastReleases = message.releases || [];
         
+        // Handle catalog details if present
+        if (message.catalogDetails && message.catalogDetails.offerings && message.catalogDetails.offerings.length > 0) {
+            const catalogDetails = message.catalogDetails.offerings[0];
+            console.debug('Updating catalog details:', catalogDetails);
+            updateCatalogDetails(catalogDetails);
+        }
+
         // Version input should always be enabled unless on main/master
         if (!isMainOrMaster) {
             versionInput.disabled = false;
@@ -406,6 +402,11 @@
         
         // Update button states
         updateButtonStates();
+
+        // Clear loading state if it was set
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
+        }
     }
 
     function handleRefreshComplete() {
@@ -545,192 +546,78 @@
      * @param {import('../src/types/catalog/prerelease').CatalogDetails} details
      */
     function updateCatalogDetails(details) {
-        // Clear any pending timeout
-        if (currentTimeoutId) {
-            clearTimeout(currentTimeoutId);
-            currentTimeoutId = null;
-        }
-
-        // Store catalog details
-        catalogDetails = details;
-
-        // Re-enable controls if not on main/master branch
-        if (!isMainOrMaster) {
-            if (catalogSelect) {catalogSelect.disabled = false;}
-            if (versionInput) {versionInput.disabled = false;}
-            if (postfixInput) {postfixInput.disabled = false;}
-            const refreshButton = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
-            if (refreshButton) {refreshButton.disabled = !catalogSelect?.value;}
-            updateButtonStates();
-        }
-
-        // Don't update catalog details if we don't have a selected catalog
-        if (!catalogSelect?.value) {
-            if (catalogDetailsDiv) {
-                catalogDetailsDiv.innerHTML = '<p class="empty-state">Please select a catalog to view its details</p>';
-            }
-            // Enable GitHub releases even without catalog
-            if (!isMainOrMaster) {
-                if (githubBtn) githubBtn.disabled = false;
-                if (catalogBtn) catalogBtn.disabled = true; // Disable catalog button when no catalog selected
-            }
+        console.debug('Updating catalog details with:', details);
+        
+        // Get the versions container
+        const versionsContainer = document.getElementById('versionsContainer');
+        if (!versionsContainer) {
+            console.error('Versions container not found');
             return;
         }
 
-        if (!catalogDetailsDiv) {return;}
+        // Clear existing content
+        versionsContainer.innerHTML = '';
 
-        // Handle case where offering is not found in catalog
-        if (details.offeringNotFound) {
-            catalogDetailsDiv.innerHTML = `
-                <div class="catalog-info error">
-                    <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
-                    <p>Publishing to this catalog will not be available.</p>
-                </div>
-            `;
-            if (catalogBtn) {
-                catalogBtn.disabled = true;
-            }
+        if (!details || !details.versions || details.versions.length === 0) {
+            versionsContainer.innerHTML = '<p class="no-versions">No versions available</p>';
             return;
         }
 
-        const proposedVersion = versionInput?.value;
-        const proposedPostfix = postfixInput?.value;
-        const githubReleases = lastReleases.map(r => ({
-            version: r.tag_name.replace(/^v/, '').split('-')[0],
-            tag: r.tag_name
-        }));
+        // Create a table for versions
+        const table = document.createElement('table');
+        table.className = 'versions-table';
+        
+        // Add table header
+        const thead = document.createElement('thead');
+        thead.innerHTML = `
+            <tr>
+                <th>Version</th>
+                <th>Flavor</th>
+                <th>GitHub Tag</th>
+            </tr>
+        `;
+        table.appendChild(thead);
 
-        // Initial render without versions
-        renderCatalogDetails(details, proposedVersion, proposedPostfix, githubReleases, []);
-
-        // Then update versions when they're available
-        if (details.versions) {
-            /** @type {import('../src/types/catalog/prerelease').CatalogVersion[]} */
-            const catalogVersions = details.versions;
-            const isVersionInvalid = proposedVersion && catalogVersions.some(v => v.version === proposedVersion);
-
-            if (catalogBtn) {
-                catalogBtn.disabled = isVersionInvalid || isMainOrMaster;
-            }
-
-            // Only suggest version if input is empty
-            if (!versionInput?.value) {
-                suggestNextVersion();
-                updateTagPreview();
-            }
-
-            // Update the version table with the loaded versions
-            renderCatalogDetails(details, versionInput?.value || '', proposedPostfix, githubReleases, details.versions);
-        }
-    }
-
-    /**
-     * Renders the catalog details UI
-     * @param {import('../src/types/catalog/prerelease').CatalogDetails} details
-     * @param {string} proposedVersion
-     * @param {string} proposedPostfix
-     * @param {Array<{tag: string}>} githubReleases
-     * @param {import('../src/types/catalog/prerelease').CatalogVersion[]} catalogVersions
-     */
-    function renderCatalogDetails(details, proposedVersion, proposedPostfix, githubReleases, catalogVersions) {
-        const nextVersionDiv = document.getElementById('nextVersion');
-        if (!nextVersionDiv) return;
-
-        // Check if version is already released in catalog or GitHub
-        const isVersionReleasedInCatalog = catalogVersions?.some(v => v.version === proposedVersion);
-        const isVersionReleasedInGithub = githubReleases?.some(r => {
-            const version = r.tag.replace(/^v/, '').split('-')[0];
-            return version === proposedVersion;
+        // Add table body
+        const tbody = document.createElement('tbody');
+        
+        // Sort versions by semver (newest first)
+        const sortedVersions = [...details.versions].sort((a, b) => {
+            return -compareVersions(a.version, b.version);
         });
 
-        // Get all flavors for the proposed version
-        const versionFlavors = catalogVersions
-            ?.filter(v => v.version === proposedVersion)
-            .map(v => v.flavor)
-            .filter(f => f);
-
-        nextVersionDiv.innerHTML = `
-            <div class="next-version-info">
-                <div class="version-row">
-                    <div class="version-label">GitHub:</div>
-                    <div class="version-content">
-                        <span class="version-number">v${proposedVersion}-${proposedPostfix}</span>
-                        ${isVersionReleasedInGithub ? '<span class="release-status">(Released)</span>' : ''}
-                    </div>
-                </div>
-                <div class="version-row">
-                    <div class="version-label">Catalog:</div>
-                    <div class="version-content">
-                        <span class="version-number">${proposedVersion}</span>
-                        ${versionFlavors && versionFlavors.length > 0 ? `
-                            <div class="flavors-section">
-                                <div class="flavors-label">Flavors:</div>
-                                ${versionFlavors.map(flavor => `
-                                    <div class="flavor-item">
-                                        <span>${flavor.label || flavor.name}</span>
-                                        <span class="flavor-released">(Released)</span>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Render catalog info
-        const catalogDetailsDiv = document.getElementById('catalogDetails');
-        if (!catalogDetailsDiv) return;
-
-        if (!details) {
-            catalogDetailsDiv.innerHTML = '<p class="empty-state">No catalog details available</p>';
-            return;
-        }
-
-        if (details.offeringNotFound) {
-            catalogDetailsDiv.innerHTML = `
-                <div class="catalog-info error">
-                    <p class="warning-message">The offering "${details.name}" was not found in this catalog.</p>
-                    <p>Publishing to this catalog will not be available.</p>
-                </div>
+        // Add rows for each version
+        sortedVersions.forEach(version => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${version.version}</td>
+                <td>${version.flavor.label || version.flavor.name}</td>
+                <td>${version.githubTag || 'N/A'}</td>
             `;
-            if (catalogBtn) {
-                catalogBtn.disabled = true;
-            }
-            return;
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        versionsContainer.appendChild(table);
+
+        // Update UI state
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
         }
-
-        catalogDetailsDiv.innerHTML = `
-            <div class="catalog-info">
-                <div class="info-row">
-                    <span class="info-label">Name:</span>
-                    <span class="info-value">${details.name || 'Not set'}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Offering ID:</span>
-                    <span class="info-value">${details.offeringId || 'Not set'}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Label:</span>
-                    <span class="info-value">${details.label || 'Not set'}</span>
-                </div>
-            </div>
-        `;
-
-        // Render the versions table
-        renderVersionsTable(details, githubReleases);
+        
+        console.debug('Catalog details updated successfully');
     }
 
-    // Add semver comparison function
-    function semverCompare(a, b) {
-        const aParts = a.split('.').map(Number);
-        const bParts = b.split('.').map(Number);
-
-        for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-            const aVal = aParts[i] || 0;
-            const bVal = bParts[i] || 0;
-            if (aVal !== bVal) {
-                return aVal - bVal;
+    // Helper function to compare version numbers
+    function compareVersions(a, b) {
+        const partsA = a.split('.').map(Number);
+        const partsB = b.split('.').map(Number);
+        
+        for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+            const numA = partsA[i] || 0;
+            const numB = partsB[i] || 0;
+            if (numA !== numB) {
+                return numA - numB;
             }
         }
         return 0;
@@ -790,47 +677,25 @@
      * Suggests the next version number based on catalog versions
      */
     function suggestNextVersion() {
-        if (!versionInput) {
+        if (!versionInput || !catalogDetails?.versions) return;
+
+        // Get all versions
+        const versions = catalogDetails.versions.map(v => v.version);
+
+        // Sort versions by semver (newest first)
+        versions.sort((a, b) => -compareVersions(a, b));
+
+        // Get latest version
+        const latestVersion = versions[0];
+        if (!latestVersion) {
+            versionInput.value = '1.0.0';
             return;
         }
 
-        // Only suggest version if the input is empty
-        if (versionInput.value) {
-            return;
-        }
-
-        // Try to get the next version from catalog first
-        if (catalogDetails?.versions) {
-            const catalogVersions = Array.from(new Set(catalogDetails.versions.map(v => v.version)))
-                .filter(v => /^\d+\.\d+\.\d+$/.test(v))
-                .sort((a, b) => -semverCompare(a, b));
-
-            if (catalogVersions.length) {
-                const latest = catalogVersions[0];
-                const [major, minor, patch] = latest.split('.').map(Number);
-                versionInput.value = `${major}.${minor}.${patch + 1}`;
-                console.debug('Suggested next version from catalog:', versionInput.value);
-                return;
-            }
-        }
-
-        // Fallback to GitHub version if catalog version is not available
-        const githubVersions = Array.from(new Set(githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0])))
-            .filter(v => /^\d+\.\d+\.\d+$/.test(v))
-            .sort((a, b) => -semverCompare(a, b));
-
-        if (githubVersions.length) {
-            const latest = githubVersions[0];
-            const [major, minor, patch] = latest.split('.').map(Number);
-            versionInput.value = `${major}.${minor}.${patch + 1}`;
-            console.debug('Suggested next version from GitHub:', versionInput.value);
-            return;
-        }
-
-        // If no versions found in either source and not on main/master branch
-        if (!isMainOrMaster) {
-            showError('First release must be created through the IBM Cloud Catalog interface');
-        }
+        // Increment patch version
+        const parts = latestVersion.split('.').map(Number);
+        parts[2] = (parts[2] || 0) + 1;
+        versionInput.value = parts.join('.');
     }
 
     /**
@@ -985,7 +850,7 @@
     // Add function to update timestamp display
     function updateTimestampDisplay() {
         const timestampDiv = document.getElementById('lastCheckedTimestamp');
-        if (!timestampDiv) {return;}
+        if (!timestampDiv) return;
 
         if (!lastCheckedTimestamp) {
             timestampDiv.innerHTML = 'Last checked: Never';
@@ -1287,35 +1152,43 @@
         // Store releases for later use
         lastReleases = message.releases || [];
         
+        // Handle catalog details if present
+        if (message.catalogDetails && message.catalogDetails.offerings && message.catalogDetails.offerings.length > 0) {
+            const catalogDetails = message.catalogDetails.offerings[0];
+            console.debug('Updating catalog details:', catalogDetails);
+            updateCatalogDetails(catalogDetails);
+        }
+        
+        // Version input should always be enabled unless on main/master
+        if (!isMainOrMaster) {
+            versionInput.disabled = false;
+            versionInput.placeholder = 'Enter version number';
+        }
+        
+        // Postfix should remain enabled and keep its value
+        if (postfixInput && !postfixInput.value && currentBranch) {
+            postfixInput.value = `${currentBranch}-beta`;
+        }
+        postfixInput.disabled = false;
+        
         // Update button states
         updateButtonStates();
+
+        // Clear loading state if it was set
+        if (mainContent) {
+            mainContent.classList.remove('loading-state');
+        }
     }
 
     // Add proper handler for catalog details updates
     function handleCatalogDetailsUpdate(message) {
-        if (!catalogDetailsDiv) {
+        if (!message.catalogDetails) {
+            console.error('No catalog details in message');
             return;
         }
-        catalogDetails = message.catalogDetails;
-        
-        // Clear loading states
-        if (mainContent) {
-            mainContent.classList.remove('loading-state');
-        }
-        if (catalogDetailsDiv) {
-            // Remove any loading messages
-            const loadingElement = catalogDetailsDiv.querySelector('.loading');
-            if (loadingElement) {
-                loadingElement.remove();
-            }
-        }
-        hideLoading(); // Ensure loading overlay is hidden
-        
-        // Update the catalog details
-        updateCatalogDetails(catalogDetails);
-        
-        // Re-enable controls
-        enableAllControls();
+
+        console.debug('Updating catalog details:', message.catalogDetails);
+        updateCatalogDetails(message.catalogDetails);
     }
 
     // Add proper handler for next version updates
@@ -1371,7 +1244,7 @@
 
         // Sort versions by semver
         const sortedVersions = Array.from(versionMap.entries())
-            .sort(([a], [b]) => -semverCompare(a, b))
+            .sort(([a], [b]) => -compareVersions(a, b))
             .slice(0, 5); // Show only the latest 5 versions
 
         const versionsHtml = sortedVersions.map(([version, data]) => {

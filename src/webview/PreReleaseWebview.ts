@@ -427,7 +427,10 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         await this.view.webview.postMessage({
           command: 'updateData',
           catalogs: catalogData.catalogs,
-          offerings,
+          catalogDetails: {
+            catalogId: selectedCatalogId,
+            offerings: offerings
+          },
           releases,
           state: { selectedCatalogId }
         } as WebviewResponse);
@@ -749,14 +752,34 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         });
       }
 
+      // Ensure GitHub authentication first
+      const githubAuth = await this.preReleaseService.isGitHubAuthenticated();
+      if (!githubAuth) {
+        this.logger.debug('GitHub not authenticated, attempting authentication', {}, 'preRelease');
+        await this.preReleaseService.ensureGitHubAuth();
+      }
+
       // Get catalog details and releases in parallel
+      this.logger.debug('Fetching catalog details and GitHub releases in parallel', { catalogId }, 'preRelease');
       const [catalogDetails, releases] = await Promise.all([
         this.preReleaseService.getSelectedCatalogDetails(catalogId),
-        this.preReleaseService.getLastPreReleases()
+        this.preReleaseService.getLastPreReleases().then(releases => {
+          this.logger.debug('Fetched GitHub releases', {
+            releaseCount: releases.length,
+            releases: releases.map(r => ({
+              tag: r.tag_name,
+              created_at: r.created_at
+            }))
+          }, 'preRelease');
+          return releases;
+        }).catch(error => {
+          this.logger.error('Failed to fetch GitHub releases', { error }, 'preRelease');
+          return [];
+        })
       ]);
 
       // Get auth status and catalogs in parallel
-      const [githubAuth, catalogAuth, catalogs] = await Promise.all([
+      const [githubAuthStatus, catalogAuth, catalogs] = await Promise.all([
         this.preReleaseService.isGitHubAuthenticated(),
         this.preReleaseService.isCatalogAuthenticated(),
         this.preReleaseService.getCatalogDetails().then(data => data.catalogs)
@@ -767,7 +790,9 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         name: catalogDetails.name,
         offeringId: catalogDetails.offeringId,
         versionCount: catalogDetails.versions?.length ?? 0,
-        releaseCount: releases.length
+        releaseCount: releases.length,
+        githubAuthStatus,
+        catalogAuth
       }, 'preRelease');
 
       // Send a single update with all data
@@ -775,19 +800,27 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         await this.view.webview.postMessage({
           command: 'updateData',
           catalogs,
-          catalogDetails,
+          catalogDetails: {
+            catalogId,
+            offerings: [catalogDetails]
+          },
           releases,
           state: { selectedCatalogId: catalogId },
           loading: false
         });
 
         // Update button states
-        await this.updateButtonStates(githubAuth, catalogAuth);
+        await this.updateButtonStates(githubAuthStatus, catalogAuth);
       }
 
       this.logger.info('Successfully updated catalog details and releases', {
         catalogId,
-        releaseCount: releases.length
+        releaseCount: releases.length,
+        catalogDetails: {
+          name: catalogDetails.name,
+          offeringId: catalogDetails.offeringId,
+          versionsCount: catalogDetails.versions?.length
+        }
       }, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to get catalog details', { error, catalogId }, 'preRelease');
@@ -832,9 +865,22 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
         await this.preReleaseService.handleForceRefresh(selectedCatalogId);
 
         // Fetch fresh data
+        this.logger.debug('Fetching fresh catalog details and GitHub releases', { catalogId: selectedCatalogId }, 'preRelease');
         const [catalogDetails, releases] = await Promise.all([
           this.preReleaseService.getSelectedCatalogDetails(selectedCatalogId),
-          this.preReleaseService.getLastPreReleases()
+          this.preReleaseService.getLastPreReleases().then(releases => {
+            this.logger.debug('Fetched fresh GitHub releases', {
+              releaseCount: releases.length,
+              releases: releases.map(r => ({
+                tag: r.tag_name,
+                created_at: r.created_at
+              }))
+            }, 'preRelease');
+            return releases;
+          }).catch(error => {
+            this.logger.error('Failed to fetch fresh GitHub releases', { error }, 'preRelease');
+            return [];
+          })
         ]);
 
         this.logger.debug('Got latest releases', {
