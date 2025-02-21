@@ -56,6 +56,47 @@ interface VersionMappingSummary {
     allFlavorsPublished?: boolean;
 }
 
+// Add missing type definitions
+interface ListOfferingsResponse {
+    offset: number;
+    limit: number;
+    total_count: number;
+    resources: Array<{
+        id?: string;
+        name?: string;
+        label?: string;
+        short_description?: string;
+        kinds?: Array<{
+            id: string;
+            format_kind: string;
+            format_kind_label: string;
+            install_kind: string;
+            install_kind_label: string;
+            target_kind: string;
+            target_kind_label: string;
+            versions?: Array<{
+                id: string;
+                version: string;
+                flavor?: {
+                    name: string;
+                    label: string;
+                    description?: string;
+                    install_type?: string;
+                };
+                created?: string;
+                updated?: string;
+                tags?: string[];
+                configuration?: any;
+                outputs?: any;
+            }>;
+            metadata?: any;
+        }>;
+        created?: string;
+        updated?: string;
+        metadata?: any;
+    }>;
+}
+
 // Update type references in the code
 type OfferingVersion = IBMCloudOfferingVersion;
 
@@ -403,7 +444,6 @@ export class IBMCloudService {
 
         const cacheKey = DynamicCacheKeys.CATALOG_OFFERINGS(catalogId);
 
-        // If skipCache is true, delete the cache entry first
         if (skipCache) {
             this.logger.debug('Skipping cache, clearing existing data', {
                 catalogId,
@@ -411,12 +451,10 @@ export class IBMCloudService {
                 skipCache
             }, 'preRelease');
             this.cacheService.delete(cacheKey);
-            // Also clear version caches when skipping cache
             const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*');
             this.cacheService.delete(versionCacheKey);
-            this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
+            this.cacheService.delete(`offerings:${catalogId}`);
 
-            // Force fetch fresh data
             try {
                 this.logger.debug('Fetching fresh offerings from API', {
                     catalogId,
@@ -426,12 +464,16 @@ export class IBMCloudService {
 
                 const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, async () => {
                     try {
-                        const result = await Promise.race<CatalogManagementV1.Response<CatalogManagementV1.ListOfferingsResponse>>([
-                            this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 }),
-                            new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('API request timed out after 60 seconds')), 60000)
-                            )
-                        ]);
+                        type OfferingsResponse = CatalogManagementV1.Response<ListOfferingsResponse>;
+                        const timeoutPromise = new Promise<OfferingsResponse>((_, reject) =>
+                            setTimeout(() => reject(new Error('API request timed out after 60 seconds')), 60000)
+                        );
+                        const fetchPromise = this.catalogManagement.listOfferings({
+                            catalogIdentifier: catalogId,
+                            limit: 1000
+                        }) as Promise<OfferingsResponse>;
+
+                        const result = await Promise.race([fetchPromise, timeoutPromise]);
                         return result;
                     } catch (error) {
                         if (error instanceof Error && error.message.includes('timed out')) {
@@ -445,20 +487,36 @@ export class IBMCloudService {
                     }
                 });
 
+                interface OfferingResource {
+                    id?: string;
+                    name?: string;
+                    label?: string;
+                    short_description?: string;
+                    kinds?: Array<{
+                        id: string;
+                        versions?: Array<{
+                            version: string;
+                        }>;
+                    }>;
+                    created?: string;
+                    updated?: string;
+                    metadata?: any;
+                }
+
                 this.logger.debug('Raw API response', {
                     catalogId,
                     status: offerings.status,
                     resourceCount: offerings.result.resources?.length,
-                    rawVersions: offerings.result.resources?.map(o =>
-                        o.kinds?.map(k =>
-                            k.versions?.map(v => v.version)
+                    rawVersions: offerings.result.resources?.map((o: OfferingResource) =>
+                        o.kinds?.map((k) =>
+                            k.versions?.map((v) => v.version)
                         )
                     ).flat(2),
                     skipCache
                 }, 'preRelease');
 
                 const resources = offerings.result.resources ?? [];
-                const offeringsPage: OfferingItem[] = resources.map((offering) => ({
+                const offeringsPage: OfferingItem[] = resources.map((offering: OfferingResource) => ({
                     id: offering.id!,
                     name: offering.name!,
                     label: offering.label,
@@ -469,7 +527,6 @@ export class IBMCloudService {
                     metadata: offering.metadata,
                 }));
 
-                // Log the mapped data before caching
                 this.logger.debug('Mapped offerings before caching', {
                     catalogId,
                     count: offeringsPage.length,
@@ -477,7 +534,6 @@ export class IBMCloudService {
                     skipCache
                 }, 'preRelease');
 
-                // Cache the offerings result
                 this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
 
                 this.logger.debug('Cached fresh offerings data', {
@@ -500,14 +556,12 @@ export class IBMCloudService {
                     } : 'Unknown error type'
                 }, 'preRelease');
 
-                // Show a more user-friendly error message
                 vscode.window.showErrorMessage(`Failed to fetch offerings: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again later.`);
 
                 throw error;
             }
         }
 
-        // Try to get from cache if not skipping cache
         const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
         if (cached) {
             this.logger.debug('Using cached offerings data', {
@@ -519,7 +573,6 @@ export class IBMCloudService {
             return cached;
         }
 
-        // If not in cache, fetch fresh data
         return this.getOfferingsForCatalog(catalogId, true);
     }
 
