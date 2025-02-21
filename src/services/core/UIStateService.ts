@@ -19,7 +19,6 @@ export class UIStateService {
     public readonly onDidChangeState = this._onDidChangeState.event;
 
     private constructor(private readonly context: vscode.ExtensionContext) {
-        this.logger.debug('Initializing UIStateService');
         this.state = this.loadState();
     }
 
@@ -57,7 +56,6 @@ export class UIStateService {
             this.debounceSaveTimer = setTimeout(async () => {
                 try {
                     await this.context.globalState.update(this.stateKey, this.state);
-                    this.logger.debug('State saved successfully');
                 } catch (error) {
                     this.logger.error('Failed to save state', error);
                 }

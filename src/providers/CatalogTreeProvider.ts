@@ -170,33 +170,21 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      */
     private queueStateUpdate(): void {
         if (this.isDisposed) {
-            this.logger.debug('Skipping state update - provider is disposed');
             return;
         }
 
-        this.logger.debug('Queueing state update', {
-            hasExistingTimer: this.batchUpdateTimeout !== null,
-            expandedNodesCount: this.expandedNodes.size
-        });
-
         if (this.batchUpdateTimeout !== null) {
-            this.logger.debug('Clearing existing timer');
             window.clearTimeout(this.batchUpdateTimeout);
             this.batchUpdateTimeout = null;
         }
 
         this.batchUpdateTimeout = window.setTimeout(async () => {
             if (this.isDisposed) {
-                this.logger.debug('Skipping queued update - provider was disposed');
                 return;
             }
 
             try {
                 const expandedNodes = Array.from(this.expandedNodes.keys());
-                this.logger.debug('Updating tree state', {
-                    expandedNodesCount: expandedNodes.length,
-                    expandedNodes
-                });
                 await this.uiStateService.updateTreeState({ expandedNodes });
             } catch (error) {
                 this.logger.error('Failed to save expanded state', { error });

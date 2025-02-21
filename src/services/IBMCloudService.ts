@@ -389,7 +389,7 @@ export class IBMCloudService {
      */
     @deduplicateRequest({
         keyGenerator: (catalogId: string) => `offerings:${catalogId}`,
-        timeoutMs: 60000,
+        timeoutMs: 120000,
         onDuplicate: (key) => {
             LoggingService.getInstance().debug('Duplicate offerings request detected', { key });
         },
@@ -415,102 +415,112 @@ export class IBMCloudService {
             const versionCacheKey = DynamicCacheKeys.OFFERING_DETAILS(catalogId, '*');
             this.cacheService.delete(versionCacheKey);
             this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
-        }
 
-        // Try to get from cache if not skipping cache
-        const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
-        if (cached) {
-            this.logger.debug('Returning cached offerings', {
-                catalogId,
-                count: cached.length,
-                versions: cached.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
-                skipCache
-            }, 'preRelease');
-            return cached;
-        }
-
-        // If no cache or skipCache is true, fetch fresh data
-        try {
-            this.logger.debug('Fetching fresh offerings from API', {
-                catalogId,
-                timestamp: new Date().toISOString()
-            }, 'preRelease');
-
-            // Create a promise that will reject after 30 seconds
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error('Request timed out')), 30000);
-            });
-
-            // Create the actual API request promise
-            const requestPromise = this.withProgress(`Fetching offerings for ${catalogId}`, () =>
-                this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 })
-            );
-
-            // Race between the timeout and the actual request
-            const offerings = await Promise.race([requestPromise, timeoutPromise]).catch(error => {
-                this.logger.warn('Failed to fetch offerings from API', {
-                    error,
+            // Force fetch fresh data
+            try {
+                this.logger.debug('Fetching fresh offerings from API', {
                     catalogId,
-                    errorDetails: error instanceof Error ? {
-                        message: error.message,
-                        stack: error.stack,
-                        name: error.name
-                    } : 'Unknown error type',
-                    timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString(),
+                    skipCache
                 }, 'preRelease');
-                return { result: { resources: [] }, status: 'error' };
-            });
 
-            this.logger.debug('Raw API response', {
-                catalogId,
-                status: offerings.status,
-                resourceCount: offerings.result.resources?.length,
-                rawVersions: offerings.result.resources?.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2)
-            }, 'preRelease');
+                const offerings = await this.withProgress(`Fetching offerings for ${catalogId}`, async () => {
+                    try {
+                        const result = await Promise.race<CatalogManagementV1.Response<CatalogManagementV1.ListOfferingsResponse>>([
+                            this.catalogManagement.listOfferings({ catalogIdentifier: catalogId, limit: 1000 }),
+                            new Promise((_, reject) =>
+                                setTimeout(() => reject(new Error('API request timed out after 60 seconds')), 60000)
+                            )
+                        ]);
+                        return result;
+                    } catch (error) {
+                        if (error instanceof Error && error.message.includes('timed out')) {
+                            this.logger.error('API request timeout', {
+                                catalogId,
+                                error: error.message
+                            }, 'preRelease');
+                            throw new Error(`Failed to fetch offerings: Request timed out. Please try again or check your network connection.`);
+                        }
+                        throw error;
+                    }
+                });
 
-            const resources = offerings.result.resources ?? [];
-            const offeringsPage: OfferingItem[] = resources.map((offering) => ({
-                id: offering.id!,
-                name: offering.name!,
-                label: offering.label,
-                shortDescription: offering.short_description,
-                kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
-                created: offering.created,
-                updated: offering.updated,
-                metadata: offering.metadata,
-            }));
+                this.logger.debug('Raw API response', {
+                    catalogId,
+                    status: offerings.status,
+                    resourceCount: offerings.result.resources?.length,
+                    rawVersions: offerings.result.resources?.map(o =>
+                        o.kinds?.map(k =>
+                            k.versions?.map(v => v.version)
+                        )
+                    ).flat(2),
+                    skipCache
+                }, 'preRelease');
 
-            // Cache the offerings result only if we got at least one offering
-            if (offeringsPage.length > 0) {
+                const resources = offerings.result.resources ?? [];
+                const offeringsPage: OfferingItem[] = resources.map((offering) => ({
+                    id: offering.id!,
+                    name: offering.name!,
+                    label: offering.label,
+                    shortDescription: offering.short_description,
+                    kinds: this.mapKinds(offering.kinds ?? [], offering.id!, catalogId),
+                    created: offering.created,
+                    updated: offering.updated,
+                    metadata: offering.metadata,
+                }));
+
+                // Log the mapped data before caching
+                this.logger.debug('Mapped offerings before caching', {
+                    catalogId,
+                    count: offeringsPage.length,
+                    versions: offeringsPage.map(o => o.kinds?.map(k => k.versions?.map(v => v.version))).flat(2),
+                    skipCache
+                }, 'preRelease');
+
+                // Cache the offerings result
                 this.cacheService.set(cacheKey, offeringsPage, CacheConfigurations.CATALOG_OFFERINGS);
+
                 this.logger.debug('Cached fresh offerings data', {
                     catalogId,
                     count: offeringsPage.length,
                     timestamp: new Date().toISOString(),
                     skipCache
                 }, 'preRelease');
-            } else {
-                this.logger.warn('No offerings found for catalog', {
+
+                return offeringsPage;
+            } catch (error) {
+                this.logger.error('Failed to get offerings', {
+                    error,
                     catalogId,
-                    timestamp: new Date().toISOString()
+                    skipCache,
+                    errorDetails: error instanceof Error ? {
+                        message: error.message,
+                        stack: error.stack,
+                        name: error.name
+                    } : 'Unknown error type'
                 }, 'preRelease');
+
+                // Show a more user-friendly error message
+                vscode.window.showErrorMessage(`Failed to fetch offerings: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again later.`);
+
+                throw error;
             }
-
-            return offeringsPage;
-        } catch (error) {
-            this.logger.error('Failed to get offerings', {
-                error,
-                catalogId,
-                errorDetails: error instanceof Error ? {
-                    message: error.message,
-                    stack: error.stack,
-                    name: error.name
-                } : 'Unknown error type'
-            }, 'preRelease');
-
-            // Return empty array instead of throwing
-            return [];
         }
+
+        // Try to get from cache if not skipping cache
+        const cached = this.cacheService.get<OfferingItem[]>(cacheKey);
+        if (cached) {
+            this.logger.debug('Using cached offerings data', {
+                catalogId,
+                count: cached.length,
+                timestamp: new Date().toISOString(),
+                skipCache
+            }, 'preRelease');
+            return cached;
+        }
+
+        // If not in cache, fetch fresh data
+        return this.getOfferingsForCatalog(catalogId, true);
     }
 
     /**

@@ -94,90 +94,17 @@ export class PreReleaseService {
         // Initialize GitHub authentication
         await PreReleaseService.instance.initializeGitHub();
 
-        // Pre-initialize IBM Cloud Service and fetch catalogs if already authenticated
+        // Pre-initialize IBM Cloud Service if already authenticated
         const apiKey = await AuthService.getApiKey(context);
-        PreReleaseService.instance.logger.debug('Checking IBM Cloud authentication status', {
-          hasApiKey: !!apiKey
-        }, 'preRelease');
-
         if (apiKey) {
           PreReleaseService.instance.ibmCloudService = new IBMCloudService(apiKey);
-          PreReleaseService.instance.logger.debug('IBM Cloud service pre-initialized', {
-            apiKeyLength: apiKey.length,
-            timestamp: new Date().toISOString()
-          }, 'preRelease');
-
-          // Fetch and cache available catalogs during initialization
-          // Do this in the background to avoid blocking initialization
-          void (async () => {
-            try {
-              const ibmCloudService = PreReleaseService.instance.ibmCloudService;
-              if (!ibmCloudService) {
-                PreReleaseService.instance.logger.warn('IBM Cloud service not available for catalog fetch', {
-                  timestamp: new Date().toISOString()
-                }, 'preRelease');
-                return;
-              }
-
-              // Create a promise that will reject after 30 seconds
-              const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error('Catalog fetch timed out')), 30000);
-              });
-
-              PreReleaseService.instance.logger.debug('Fetching available catalogs', {
-                timestamp: new Date().toISOString()
-              }, 'preRelease');
-
-              // Race the catalog fetch against the timeout
-              const privateCatalogs = await Promise.race([
-                ibmCloudService.getAvailablePrivateCatalogs(),
-                timeoutPromise
-              ]).catch(error => {
-                PreReleaseService.instance.logger.warn('Failed to fetch private catalogs', {
-                  error,
-                  errorMessage: error instanceof Error ? error.message : 'Unknown error',
-                  errorStack: error instanceof Error ? error.stack : undefined,
-                  timestamp: new Date().toISOString()
-                }, 'preRelease');
-                return [];
-              });
-
-              if (privateCatalogs.length > 0) {
-                PreReleaseService.instance.logger.info('Pre-fetched catalogs during initialization', {
-                  count: privateCatalogs.length,
-                  catalogs: privateCatalogs.map(c => ({ id: c.id, label: c.label })),
-                  timestamp: new Date().toISOString()
-                }, 'preRelease');
-              } else {
-                PreReleaseService.instance.logger.warn('No private catalogs found during initialization', {
-                  timestamp: new Date().toISOString()
-                }, 'preRelease');
-              }
-            } catch (error) {
-              PreReleaseService.instance.logger.error('Failed to pre-fetch catalogs during initialization', {
-                error,
-                errorMessage: error instanceof Error ? error.message : 'Unknown error',
-                errorStack: error instanceof Error ? error.stack : undefined,
-                timestamp: new Date().toISOString()
-              }, 'preRelease');
-            }
-          })();
-        } else {
-          PreReleaseService.instance.logger.warn('No API key found during initialization', {
-            timestamp: new Date().toISOString()
-          }, 'preRelease');
+          PreReleaseService.instance.logger.debug('IBM Cloud service pre-initialized', {}, 'preRelease');
         }
 
-        PreReleaseService.instance.logger.info('PreReleaseService initialized successfully', {
-          timestamp: new Date().toISOString()
-        }, 'preRelease');
+        PreReleaseService.instance.logger.info('PreReleaseService initialized successfully', {}, 'preRelease');
       } catch (error) {
-        PreReleaseService.instance.logger.error('PreReleaseService initialization had errors', {
-          error,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
-          errorStack: error instanceof Error ? error.stack : undefined,
-          timestamp: new Date().toISOString()
-        }, 'preRelease');
+        PreReleaseService.instance.logger.warn('PreReleaseService initialization had non-critical errors', { error }, 'preRelease');
+        // Don't throw - allow the service to initialize with reduced functionality
       }
     }
     return PreReleaseService.instance;
@@ -341,8 +268,6 @@ export class PreReleaseService {
    */
   public async getLastPreReleases(): Promise<any[]> {
     try {
-      this.logger.debug('Starting to fetch pre-releases', {}, 'preRelease');
-
       // Try to get repository info even if not authenticated
       const repoInfo = await this.getRepositoryInfo();
       if (!repoInfo) {
@@ -350,59 +275,28 @@ export class PreReleaseService {
         return [];
       }
 
-      this.logger.debug('Got repository info', { owner: repoInfo.owner, repo: repoInfo.name }, 'preRelease');
-
-      // Ensure we have an authenticated Octokit instance
-      if (!this.octokit) {
-        const authenticated = await this.ensureGitHubAuth();
-        if (!authenticated) {
-          this.logger.warn('GitHub authentication required to fetch releases', {}, 'preRelease');
-          return [];
-        }
-        if (!this.octokit) {
-          this.logger.error('Octokit not initialized after authentication', {}, 'preRelease');
-          return [];
-        }
-      }
+      // Create an anonymous Octokit instance for public repos if not authenticated
+      const octokit = this.octokit || new Octokit();
 
       try {
-        this.logger.debug('Fetching releases from GitHub', { owner: repoInfo.owner, repo: repoInfo.name }, 'preRelease');
-        const releases = await this.octokit.rest.repos.listReleases({
+        const releases = await octokit.rest.repos.listReleases({
           owner: repoInfo.owner,
           repo: repoInfo.name,
           per_page: 5
         });
 
-        this.logger.info('Successfully fetched releases', {
-          count: releases.data.length,
-          releases: releases.data.map(r => ({
-            tag_name: r.tag_name,
-            created_at: r.created_at
-          }))
-        }, 'preRelease');
-
         return releases.data;
       } catch (error) {
-        if ((error as any).status === 404) {
-          this.logger.warn('Repository not found or no releases available', {
-            owner: repoInfo.owner,
-            repo: repoInfo.name
-          }, 'preRelease');
+        // If it fails and we're not authenticated, log it as debug (expected for private repos)
+        if (!this.octokit) {
+          this.logger.debug('Failed to fetch releases (possibly private repository)', { error }, 'preRelease');
         } else {
-          this.logger.error('Failed to fetch releases', {
-            error,
-            owner: repoInfo.owner,
-            repo: repoInfo.name,
-            errorMessage: error instanceof Error ? error.message : 'Unknown error'
-          }, 'preRelease');
+          this.logger.error('Failed to fetch releases', { error }, 'preRelease');
         }
         return [];
       }
     } catch (error) {
-      this.logger.error('Failed to get pre-releases', {
-        error,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error'
-      }, 'preRelease');
+      this.logger.error('Failed to get pre-releases', { error }, 'preRelease');
       return [];
     }
   }
@@ -612,81 +506,150 @@ export class PreReleaseService {
    */
   public async getSelectedCatalogDetails(catalogId: string): Promise<CatalogDetails> {
     try {
+      // Clear all caches at the start to ensure fresh data
+      const ibmCloudService = await this.getIBMCloudService();
+      await ibmCloudService.clearOfferingCache(catalogId);
+      this.cacheService.delete(`${CacheKeys.OFFERING_DETAILS}_${catalogId}`);
+      this.cacheService.delete(`${CacheKeys.CATALOG_OFFERINGS}_${catalogId}`);
+      this.logger.debug('Cleared all caches before fetching catalog details', {
+        catalogId,
+        clearedKeys: [
+          `${CacheKeys.OFFERING_DETAILS}_${catalogId}`,
+          `${CacheKeys.CATALOG_OFFERINGS}_${catalogId}`
+        ]
+      }, 'preRelease');
+
+      // Check cache first
+      const cacheKey = `${CacheKeys.OFFERING_DETAILS}_${catalogId}`;
       const workspaceRoot = this.workspaceRoot;
       if (!workspaceRoot) {
         throw new Error('No workspace root found');
       }
 
-      // Get IBM Cloud service first
-      const ibmCloudService = await this.getIBMCloudService();
+      // Get GitHub releases for version mapping
+      const githubReleases = await this.getGitHubReleases().catch(error => {
+        this.logger.warn('Failed to fetch GitHub releases for version mapping', { error }, 'preRelease');
+        return [];
+      });
 
-      // Get offering details from ibm_catalog.json
-      const catalogJson = await this.getOfferingDetailsFromCatalogJson(workspaceRoot);
-      if (!catalogJson || !catalogJson.name) {
-        throw new Error('No offering details found in ibm_catalog.json');
-      }
-
-      this.logger.debug('Found offering details in catalog json', {
-        name: catalogJson.name,
-        label: catalogJson.label,
-        id: catalogJson.id,
-        flavorCount: catalogJson.flavors?.length
-      }, 'preRelease');
-
-      // Get offerings from IBM Cloud
-      const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
-      const offering = offerings.find(o => o.id === catalogJson.id || o.name === catalogJson.name);
-
-      if (!offering) {
-        this.logger.warn('Offering not found in catalog', {
-          catalogId,
-          offeringName: catalogJson.name,
-          offeringId: catalogJson.id
-        }, 'preRelease');
-
-        // Return details without versions
-        return {
-          name: catalogJson.name,
-          label: catalogJson.label,
-          offeringId: catalogJson.id || catalogJson.name,
-          versions: [],
-          catalogId,
-          offeringNotFound: true
-        };
-      }
-
-      // Prepare the response with versions
-      const catalogDetails: CatalogDetails = {
-        name: catalogJson.name,
-        label: catalogJson.label,
-        offeringId: offering.id,
-        versions: offering.kinds?.[0]?.versions?.map(v => ({
-          id: v.id || '',
-          version: v.version,
-          flavor: {
-            name: v.flavor?.name || 'default',
-            label: v.flavor?.label || 'Default',
-            install_type: v.flavor?.install_type || 'fullstack'
-          },
-          tgz_url: v.tgz_url || '',
-          githubTag: v.tgz_url?.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1] || ''
-        })) || [],
-        catalogId
-      };
-
-      this.logger.info('Retrieved catalog details', {
-        catalogId,
-        offeringId: catalogDetails.offeringId,
-        name: catalogDetails.name,
-        versionCount: catalogDetails.versions.length,
-        versions: catalogDetails.versions.map(v => ({
-          version: v.version,
-          flavor: v.flavor.name,
-          hasUrl: !!v.tgz_url
+      // Log GitHub releases for debugging
+      this.logger.debug('GitHub releases available for mapping', {
+        releases: githubReleases.map(r => ({
+          tag: r.tag_name,
+          version: r.tag_name.replace(/^v/, ''),
+          tarball_url: r.tarball_url,
+          created_at: r.created_at
         }))
       }, 'preRelease');
 
-      return catalogDetails;
+      // Get the selected catalog
+      const privateCatalogs = await ibmCloudService.getAvailablePrivateCatalogs();
+      const selectedCatalog = privateCatalogs.find((c: { id: string; label: string }) => c.id === catalogId);
+      if (!selectedCatalog) {
+        throw new Error('Selected catalog not found');
+      }
+
+      // Find offering by name (should match the name in ibm_catalog.json)
+      const catalogJsonPath = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), 'ibm_catalog.json');
+      const catalogJsonContent = await vscode.workspace.fs.readFile(catalogJsonPath);
+      const catalogJson = JSON.parse(catalogJsonContent.toString()) as CatalogJson;
+
+      this.logger.info('Reading ibm_catalog.json for offering details', {
+        hasProducts: !!catalogJson.products,
+        productCount: catalogJson.products?.length,
+        productNames: catalogJson.products?.map(p => p.name),
+        catalogId
+      }, 'preRelease');
+
+      const offeringName = catalogJson.products?.[0]?.name;
+      const offeringLabel = catalogJson.products?.[0]?.label;
+
+      this.logger.info('Offering details from ibm_catalog.json', {
+        offeringLabel,
+        offeringName,
+        hasLabel: !!offeringLabel,
+        source: 'ibm_catalog.json',
+        catalogId
+      }, 'preRelease');
+
+      if (!offeringName) {
+        throw new Error('Could not find offering name in ibm_catalog.json');
+      }
+
+      if (!offeringLabel) {
+        throw new Error('Could not find offering label in ibm_catalog.json. Label is required.');
+      }
+
+      // Get offerings and find the matching one
+      this.logger.debug('Getting offerings for catalog', { catalogId, offeringLabel }, 'preRelease');
+      const offerings = await ibmCloudService.getOfferingsForCatalog(selectedCatalog.id);
+      const offering = offerings.find((o: { name: string }) => o.name === offeringName);
+
+      if (!offering) {
+        this.logger.error('Offering not found in catalog', {
+          catalogId,
+          offeringName,
+          availableOfferings: offerings.map((o: { name: string }) => o.name)
+        }, 'preRelease');
+        throw new Error(`Offering "${offeringName}" not found in catalog ${catalogId}. Please ensure the offering exists in the catalog before proceeding.`);
+      }
+
+      // Clear version-related caches before fetching fresh data
+      await ibmCloudService.clearOfferingCache(catalogId);
+      this.cacheService.delete(`${CacheKeys.OFFERING_DETAILS}_${catalogId}`);
+      this.logger.debug('Cleared version caches before fetching fresh data', {
+        catalogId,
+        offeringId: offering.id
+      }, 'preRelease');
+
+      // Get all versions for each kind
+      const allVersions: CatalogVersion[] = [];
+      const kindVersions = await ibmCloudService.getOfferingKindVersions(
+        selectedCatalog.id,
+        offering.id,
+        'terraform'
+      );
+
+      kindVersions.versions.forEach((version: IBMCloudOfferingVersion) => {
+        if (version.tgz_url) {
+          const tgzUrlTag = version.tgz_url.match(/\/(?:tags|tarball)\/([^/]+?)(?:\.tar\.gz)?$/)?.[1];
+          if (tgzUrlTag) {
+            allVersions.push({
+              id: version.id || '',  // Add required id field
+              version: version.version,
+              flavor: {
+                name: version.flavor?.name || '',  // Use flavor name instead of offering name
+                label: version.flavor?.label || version.flavor?.name || '',  // Use flavor label/name instead of offering label
+                install_type: version.flavor?.install_type || 'fullstack'  // Default format kind
+              },
+              tgz_url: version.tgz_url,
+              githubTag: tgzUrlTag
+            });
+          }
+        }
+      });
+
+      if (allVersions.length === 0) {
+        this.logger.error('No versions found in catalog', {
+          catalogId,
+          offeringId: offering.id,
+          offeringName: offering.name
+        }, 'preRelease');
+        throw new Error(`No versions found for offering "${offeringName}" in catalog ${catalogId}. There must be at least one version in the catalog.`);
+      }
+
+      this.logger.info('Stored offering ID in cache after successful version retrieval', {
+        catalogId,
+        offeringId: offering.id
+      }, 'preRelease');
+
+      return {
+        name: offering.name || '',  // Ensure name is never undefined
+        label: offering.label || offering.name || '',  // Ensure label is never undefined
+        versions: allVersions,
+        offeringId: offering.id,
+        catalogId  // Add the required catalogId field
+      };
     } catch (error) {
       this.logger.error('Failed to get catalog details', {
         error,
@@ -695,58 +658,6 @@ export class PreReleaseService {
         errorStack: error instanceof Error ? error.stack : undefined
       }, 'preRelease');
       throw error instanceof Error ? error : new Error('Failed to get catalog details');
-    }
-  }
-
-  private async retryOperation<T>(
-    operation: () => Promise<T>,
-    maxRetries: number,
-    errorMessage: string
-  ): Promise<T> {
-    let lastError: Error | undefined;
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        return await operation();
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        this.logger.warn(`Retry ${i + 1}/${maxRetries} failed`, {
-          error: lastError,
-          errorMessage: lastError.message
-        }, 'preRelease');
-        if (i < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
-        }
-      }
-    }
-    throw lastError || new Error(errorMessage);
-  }
-
-  private async getOfferingDetailsFromCatalogJson(workspaceRoot: string): Promise<{
-    name: string;
-    label: string;
-    id?: string;
-    flavors?: CatalogFlavor[];
-  }> {
-    const catalogJsonPath = path.join(workspaceRoot, 'ibm_catalog.json');
-    try {
-      const fileContent = await fs.promises.readFile(catalogJsonPath, 'utf8');
-      const catalogJson = JSON.parse(fileContent) as CatalogJson;
-      const product = catalogJson.products?.[0];
-      if (!product) {
-        throw new Error('No products found in ibm_catalog.json');
-      }
-      return {
-        name: product.name,
-        label: product.label,
-        id: product.id,
-        flavors: product.flavors
-      };
-    } catch (error) {
-      this.logger.error('Failed to read ibm_catalog.json', {
-        error,
-        path: catalogJsonPath
-      }, 'preRelease');
-      throw error instanceof Error ? error : new Error('Failed to read ibm_catalog.json');
     }
   }
 
@@ -1651,6 +1562,106 @@ export class PreReleaseService {
     }
   }
 
+  private async handleMessage(message: WebviewMessage): Promise<void> {
+    try {
+      // Validate message structure first
+      if (!message || typeof message.command !== 'string') {
+        this.logger.error('Invalid message received', { message }, 'preRelease');
+        if (this.view) {
+          await this.view.webview.postMessage({
+            command: 'setLoadingState',
+            loading: false,
+            error: 'Invalid message format'
+          });
+        }
+        return;
+      }
+
+      this.logger.debug('Handling message', { command: message.command, hasData: !!message.data }, 'preRelease');
+
+      switch (message.command) {
+        case 'getBranchName':
+          await this.sendBranchName();
+          break;
+        case 'refresh':
+          await this.refresh();
+          break;
+        case 'selectCatalog':
+          if (!message.catalogId) {
+            this.logger.error('Missing catalogId for selectCatalog command', { message }, 'preRelease');
+            if (this.view) {
+              await this.view.webview.postMessage({
+                command: 'setLoadingState',
+                loading: false,
+                error: 'No catalog selected'
+              });
+            }
+            return;
+          }
+          await this.handleCatalogSelection(message.catalogId);
+          break;
+        case 'createPreRelease':
+          // Extract data from either message.data or direct properties
+          const releaseData: PreReleaseDetails = message.data || {
+            version: message.version || '',
+            postfix: message.postfix || '',
+            publishToCatalog: message.publishToCatalog || false,
+            releaseGithub: message.releaseGithub || false,
+            catalogId: message.catalogId
+          };
+
+          this.logger.debug('Processing createPreRelease command', { releaseData }, 'preRelease');
+
+          if (!releaseData || !releaseData.version || !releaseData.postfix) {
+            this.logger.error('Missing data for createPreRelease command', { message, releaseData }, 'preRelease');
+            if (this.view) {
+              await this.view.webview.postMessage({
+                command: 'setLoadingState',
+                loading: false,
+                error: 'Missing release details. Please fill in all required fields.'
+              });
+            }
+            return;
+          }
+          await this.handleCreatePreRelease(releaseData);
+          break;
+        case 'setup':
+          await this.handleSetup();
+          break;
+        case 'forceRefresh':
+          await this.handleForceRefresh(message.catalogId);
+          break;
+        default:
+          this.logger.warn('Unknown message command received', {
+            command: message.command,
+            messageType: typeof message,
+            hasData: !!message.data
+          }, 'preRelease');
+          break;
+      }
+    } catch (error) {
+      // Log the error with full context
+      this.logger.error('Error handling message', {
+        error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        command: message.command,
+        messageData: message.data
+      }, 'preRelease');
+
+      // Show error in UI
+      if (this.view) {
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
+          loading: false,
+          error: error instanceof Error ? error.message : 'An error occurred'
+        });
+      }
+
+      // Always ensure the view is refreshed to a consistent state
+      await this.refresh();
+    }
+  }
 
   public async handleForceRefresh(catalogId?: string): Promise<void> {
     this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
@@ -2017,55 +2028,21 @@ export class PreReleaseService {
         });
       }
 
-      // Get GitHub releases first
-      const githubReleases = await this.getGitHubReleases().catch(error => {
-        this.logger.warn('Failed to fetch GitHub releases', { error }, 'preRelease');
-        return [];
-      });
+      const { catalogDetails, versionMappings } = await this.getLatestVersions(catalogId);
 
-      // Get catalog details
-      const catalogDetails = await this.getSelectedCatalogDetails(catalogId);
-
-      if (!catalogDetails) {
-        throw new Error('Failed to get catalog details');
-      }
-
-      // Create version mappings
-      const versionMappings = this.getVersionMappingSummary(
-        catalogId,
-        catalogDetails.offeringId,
-        githubReleases,
-        catalogDetails.versions
-      );
-
-      this.logger.debug('Created version mappings', {
-        mappingCount: versionMappings.length,
-        versions: versionMappings.map(m => ({
-          version: m.version,
-          hasGithubRelease: !!m.githubRelease,
-          catalogVersionCount: m.catalogVersions?.length || 0
-        }))
-      }, 'preRelease');
-
-      if (this.view) {
+      if (catalogDetails && this.view) {
         const detailsWithMappings = {
           ...catalogDetails,
           versionMappings
         };
 
-        // Get all catalogs for consistent state update
-        const catalogs = await this.getCatalogDetails().then(data => data.catalogs);
-
-        // Send a single updateData message with all information
         await this.view.webview.postMessage({
-          command: 'updateData',
-          catalogs,
-          catalogDetails: {
-            catalogId,
-            offerings: [detailsWithMappings]
-          },
-          releases: githubReleases,
-          state: { selectedCatalogId: catalogId },
+          command: 'updateCatalogDetails',
+          catalogDetails: detailsWithMappings
+        });
+
+        await this.view.webview.postMessage({
+          command: 'setLoadingState',
           loading: false
         });
       }
@@ -2073,20 +2050,16 @@ export class PreReleaseService {
       this.logger.info('Successfully updated catalog details', {
         catalogId,
         label: catalogDetails?.label,
-        offeringId: catalogDetails?.offeringId,
-        versionCount: catalogDetails.versions.length,
-        mappingCount: versionMappings.length
+        offeringId: catalogDetails?.offeringId
       }, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to get catalog details', { error, catalogId }, 'preRelease');
 
       if (this.view) {
-        // Send error through updateData for consistent error handling
         await this.view.webview.postMessage({
-          command: 'updateData',
+          command: 'setLoadingState',
           loading: false,
-          error: error instanceof Error ? error.message : 'Failed to get catalog details',
-          state: { selectedCatalogId: '' }
+          error: error instanceof Error ? error.message : 'Failed to get catalog details'
         });
       }
     }
@@ -2588,21 +2561,15 @@ export class PreReleaseService {
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
 
-    // Filter and sort catalog versions
-    const validCatalogVersions = catalogVersions
-      .filter(v => v.tgz_url && v.version)  // Only include versions with tgz_url and version
-      .sort((a, b) => -this.compareSemVer(a.version, b.version)); // Sort by version (newest first)
+    // Sort catalog versions by semver (newest first)
+    const sortedCatalogVersions = [...catalogVersions]
+      .filter(v => v.tgz_url)  // Filter out versions without tgz_url
+      .sort((a, b) => -this.compareSemVer(a.version, b.version));
 
     // Get unique versions from catalog
-    const uniqueVersions = Array.from(new Set(
-      validCatalogVersions.map(v => v.version)
+    const uniqueCatalogVersions = Array.from(new Set(
+      sortedCatalogVersions.map(v => v.version)
     ));
-
-    this.logger.debug('Processing versions for mapping', {
-      githubReleaseCount: sortedGithubReleases.length,
-      catalogVersionCount: validCatalogVersions.length,
-      uniqueVersionCount: uniqueVersions.length
-    }, 'preRelease');
 
     const mappings: VersionMappingSummary[] = [];
 
@@ -2611,45 +2578,55 @@ export class PreReleaseService {
       const latestGitHub = sortedGithubReleases[0];
       const version = latestGitHub.tag_name.replace(/^v/, '').split('-')[0];
 
-      // Find matching catalog versions
-      const matchingCatalogVersions = validCatalogVersions
+      // Find any matching catalog versions
+      const matchingCatalogVersions = sortedCatalogVersions
         .filter(v => v.version === version)
         .map(v => ({
           version: v.version,
-          flavor: v.flavor,
+          flavor: {
+            name: v.flavor.name,
+            label: v.flavor.label,
+            install_type: v.flavor.install_type
+          },
           tgz_url: v.tgz_url!,
           githubTag: v.githubTag
         }));
 
-      mappings.push({
-        version,
-        githubRelease: {
-          tag: latestGitHub.tag_name,
-          tarball_url: latestGitHub.tarball_url
-        },
-        catalogVersions: matchingCatalogVersions.length > 0 ? matchingCatalogVersions : null
-      });
+      if (matchingCatalogVersions.length > 0) {
+        mappings.push({
+          version,
+          githubRelease: {
+            tag: latestGitHub.tag_name,
+            tarball_url: latestGitHub.tarball_url
+          },
+          catalogVersions: matchingCatalogVersions
+        });
+      }
     }
 
-    // Add remaining catalog versions
-    for (const version of uniqueVersions) {
+    // Add up to 4 latest catalog versions that aren't already included
+    for (const version of uniqueCatalogVersions) {
       // Skip if this version is already in mappings
       if (mappings.some(m => m.version === version)) {
         continue;
       }
 
-      // Get all catalog entries for this version
-      const catalogEntries = validCatalogVersions
-        .filter(v => v.version === version)
+      // Get all catalog entries for this version with valid tgz_url
+      const catalogEntries: CatalogVersionMapping[] = sortedCatalogVersions
+        .filter(v => v.version === version && typeof v.tgz_url === 'string')
         .map(v => ({
           version: v.version,
-          flavor: v.flavor,
-          tgz_url: v.tgz_url!,
+          flavor: {
+            name: v.flavor.name,
+            label: v.flavor.label,
+            install_type: v.flavor.install_type
+          },
+          tgz_url: v.tgz_url as string,  // We know it exists and is a string from the filter
           githubTag: v.githubTag
         }));
 
       if (catalogEntries.length > 0) {
-        // Find matching GitHub release
+        // Find matching GitHub release (if any)
         const githubRelease = sortedGithubReleases.find(r => {
           const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
           return releaseVersion === version || r.tag_name === `v${version}`;
@@ -2679,5 +2656,137 @@ export class PreReleaseService {
    * @param catalogId Optional catalog ID to get catalog versions
    * @returns Latest versions from both sources with mappings
    */
+  private async getLatestVersions(catalogId?: string): Promise<{
+    githubReleases: GitHubRelease[];
+    catalogDetails?: CatalogDetails;
+    versionMappings: VersionMappingSummary[];
+  }> {
+    try {
+      // Get GitHub releases
+      const githubReleases = await this.getGitHubReleases().catch(error => {
+        this.logger.warn('Failed to fetch GitHub releases', { error }, 'preRelease');
+        return [];
+      });
 
+      this.logger.debug('Retrieved GitHub releases', {
+        totalReleases: githubReleases.length,
+        releases: githubReleases.map(r => ({
+          tag: r.tag_name,
+          created_at: r.created_at
+        }))
+      }, 'preRelease');
+
+      // Get catalog details if catalogId is provided
+      let catalogDetails: CatalogDetails | undefined;
+      if (catalogId) {
+        catalogDetails = await this.getSelectedCatalogDetails(catalogId).catch(error => {
+          this.logger.warn('Failed to fetch catalog details', { error }, 'preRelease');
+          return undefined;
+        });
+      }
+
+      // Create version mappings
+      const versionMappings: VersionMappingSummary[] = [];
+      if (catalogDetails?.versions) {
+        this.logger.debug('Processing catalog versions', {
+          totalCatalogVersions: catalogDetails.versions.length,
+          versions: catalogDetails.versions.map(v => ({
+            version: v.version,
+            flavor: v.flavor.name,
+            githubTag: v.githubTag
+          }))
+        }, 'preRelease');
+
+        // Get all unique versions
+        const allVersions = new Set([
+          ...githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0]),
+          ...catalogDetails.versions.map(v => v.version)
+        ]);
+
+        this.logger.debug('Unique versions before filtering', {
+          totalUniqueVersions: allVersions.size,
+          versions: Array.from(allVersions)
+        }, 'preRelease');
+
+        // Sort versions by semver (newest first) and take latest 5
+        const sortedVersions = Array.from(allVersions)
+          .filter(v => semver.valid(v))
+          .sort((a, b) => semver.rcompare(a, b))
+          .slice(0, 5); // Limit to 5 versions
+
+        this.logger.debug('Sorted and limited versions', {
+          totalVersions: sortedVersions.length,
+          versions: sortedVersions
+        }, 'preRelease');
+
+        // Create mapping for each version
+        for (const version of sortedVersions) {
+          const githubRelease = githubReleases.find(r => {
+            const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
+            return releaseVersion === version;
+          });
+
+          const catalogVersions = catalogDetails.versions.filter(v => v.version === version);
+
+          versionMappings.push({
+            version,
+            githubRelease: githubRelease ? {
+              tag: githubRelease.tag_name,
+              tarball_url: githubRelease.tarball_url
+            } : null,
+            catalogVersions: catalogVersions.length > 0 ? catalogVersions.map(v => ({
+              version: v.version,
+              flavor: v.flavor,
+              tgz_url: v.tgz_url as string,
+              githubTag: v.githubTag
+            })) : null
+          });
+        }
+
+        // Ensure we only have 5 version mappings
+        if (versionMappings.length > 5) {
+          this.logger.warn('More than 5 version mappings found before trimming', {
+            totalMappings: versionMappings.length,
+            mappings: versionMappings.map(m => m.version)
+          }, 'preRelease');
+          versionMappings.length = 5;
+        }
+
+        this.logger.debug('Final version mappings to be sent to UI', {
+          totalMappings: versionMappings.length,
+          mappings: versionMappings.map(m => ({
+            version: m.version,
+            hasGithubRelease: !!m.githubRelease,
+            githubTag: m.githubRelease?.tag,
+            catalogVersionCount: m.catalogVersions?.length || 0,
+            catalogVersions: m.catalogVersions?.map(cv => ({
+              version: cv.version,
+              flavor: cv.flavor.name
+            }))
+          }))
+        }, 'preRelease');
+
+        // Update version input with next suggested version if available
+        if (sortedVersions.length > 0 && this.view) {
+          const latestVersion = sortedVersions[0];
+          const nextVersion = this.suggestNextVersion(latestVersion);
+
+          // Send message to update version input
+          await this.view.webview.postMessage({
+            command: 'updateNextVersion',
+            version: nextVersion
+          });
+        }
+      }
+
+      return {
+        githubReleases: githubReleases.slice(0, 5), // Ensure we only return 5 GitHub releases
+        catalogDetails,
+        versionMappings
+      };
+    } catch (error) {
+      this.logger.error('Failed to get latest versions', { error }, 'preRelease');
+      throw error;
+    }
+  }
 }

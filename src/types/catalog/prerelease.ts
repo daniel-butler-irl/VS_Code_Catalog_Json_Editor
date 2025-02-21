@@ -62,6 +62,7 @@ export interface WebviewMessage {
   command: string;
   data?: PreReleaseDetails;
   catalogId?: string;
+  currentVersion?: string;
   message?: string;
   // Additional properties for direct message data
   version?: string;

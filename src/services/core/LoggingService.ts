@@ -17,6 +17,7 @@ export class LoggingService {
     private mainChannel: vscode.OutputChannel;
     private preReleaseChannel: vscode.OutputChannel;
     private logLevel: LogLevel = LogLevel.INFO;
+    private currentChannel: 'main' | 'preRelease' = 'main';
 
     private constructor() {
         this.mainChannel = vscode.window.createOutputChannel('IBM Catalog');
@@ -50,9 +51,18 @@ export class LoggingService {
     }
 
     /**
+     * Gets the current output channel
+     * @returns The current channel ('main' | 'preRelease')
+     */
+    public getCurrentChannel(): 'main' | 'preRelease' {
+        return this.currentChannel;
+    }
+
+    /**
      * Shows the output channel
      */
     public show(channel: 'main' | 'preRelease' = 'main'): void {
+        this.currentChannel = channel;
         if (channel === 'preRelease') {
             this.preReleaseChannel.show();
         } else {

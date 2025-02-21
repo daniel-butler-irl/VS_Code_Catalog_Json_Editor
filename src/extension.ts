@@ -533,19 +533,137 @@ function registerRemainingCommands(
             });
         }),
         vscode.commands.registerCommand('ibmCatalog.setLogLevel', async () => {
+            const logger = LoggingService.getInstance();
+            const currentLevel = logger.getLogLevel();
+            const currentChannel = logger.getCurrentChannel();
+
+            // Define available log levels with visual indicators
             const levels = [
-                { label: 'DEBUG', value: LogLevel.DEBUG },
-                { label: 'INFO', value: LogLevel.INFO },
-                { label: 'WARN', value: LogLevel.WARN },
-                { label: 'ERROR', value: LogLevel.ERROR }
+                {
+                    label: `Debug${currentLevel === LogLevel.DEBUG ? ' ✓' : ''}`,
+                    description: 'All messages including detailed debugging information',
+                    level: LogLevel.DEBUG,
+                    detail: 'Includes all log messages'
+                },
+                {
+                    label: `Info${currentLevel === LogLevel.INFO ? ' ✓' : ''}`,
+                    description: 'Normal operation messages',
+                    level: LogLevel.INFO,
+                    detail: 'Standard operational logging'
+                },
+                {
+                    label: `Warning${currentLevel === LogLevel.WARN ? ' ✓' : ''}`,
+                    description: 'Warning messages that don\'t affect operation',
+                    level: LogLevel.WARN,
+                    detail: 'Potential issues and warnings'
+                },
+                {
+                    label: `Error${currentLevel === LogLevel.ERROR ? ' ✓' : ''}`,
+                    description: 'Error messages only',
+                    level: LogLevel.ERROR,
+                    detail: 'Critical errors and failures'
+                }
             ];
-            const selected = await vscode.window.showQuickPick(levels, {
-                placeHolder: 'Select log level'
+
+            // Define available channels with visual indicators
+            const channels = [
+                {
+                    label: `IBM Catalog${currentChannel === 'main' ? ' ✓' : ''}`,
+                    description: 'Main extension logs',
+                    value: 'main',
+                    detail: 'General extension operations and catalog management'
+                },
+                {
+                    label: `IBM Catalog Pre-release${currentChannel === 'preRelease' ? ' ✓' : ''}`,
+                    description: 'Pre-release specific logs',
+                    value: 'preRelease',
+                    detail: 'Version management and release operations'
+                }
+            ];
+
+            // Create QuickPick for log levels
+            const levelQuickPick = vscode.window.createQuickPick();
+            levelQuickPick.title = `Set Log Level (Current: ${LogLevel[currentLevel]})`;
+            levelQuickPick.placeholder = 'Select log level';
+            levelQuickPick.items = levels;
+            levelQuickPick.activeItems = [levels.find(l => l.level === currentLevel)!];
+
+            let selectedLevel: typeof levels[0] | undefined;
+            let selectedChannel: typeof channels[0] | undefined;
+
+            return new Promise<void>((resolve) => {
+                levelQuickPick.onDidAccept(async () => {
+                    selectedLevel = levelQuickPick.selectedItems[0] as typeof levels[0];
+                    levelQuickPick.hide();
+
+                    if (selectedLevel) {
+                        // Set the new log level
+                        logger.setLogLevel(selectedLevel.level);
+
+                        // Show confirmation with the new level
+                        void vscode.window.showInformationMessage(
+                            `Log level set to: ${selectedLevel.label.replace(' ✓', '')}`
+                        );
+
+                        // Log test messages at different levels
+                        logger.debug('Debug level test message', {
+                            previousLevel: LogLevel[currentLevel],
+                            newLevel: LogLevel[selectedLevel.level]
+                        }, currentChannel);
+                        logger.info('Info level test message', {
+                            logLevel: selectedLevel.label
+                        }, currentChannel);
+                        logger.warn('Warning level test message', {
+                            logLevel: selectedLevel.label
+                        }, currentChannel);
+                        logger.error('Error level test message', {
+                            logLevel: selectedLevel.label
+                        }, currentChannel);
+
+                        // Create QuickPick for channels
+                        const channelQuickPick = vscode.window.createQuickPick();
+                        channelQuickPick.title = 'Select Log Channel to Show';
+                        channelQuickPick.placeholder = 'Choose which log channel to display';
+                        channelQuickPick.items = channels;
+                        channelQuickPick.activeItems = [channels.find(c => c.value === currentChannel)!];
+
+                        channelQuickPick.onDidAccept(() => {
+                            selectedChannel = channelQuickPick.selectedItems[0] as typeof channels[0];
+                            channelQuickPick.hide();
+
+                            if (selectedChannel) {
+                                // Show the selected channel
+                                logger.show(selectedChannel.value as 'main' | 'preRelease');
+
+                                // Log channel switch
+                                logger.info('Switched log channel', {
+                                    channel: selectedChannel.value,
+                                    logLevel: LogLevel[selectedLevel!.level]
+                                }, selectedChannel.value as 'main' | 'preRelease');
+                            }
+                            resolve();
+                        });
+
+                        channelQuickPick.onDidHide(() => {
+                            channelQuickPick.dispose();
+                            if (!selectedChannel) {
+                                resolve();
+                            }
+                        });
+
+                        channelQuickPick.show();
+                    }
+                });
+
+                levelQuickPick.onDidHide(() => {
+                    levelQuickPick.dispose();
+                    if (!selectedLevel) {
+                        resolve();
+                    }
+                });
+
+                levelQuickPick.show();
             });
-            if (selected) {
-                logger.setLogLevel(selected.value);
-                void vscode.window.showInformationMessage(`Log level set to ${selected.label}`);
-            }
         }),
         vscode.commands.registerCommand('ibmCatalog.deleteElement', async (node: CatalogTreeItem) => {
             try {
