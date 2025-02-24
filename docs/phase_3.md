@@ -43,7 +43,7 @@ Advance the IBM Cloud VS Code extension by incorporating sophisticated validatio
 
 1. **Advanced Validation:** Implement validation using JSONPath and custom functions to ensure data integrity and dynamic interactions.
 2. **Extensibility Framework:** Develop a modular architecture that supports plugins or modules for future enhancements.
-3. **Performance Optimization:** Enhance the extension's performance to efficiently handle large and complex `ibm_catalog.json` files.
+3. **Performance Optimization:** Enhance the extension's performance to efficiently handle large JSON files.
 4. **Comprehensive Error Handling:** Implement robust error handling mechanisms to gracefully manage failures and provide informative feedback.
 5. **Testing and Quality Assurance:** Establish a thorough testing regimen, including unit, integration, and end-to-end tests.
 6. **Documentation and User Guides:** Create comprehensive documentation and user guides to assist users and developers.
@@ -420,10 +420,6 @@ Develop a modular architecture that allows for the seamless integration of plugi
      - Best practices for interacting with core services
      - Security considerations
 
-#### **2. Extensibility Framework**
-
-*(Already covered above under Project Enhancements > Extensibility Framework)*
-
 #### **3. Performance Optimization**
 
 **Objective:**
@@ -584,10 +580,6 @@ Optimize the extension to handle large `ibm_catalog.json` files efficiently, ens
    - Utilize profiling tools to identify performance bottlenecks.
    - Optimize or refactor code sections that consume excessive resources.
 
-#### **3. Performance Optimization**
-
-*(Already covered above under Implementation Steps > Performance Optimization)*
-
 #### **4. Comprehensive Error Handling**
 
 **Objective:**
@@ -649,10 +641,6 @@ Implement robust error handling mechanisms to ensure the extension can gracefull
      ```typescript
      vscode.window.showErrorMessage('Invalid IBM Cloud API Key. Please update your API key in the extension settings.');
      ```
-
-#### **4. Comprehensive Error Handling**
-
-*(Already covered above under Implementation Steps > Comprehensive Error Handling)*
 
 #### **5. Testing and Quality Assurance**
 
@@ -849,18 +837,6 @@ Establish a rigorous testing framework to ensure the extension's reliability, st
      };
      ```
 
-#### **3. Performance Optimization**
-
-*(Already covered above under Implementation Steps > Performance Optimization)*
-
-#### **4. Comprehensive Error Handling**
-
-*(Already covered above under Implementation Steps > Comprehensive Error Handling)*
-
-#### **5. Testing and Quality Assurance**
-
-*(Already covered above under Implementation Steps > Testing and Quality Assurance)*
-
 #### **6. Documentation and User Guides**
 
 **Objective:**
@@ -891,7 +867,7 @@ Provide detailed documentation and user guides to facilitate users in effectivel
 2. **Developer Documentation:**
 
    - **Architecture Overview:**
-     - Description of the extension’s architecture, including core components and their interactions.
+     - Description of the extension's architecture, including core components and their interactions.
    
    - **Extension Points and Plugin API:**
      - Detailed documentation of the plugin API, including available interfaces, methods, and events.
@@ -912,7 +888,7 @@ Provide detailed documentation and user guides to facilitate users in effectivel
      - Thorough comments within the code to explain complex logic, functions, and design decisions.
    
    - **TypeScript Interfaces and Types:**
-     - Utilize TypeScript’s type system to provide clear interfaces and types, enhancing code readability and maintainability.
+     - Utilize TypeScript's type system to provide clear interfaces and types, enhancing code readability and maintainability.
 
 4. **Interactive Help:**
 
@@ -924,7 +900,7 @@ Provide detailed documentation and user guides to facilitate users in effectivel
 
 5. **Documentation Hosting:**
 
-   - Host the documentation on a platform like GitHub Pages, ReadTheDocs, or within the extension’s repository for easy access and updates.
+   - Host the documentation on a platform like GitHub Pages, ReadTheDocs, or within the extension's repository for easy access and updates.
 
 #### **7. Continuous Integration and Deployment (CI/CD)**
 
@@ -1012,7 +988,7 @@ Establish automated pipelines for building, testing, and deploying the extension
 
 5. **Secure Secrets Management:**
 
-   - Store sensitive information, such as VSCE tokens and IBM Cloud API keys, securely using the platform’s secret management features (e.g., GitHub Secrets).
+   - Store sensitive information, such as VSCE tokens and IBM Cloud API keys, securely using the platform's secret management features (e.g., GitHub Secrets).
    
      - **Example:**
        - `VSCODE_TOKEN`: Token for publishing the extension to the VS Code Marketplace.
@@ -1139,17 +1115,8 @@ export interface IPlugin {
 module.exports = {
   activate(context) {
     console.log('Sample Plugin Activated');
-    // Example: Add a custom validation rule
-    // Access core services via context
-    const { validationService } = context;
-    
-    // Add a custom validation function or hook
-    // This is a placeholder example
-    validationService.customValidations = validationService.customValidations || [];
-    validationService.customValidations.push(async (jsonData) => {
-      // Implement custom validation logic
-      return true; // Return validation result
-    });
+    // Access extension context and services
+    // e.g., add custom validation, UI elements, etc.
   },
   deactivate() {
     console.log('Sample Plugin Deactivated');

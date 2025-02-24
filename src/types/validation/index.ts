@@ -25,18 +25,23 @@ export interface ValidationMetadata {
     details?: Record<string, unknown>;
 }
 
-
-export interface ValidationResult<T = unknown> {
-    isValid: boolean;
-    value?: T;
-    errors?: ValidationError[];
-    metadata?: ValidationMetadata;
+export interface ValidationRange {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
 }
 
 export interface ValidationError {
     code: string;
     message: string;
-    path?: string;
+    path: string;
+    range?: ValidationRange;
+}
+
+export interface ValidationResult<T = unknown> {
+    isValid: boolean;
+    value: T;
+    errors?: ValidationError[];
+    metadata?: ValidationMetadata;
 }
 
 // For typed validations

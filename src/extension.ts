@@ -17,6 +17,7 @@ import { FileSystemService } from './services/core/FileSystemService';
 import { PreReleaseWebview } from './webview/PreReleaseWebview';
 import { AuthenticationSession } from 'vscode';
 import { PreReleaseService } from './services/PreReleaseService';
+import { ValidationUIService } from './services/ValidationUIService';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const logger = LoggingService.getInstance();
@@ -24,23 +25,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger.info('Starting IBM Catalog Extension activation');
 
     try {
-        logger.debug('Creating status bar item');
+        logger.debug('Creating status bar item', undefined, 'main');
         const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
         context.subscriptions.push(statusBarItem);
         statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
         statusBarItem.show();
 
-        logger.debug('Storing status bar item properties in workspace state');
+        logger.debug('Storing status bar item properties in workspace state', undefined, 'main');
         await context.workspaceState.update('ibmCatalog.statusBarItem.text', statusBarItem.text);
         await context.workspaceState.update('ibmCatalog.statusBarItem.alignment', vscode.StatusBarAlignment.Left);
         context.subscriptions.push(statusBarItem);
         statusBarItem.text = '$(sync~spin) Activating IBM Catalog Extension...';
         statusBarItem.show();
 
-        logger.debug('Registering essential commands');
+        logger.debug('Registering essential commands', undefined, 'main');
         registerEssentialCommands(context);
 
-        logger.debug('Setting initial loading state');
+        logger.debug('Setting initial loading state', undefined, 'main');
         await Promise.all([
             vscode.commands.executeCommand('setContext', 'ibmCatalog.hasWorkspace', false),
             vscode.commands.executeCommand('setContext', 'ibmCatalog.catalogFileExists', false),
@@ -48,32 +49,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.executeCommand('setContext', 'ibmCatalog.isGithubLoggedIn', false)
         ]);
 
-        logger.debug('Initializing core services');
+        logger.debug('Initializing core services', undefined, 'main');
         const cacheService = CacheService.getInstance();
         cacheService.setContext(context);
 
         const uiStateService = UIStateService.getInstance(context);
         context.subscriptions.push(uiStateService);
 
-        logger.debug('Initializing PreReleaseService');
+        logger.debug('Initializing PreReleaseService', undefined, 'main');
         await PreReleaseService.initialize(context);
 
-        logger.debug('Checking IBM Cloud authentication status');
+        logger.debug('Checking IBM Cloud authentication status', undefined, 'main');
         const isLoggedIn = await AuthService.isLoggedIn(context);
         await vscode.commands.executeCommand('setContext', 'ibmCatalog.isLoggedIn', isLoggedIn);
 
-        logger.debug('Initializing schema and catalog services');
-        const schemaService = new SchemaService();
+        logger.debug('Initializing schema and catalog services', undefined, 'main');
+        const schemaService = new SchemaService(context);
         const schemaInitPromise = schemaService.initialize();
         const catalogService = new CatalogService(context);
         const catalogInitPromise = catalogService.initialize();
 
-        logger.debug('Initializing PreReleaseWebview');
+        logger.debug('Initializing PreReleaseWebview', undefined, 'main');
         const preReleaseService = PreReleaseService.getInstance(context);
         const preReleaseWebview = PreReleaseWebview.initialize(context, logger, preReleaseService);
 
         try {
-            logger.debug('Registering PreReleaseWebview provider');
+            logger.debug('Registering PreReleaseWebview provider', undefined, 'main');
             context.subscriptions.push(
                 vscode.window.registerWebviewViewProvider('ibmCatalogPreRelease', preReleaseWebview, {
                     webviewOptions: {
@@ -82,45 +83,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 })
             );
         } catch (error) {
-            logger.error('Failed to register PreReleaseWebview provider', { error });
+            logger.error('Failed to register PreReleaseWebview provider', { error }, 'main');
         }
 
-        logger.debug('Creating tree provider');
+        logger.debug('Creating tree provider', undefined, 'main');
         const treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
         const treeView = vscode.window.createTreeView('ibmCatalogTree', {
             treeDataProvider: treeProvider,
             showCollapseAll: true
         });
 
-        logger.debug('Connecting tree provider to FileSystemService');
-        const fileSystemService = FileSystemService.getInstance(context);
+        logger.debug('Connecting tree provider to FileSystemService', undefined, 'main');
+        const fileSystemService = FileSystemService.getInstance(context, schemaService);
         fileSystemService.setTreeProvider(treeProvider);
 
-        logger.debug('Waiting for critical services to initialize');
+        logger.debug('Waiting for critical services to initialize', undefined, 'main');
         const [catalogInitialized] = await Promise.all([
             catalogInitPromise,
             schemaInitPromise
         ]);
 
         if (!catalogInitialized) {
-            logger.warn('CatalogService initialization incomplete');
+            logger.warn('CatalogService initialization incomplete', undefined, 'main');
         }
 
-        logger.debug('Initializing remaining features');
+        logger.debug('Initializing remaining features', undefined, 'main');
         await initializeRemainingFeatures(context, catalogService, treeProvider, treeView, statusBarItem);
 
-        logger.info('IBM Catalog Extension activated successfully');
+        logger.info('IBM Catalog Extension activated successfully', undefined, 'main');
         statusBarItem.text = '$(check) IBM Catalog Extension Ready';
         await updateStatusBar(statusBarItem, context);
 
         // Reset log level to INFO after activation
         logger.setLogLevel(LogLevel.INFO);
+
+        // Initialize validation UI service
+        const validationUIService = ValidationUIService.getInstance();
+        context.subscriptions.push(validationUIService);
     } catch (error) {
         logger.error('Failed to activate extension', {
-            error,
-            errorMessage: error instanceof Error ? error.message : 'Unknown error',
-            errorStack: error instanceof Error ? error.stack : undefined
-        });
+            error: error instanceof Error ? error.message : String(error)
+        }, 'main');
         vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
         throw error;
     }
@@ -230,17 +233,13 @@ function registerEssentialCommands(
         // Register addElement command early to ensure it's available
         vscode.commands.registerCommand('ibmCatalog.addElement', async (node: CatalogTreeItem) => {
             try {
-                const schemaService = new SchemaService();
-                await schemaService.initialize();
                 const catalogService = new CatalogService(context);
                 await catalogService.initialize();
-
-                await catalogService.addElement(node, schemaService);
-                // Since we don't have the tree provider here, we'll need to refresh it through a context update
+                await catalogService.addElement(node);
                 await vscode.commands.executeCommand('setContext', 'ibmCatalog.refresh', Date.now());
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
-                LoggingService.getInstance().error('Failed to add element', { error });
+                LoggingService.getInstance().error('Failed to add element', { error }, 'main');
                 vscode.window.showErrorMessage(`Failed to add element: ${message}`);
             }
         })
@@ -255,7 +254,7 @@ async function initializeRemainingFeatures(
     statusBarItem: vscode.StatusBarItem
 ): Promise<void> {
     const logger = LoggingService.getInstance();
-    const schemaService = new SchemaService();
+    const schemaService = new SchemaService(context);
     await schemaService.initialize();
 
     // Initialize file watcher if workspace exists
@@ -345,7 +344,7 @@ function registerRemainingCommands(
             logger.debug('Clearing click state', {
                 hadTimer: this.clickTimeout !== null,
                 lastClickedItemId: this.lastClickedItemId
-            });
+            }, 'main');
             if (this.clickTimeout !== null) {
                 clearTimeout(this.clickTimeout);
                 this.clickTimeout = null;
@@ -361,7 +360,7 @@ function registerRemainingCommands(
             logger.debug('Disposing click state handler', {
                 hadTimer: clickState.clickTimeout !== null,
                 lastClickedItemId: clickState.lastClickedItemId
-            });
+            }, 'main');
             clickState.clearClickState();
         }
     });
@@ -377,14 +376,14 @@ function registerRemainingCommands(
             lastClickTime: clickState.lastClickTime,
             timeSinceLastClick: clickState.lastClickTime ? now - clickState.lastClickTime : null,
             hasActiveTimer: clickState.clickTimeout !== null
-        });
+        }, 'main');
 
         if (clickState.lastClickTime && clickState.lastClickedItemId === clickedItemId &&
             now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
             logger.debug('Double click detected', {
                 itemId: clickedItemId,
                 timeBetweenClicks: now - clickState.lastClickTime
-            });
+            }, 'main');
             clickState.clearClickState();
             if (item.isEditable()) {
                 void vscode.commands.executeCommand('ibmCatalog.editElement', item);
@@ -392,13 +391,13 @@ function registerRemainingCommands(
                 logger.debug('Single click detected, setting up timer', {
                     itemId: clickedItemId,
                     threshold: DOUBLE_CLICK_THRESHOLD
-                });
+                }, 'main');
                 clickState.clearClickState();
                 // Create a new timer but don't store it in context
                 clickState.clickTimeout = setTimeout(() => {
                     logger.debug('Single click timer expired, executing command', {
                         itemId: clickedItemId
-                    });
+                    }, 'main');
                     void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
                     clickState.clickTimeout = null;
                 }, DOUBLE_CLICK_THRESHOLD);
@@ -409,13 +408,13 @@ function registerRemainingCommands(
             logger.debug('Single click detected, setting up timer', {
                 itemId: clickedItemId,
                 threshold: DOUBLE_CLICK_THRESHOLD
-            });
+            }, 'main');
             clickState.clearClickState();
             // Create a new timer but don't store it in context
             clickState.clickTimeout = setTimeout(() => {
                 logger.debug('Single click timer expired, executing command', {
                     itemId: clickedItemId
-                });
+                }, 'main');
                 void vscode.commands.executeCommand('ibmCatalog.selectElement', item);
                 clickState.clickTimeout = null;
             }, DOUBLE_CLICK_THRESHOLD);
@@ -507,7 +506,7 @@ function registerRemainingCommands(
             const selection = treeView.selection;
             if (selection.length > 0) {
                 const item = selection[0];
-                logger.debug('Keyboard edit triggered', { itemPath: item.jsonPath });
+                logger.debug('Keyboard edit triggered', { itemPath: item.jsonPath }, 'main');
                 if (item.isEditable()) {
                     await vscode.commands.executeCommand('ibmCatalog.editElement', item);
                 }
@@ -578,6 +577,12 @@ function registerRemainingCommands(
                     description: 'Pre-release specific logs',
                     value: 'preRelease',
                     detail: 'Version management and release operations'
+                },
+                {
+                    label: `IBM Catalog Schema Validation${currentChannel === 'schemaValidation' ? ' ✓' : ''}`,
+                    description: 'Schema validation logs',
+                    value: 'schemaValidation',
+                    detail: 'JSON schema validation operations and results'
                 }
             ];
 
@@ -672,7 +677,7 @@ function registerRemainingCommands(
                 void vscode.window.showInformationMessage('Element deleted successfully');
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
-                logger.error('Failed to delete element', { error });
+                logger.error('Failed to delete element', { error }, 'main');
                 void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
             }
         }),

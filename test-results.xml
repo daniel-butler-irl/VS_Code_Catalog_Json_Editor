@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Mocha Tests" time="0.011" tests="5" failures="3">
+  <testsuite name="Root Suite" timestamp="2025-02-24T13:45:49" tests="0" time="0.000" failures="0">
+  </testsuite>
+  <testsuite name="Validation Rules Test Suite" timestamp="2025-02-24T13:45:49" tests="5" file="C:\Users\Rural\repos\VS_Code_Catalog_Json_Editor\out\test\suite\validation\rules.test.js" time="0.010" failures="3">
+    <testcase name="Validation Rules Test Suite InstallTypeRequiredRule - should be disabled by default" time="0.000" classname="InstallTypeRequiredRule - should be disabled by default">
+    </testcase>
+    <testcase name="Validation Rules Test Suite NoDuplicateConfigKeysRule - should validate within each configuration block independently" time="0.005" classname="NoDuplicateConfigKeysRule - should validate within each configuration block independently">
+      <failure message="Expected values to be strictly equal:
+
+0 !== 1
+" type="AssertionError"><![CDATA[AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+0 !== 1
+
+    at Context.<anonymous> (src\test\suite\validation\rules.test.ts:57:12)
+
+      + expected - actual
+
+      -0
+      +1
+      ]]></failure>
+    </testcase>
+    <testcase name="Validation Rules Test Suite ValidationRuleRegistry - should respect rule configuration" time="0.000" classname="ValidationRuleRegistry - should respect rule configuration">
+      <failure message="Expected values to be strictly equal:
+
+0 !== 1
+" type="AssertionError"><![CDATA[AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+0 !== 1
+
+    at Context.<anonymous> (src\test\suite\validation\rules.test.ts:103:12)
+
+      + expected - actual
+
+      -0
+      +1
+      ]]></failure>
+    </testcase>
+    <testcase name="Validation Rules Test Suite ValidationRuleRegistry - should handle complex nested structures" time="0.001" classname="ValidationRuleRegistry - should handle complex nested structures">
+      <failure message="Expected values to be strictly equal:
+
+3 !== 2
+" type="AssertionError"><![CDATA[AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+3 !== 2
+
+    at Context.<anonymous> (src\test\suite\validation\rules.test.ts:164:12)
+
+      + expected - actual
+
+      -3
+      +2
+      ]]></failure>
+    </testcase>
+    <testcase name="Validation Rules Test Suite ValidationRuleRegistry - should handle empty or invalid input" time="0.001" classname="ValidationRuleRegistry - should handle empty or invalid input">
+    </testcase>
+  </testsuite>
+</testsuites>

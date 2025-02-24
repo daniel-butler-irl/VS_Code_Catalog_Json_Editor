@@ -7,6 +7,7 @@ import { LoggingService } from './LoggingService';
 import type { ICatalogFileInfo } from '../../types/catalog';
 import type { CatalogTreeProvider } from '../../providers/CatalogTreeProvider';
 import type { CatalogTreeItem } from '../../models/CatalogTreeItem';
+import { SchemaService } from '../SchemaService';
 
 export class FileSystemService {
     private static instance: FileSystemService;
@@ -23,7 +24,10 @@ export class FileSystemService {
     private treeView?: vscode.TreeView<CatalogTreeItem>;
     private treeDataProvider?: CatalogTreeProvider;
 
-    private constructor(private readonly context: vscode.ExtensionContext) {
+    private constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly schemaService: SchemaService
+    ) {
         this.logger.debug('Initializing FileSystemService');
         // Listen for active editor changes
         vscode.window.onDidChangeActiveTextEditor(() => {
@@ -33,9 +37,9 @@ export class FileSystemService {
         this.logger.debug('FileSystemService initialized');
     }
 
-    public static getInstance(context: vscode.ExtensionContext): FileSystemService {
+    public static getInstance(context: vscode.ExtensionContext, schemaService: SchemaService): FileSystemService {
         if (!FileSystemService.instance) {
-            FileSystemService.instance = new FileSystemService(context);
+            FileSystemService.instance = new FileSystemService(context, schemaService);
         }
         return FileSystemService.instance;
     }
@@ -95,7 +99,7 @@ export class FileSystemService {
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders?.length) {
-            this.logger.debug('No workspace folders found');
+            this.logger.debug('No workspace folders found', undefined, 'main');
             return false;
         }
 
@@ -104,16 +108,16 @@ export class FileSystemService {
             try {
                 await vscode.workspace.fs.stat(catalogFileUri);
                 await this.setCatalogFile(catalogFileUri, folder);
-                this.logger.debug(`Catalog file found at ${catalogFileUri.fsPath}`);
+                this.logger.debug(`Catalog file found at ${catalogFileUri.fsPath}`, undefined, 'main');
                 return true;
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                this.logger.debug(`No ${this.catalogFileName} found in ${folder.name}: ${errorMessage}`);
+                this.logger.debug(`No ${this.catalogFileName} found in ${folder.name}: ${errorMessage}`, undefined, 'main');
                 continue;
             }
         }
 
-        this.logger.debug('No catalog file found in any workspace folder');
+        this.logger.debug('No catalog file found in any workspace folder', undefined, 'main');
         return false;
     }
 
@@ -205,7 +209,7 @@ export class FileSystemService {
             await vscode.workspace.fs.stat(catalogFileUri);
             await this.setCatalogFile(catalogFileUri, workspaceFolder);
         } catch {
-            this.logger.debug(`No ${this.catalogFileName} found in ${workspaceFolder.name}`);
+            this.logger.debug(`No ${this.catalogFileName} found in ${workspaceFolder.name}`, undefined, 'main');
         }
     }
 
@@ -218,7 +222,7 @@ export class FileSystemService {
         await this.loadCatalogData();
         this.initialized = true;
         this._onDidChangeContent.fire();
-        this.logger.debug(`Catalog file set to ${uri.fsPath}`);
+        this.logger.debug(`Catalog file set to ${uri.fsPath}`, undefined, 'main');
     }
 
     private async loadCatalogData(): Promise<void> {
@@ -229,7 +233,27 @@ export class FileSystemService {
 
         try {
             const content = await fs.readFile(this.currentCatalogFile.uri.fsPath, 'utf8');
-            this.catalogData = JSON.parse(content);
+            const parsedData = JSON.parse(content);
+
+            // Get the document for validation UI feedback
+            const document = await vscode.workspace.openTextDocument(this.currentCatalogFile.uri);
+
+            // Validate the entire file
+            await this.schemaService.initialize();
+            const errors = await this.schemaService.validateValueAtPath('$', parsedData, document);
+
+            if (errors.length > 0) {
+                this.logger.warn('Schema validation errors found:', {
+                    errors,
+                    file: this.currentCatalogFile.uri.fsPath
+                }, 'schemaValidation');
+            } else {
+                this.logger.debug('Schema validation passed', {
+                    file: this.currentCatalogFile.uri.fsPath
+                }, 'schemaValidation');
+            }
+
+            this.catalogData = parsedData;
             this._onDidChangeContent.fire();
         } catch (error) {
             this.catalogData = {};

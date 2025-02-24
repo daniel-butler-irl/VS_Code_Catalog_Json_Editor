@@ -9,6 +9,8 @@ export enum LogLevel {
     ERROR
 }
 
+export type LogChannel = 'main' | 'preRelease' | 'schemaValidation';
+
 /**
  * Service for handling application logging with channel output and optional console logging
  */
@@ -16,12 +18,14 @@ export class LoggingService {
     private static instance: LoggingService;
     private mainChannel: vscode.OutputChannel;
     private preReleaseChannel: vscode.OutputChannel;
+    private schemaValidationChannel: vscode.OutputChannel;
     private logLevel: LogLevel = LogLevel.INFO;
-    private currentChannel: 'main' | 'preRelease' = 'main';
+    private currentChannel: LogChannel = 'main';
 
     private constructor() {
         this.mainChannel = vscode.window.createOutputChannel('IBM Catalog');
         this.preReleaseChannel = vscode.window.createOutputChannel('IBM Catalog Pre-release');
+        this.schemaValidationChannel = vscode.window.createOutputChannel('IBM Catalog Schema Validation');
     }
 
     /**
@@ -52,19 +56,21 @@ export class LoggingService {
 
     /**
      * Gets the current output channel
-     * @returns The current channel ('main' | 'preRelease')
+     * @returns The current channel ('main' | 'preRelease' | 'schemaValidation')
      */
-    public getCurrentChannel(): 'main' | 'preRelease' {
+    public getCurrentChannel(): LogChannel {
         return this.currentChannel;
     }
 
     /**
      * Shows the output channel
      */
-    public show(channel: 'main' | 'preRelease' = 'main'): void {
+    public show(channel: LogChannel = 'main'): void {
         this.currentChannel = channel;
         if (channel === 'preRelease') {
             this.preReleaseChannel.show();
+        } else if (channel === 'schemaValidation') {
+            this.schemaValidationChannel.show();
         } else {
             this.mainChannel.show();
         }
@@ -88,35 +94,42 @@ export class LoggingService {
         return formattedMessage;
     }
 
-    private logMessage(level: LogLevel, message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+    private logMessage(level: LogLevel, message: string, data?: Record<string, unknown> | unknown, channel: LogChannel = 'main'): void {
         if (this.logLevel <= level) {
             const formattedData = data instanceof Error || (data && typeof data !== 'object')
                 ? this.formatError(data)
                 : data as Record<string, unknown>;
             const formattedMessage = this.formatMessage(LogLevel[level], message, formattedData);
-            if (channel === 'preRelease') {
-                this.preReleaseChannel.appendLine(formattedMessage);
-            } else {
-                this.mainChannel.appendLine(formattedMessage);
+
+            switch (channel) {
+                case 'preRelease':
+                    this.preReleaseChannel.appendLine(formattedMessage);
+                    break;
+                case 'schemaValidation':
+                    this.schemaValidationChannel.appendLine(formattedMessage);
+                    break;
+                default:
+                    this.mainChannel.appendLine(formattedMessage);
             }
         }
     }
 
-    public debug(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
+    public debug(message: string, data?: Record<string, unknown>, channel: LogChannel = 'main'): void {
         this.logMessage(LogLevel.DEBUG, message, data, channel);
     }
 
-    public info(message: string, data?: Record<string, unknown>, channel: 'main' | 'preRelease' = 'main'): void {
+    public info(message: string, data?: Record<string, unknown>, channel: LogChannel = 'main'): void {
         this.logMessage(LogLevel.INFO, message, data, channel);
     }
 
-    public warn(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+    public warn(message: string, data?: Record<string, unknown> | unknown, channel: LogChannel = 'main'): void {
         this.logMessage(LogLevel.WARN, message, data, channel);
     }
 
-    public error(message: string, data?: Record<string, unknown> | unknown, channel: 'main' | 'preRelease' = 'main'): void {
+    public error(message: string, data?: Record<string, unknown> | unknown, channel: LogChannel = 'main'): void {
         this.logMessage(LogLevel.ERROR, message, data, channel);
     }
+
     private formatError(error: unknown): Record<string, unknown> {
         if (error instanceof Error) {
             return {
@@ -144,5 +157,6 @@ export class LoggingService {
     public dispose(): void {
         this.mainChannel.dispose();
         this.preReleaseChannel.dispose();
+        this.schemaValidationChannel.dispose();
     }
 }

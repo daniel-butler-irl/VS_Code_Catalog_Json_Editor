@@ -15,7 +15,7 @@
    - [Tooltips and Additional Information](#tooltips-and-additional-information)
 3. [Implementation Steps](#implementation-steps)
    - [1. Schema Integration](#1-schema-integration)
-   - [2. Dynamic Dialog Boxes](#2-dynamic-dialog-boxes)
+   - [2. Dynamic Element Addition](#2-dynamic-element-addition)
    - [3. Enhanced Input Controls](#3-enhanced-input-controls)
    - [4. IBM Cloud SDK Integration for Validation](#4-ibm-cloud-sdk-integration-for-validation)
    - [5. Implementing Caching](#5-implementing-caching)
@@ -44,7 +44,7 @@ Enhance the MVP by introducing advanced functionalities that improve usability, 
 
 **Key Deliverables:**
 
-1. **Schema Integration:** Utilize `ibm_catalog-schema.json` to drive form generation and validation.
+1. **Schema Integration:** Utilize `ibm_catalog-schema.json` to drive form generation and validation rules within the extension.
 2. **Dynamic Dialog Boxes:** Facilitate adding new elements to JSON lists with schema-based forms.
 3. **Enhanced Input Controls:** Implement combo boxes, filtering, and support for custom values.
 4. **Validation with IBM Cloud SDK:** Validate specific fields like `catalog_id` against IBM Cloud data.
@@ -125,7 +125,7 @@ Detect if the user is logged into IBM Cloud using an API key. If authenticated, 
 **Steps:**
 
 - Implement authentication detection using IBM Cloud SDK.
-- Manage API key storage securely using VS Code’s secure storage APIs.
+- Manage API key storage securely using VS Code's secure storage APIs.
 - Adjust extension behavior based on authentication status.
 
 #### **Tooltips and Additional Information**
@@ -223,13 +223,13 @@ Utilize the JSON schema to dynamically generate forms for adding and editing JSO
    }
    ```
 
-#### **2. Dynamic Dialog Boxes**
+#### **2. Dynamic Element Addition**
 
 **Objective:**
 
-Enable users to add new elements to JSON lists using dialog boxes that generate forms based on the JSON schema, including handling fields not defined in the schema.
+Enable users to add new elements to JSON lists using a streamlined command-based approach.
 
-**Implementation Steps:**
+**Implementation:**
 
 1. **Create an Add Element Command:**
 
@@ -237,143 +237,24 @@ Enable users to add new elements to JSON lists using dialog boxes that generate 
 
    ```typescript
    context.subscriptions.push(
-     vscode.commands.registerCommand('catalogTree.addElement', (parentItem: CatalogTreeItem) => {
-       AddElementDialog.show(parentItem, schemaService).then(newElement => {
-         if (newElement) {
-           // Update the JSON data and refresh the tree
-           addNewElementToJson(parentItem, newElement).then(() => {
-             treeDataProvider.refresh();
-           }).catch(err => {
-             vscode.window.showErrorMessage(`Failed to add element: ${err.message}`);
-           });
-         }
-       });
+     vscode.commands.registerCommand('catalogTree.addElement', async (parentItem: CatalogTreeItem) => {
+       try {
+         const catalogService = new CatalogService(context);
+         await catalogService.initialize();
+         await catalogService.addElement(parentItem);
+         await vscode.commands.executeCommand('setContext', 'ibmCatalog.refresh', Date.now());
+       } catch (error) {
+         vscode.window.showErrorMessage(`Failed to add element: ${error.message}`);
+       }
      })
    );
    ```
 
-2. **Implement the Add Element Dialog (`addElementDialog.ts`):**
+**Explanation:**
 
-   - A class that presents a dynamic form based on the schema and collects user input.
-
-   ```typescript
-   import * as vscode from 'vscode';
-   import { SchemaService, Schema } from './schemaService';
-
-   export class AddElementDialog {
-     static async show(parentItem: any, schemaService: SchemaService): Promise<any | null> {
-       const schema = await schemaService.loadSchema();
-
-       if (!schema) {
-         vscode.window.showErrorMessage('Schema is not loaded.');
-         return null;
-       }
-
-       // Determine the schema for the parent item
-       const parentPath = this.getPathToItem(parentItem, schema);
-       const parentSchema = this.getSchemaForPath(schema, parentPath);
-
-       if (!parentSchema) {
-         vscode.window.showErrorMessage('Schema for the selected parent item is not found.');
-         return null;
-       }
-
-       // Generate form fields based on the parent schema's item type
-       const formFields = this.generateFormFields(parentSchema);
-
-       // Display a webview or a Quick Pick with input boxes for each field
-       // For simplicity, using a series of input boxes
-
-       const newElement: any = {};
-
-       for (const field of formFields) {
-         const userInput = await vscode.window.showInputBox({
-           prompt: `Enter value for ${field.key}`,
-           placeHolder: field.description || ''
-         });
-
-         if (userInput === undefined) {
-           // User cancelled
-           return null;
-         }
-
-         newElement[field.key] = userInput;
-       }
-
-       return newElement;
-     }
-
-     static getPathToItem(item: any, schema: Schema): string[] | null {
-       // Implement path finding logic based on item and schema
-       // Placeholder implementation
-       return null;
-     }
-
-     static getSchemaForPath(schema: Schema, path: string[]): Schema | null {
-       // Traverse the schema based on the path to find the relevant schema section
-       // Placeholder implementation
-       return schema;
-     }
-
-     static generateFormFields(schema: Schema): any[] {
-       // Extract fields from the schema to generate form inputs
-       // Placeholder implementation
-       return [];
-     }
-   }
-   ```
-
-   **Note:**  
-   The actual implementation of `getPathToItem`, `getSchemaForPath`, and `generateFormFields` requires traversing the schema based on the JSON structure. For the MVP, these functions can be simplified with assumptions about unique paths or structures.
-
-3. **Update JSON Data with New Element:**
-
-   - Implement a function to add the new element to the appropriate list in the JSON data.
-
-   ```typescript
-   function addNewElementToJson(parentItem: CatalogTreeItem, newElement: any): Promise<void> {
-     return new Promise((resolve, reject) => {
-       fs.readFile(catalogFilePath, 'utf8', (err, data) => {
-         if (err) {
-           reject(err);
-           return;
-         }
-         try {
-           const json = JSON.parse(data);
-           const path = getPathToItem(parentItem, json);
-           if (path) {
-             let current = json;
-             for (let i = 0; i < path.length; i++) {
-               current = current[path[i]];
-             }
-             if (Array.isArray(current)) {
-               current.push(newElement);
-               fs.writeFile(catalogFilePath, JSON.stringify(json, null, 2), 'utf8', (writeErr) => {
-                 if (writeErr) {
-                   reject(writeErr);
-                 } else {
-                   resolve();
-                 }
-               });
-             } else {
-               reject(new Error('Parent item is not a list.'));
-             }
-           } else {
-             reject(new Error('Path to parent item not found.'));
-           }
-         } catch (parseErr) {
-           reject(parseErr);
-         }
-       });
-     });
-   }
-
-   function getPathToItem(item: CatalogTreeItem, json: any): string[] | null {
-     // Implement path finding logic to locate the parent item in the JSON object
-     // Placeholder implementation
-     return null;
-   }
-   ```
+- The add element functionality is now handled directly by the CatalogService
+- User input is collected through VS Code's native input methods
+- The tree view is automatically refreshed after successful addition
 
 #### **3. Enhanced Input Controls**
 
@@ -508,7 +389,7 @@ Use IBM Cloud SDKs to validate fields such as `catalog_id` by checking their exi
 
 4. **Secure API Key Storage:**
 
-   - Use VS Code’s secure storage to store and retrieve the IBM Cloud API key.
+   - Use VS Code's secure storage to store and retrieve the IBM Cloud API key.
 
    ```typescript
    async function getApiKey(): Promise<string | undefined> {
@@ -1311,7 +1192,7 @@ Enhance error handling mechanisms to manage failures gracefully, especially duri
 
 2. **User Notifications:**
 
-   - Provide clear and descriptive error messages using VS Code’s `showErrorMessage` or `showWarningMessage`.
+   - Provide clear and descriptive error messages using VS Code's `showErrorMessage` or `showWarningMessage`.
 
    ```typescript
    try {
@@ -1384,7 +1265,7 @@ Ensure that all enhanced features function correctly through comprehensive testi
 
 5. **Performance Testing:**
 
-   - Assess the extension’s performance, especially regarding caching and validation operations.
+   - Assess the extension's performance, especially regarding caching and validation operations.
    - Optimize as necessary to ensure responsiveness.
 
 ---

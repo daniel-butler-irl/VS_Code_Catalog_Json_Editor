@@ -1,7 +1,6 @@
 // src/services/CatalogService.ts
 import * as vscode from 'vscode';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
-import { AddElementDialog } from '../ui/AddElementDialog';
 import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from './SchemaService';
 import { AuthService } from './AuthService';
@@ -18,6 +17,9 @@ import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
 import { CachePrefetchService } from './core/CachePrefetchService';
 import { JsonPathService } from './core/JsonPathService';
+import { validateSchema, validateValue } from '../decorators/schemaValidation';
+import { SchemaMetadata } from '../types/schema';
+import { ValidationResult } from '../types/validation';
 
 /**
  * Service responsible for managing catalog data within the extension.
@@ -36,10 +38,12 @@ export class CatalogService {
         mode: CatalogServiceMode.NoWorkspace
     };
     private initializing: boolean = false; // Add initialization lock
+    private schemaService: SchemaService;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.logger.debug('Constructing CatalogService');
-        this.fileSystemService = FileSystemService.getInstance(context);
+        this.schemaService = new SchemaService(context);
+        this.fileSystemService = FileSystemService.getInstance(context, this.schemaService);
 
         // Only set up workspace change handler after initial initialization
         void this.initialize().then(() => {
@@ -236,119 +240,23 @@ export class CatalogService {
      * @param parentNode The parent node where the element should be added.
      * @param schemaService The schema service for validation.
      */
-    public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
-        await this.ensureInitialized();
-
+    public async addElement(parentNode: CatalogTreeItem): Promise<void> {
         try {
-            // debug print the selected node with relevant properties only
-            this.logger.debug('Selected node', {
-                label: parentNode.label,
-                jsonPath: parentNode.jsonPath,
-                contextValue: parentNode.contextValue,
-                value: parentNode.value
-            });
+            await this.ensureInitialized();
 
-            // Check if this is a dependency object
-            if ((parentNode.contextValue === 'object' || parentNode.contextValue === 'container') &&
-                parentNode.jsonPath.match(/\.dependencies\[\d+\]$/)) {
-                const dependencyValue = parentNode.value as Required<Dependency>;
-                if (!dependencyValue.ignore_auto_referencing) {
-                    // Show prompt immediately instead of just creating the array
-                    await this.handleIgnoreAutoReferencingAddition(parentNode);
-                }
-                return;
-            }
-
-            // Handle clicking add on the ignore_auto_referencing array itself
-            if (parentNode.jsonPath.endsWith('.ignore_auto_referencing')) {
-                await this.handleIgnoreAutoReferencingAddition(parentNode.parent!);
-                return;
-            }
-
-            // Check if this is an input mapping object that needs reference_version
-            if (parentNode.jsonPath.includes('.input_mapping') && !parentNode.jsonPath.endsWith('.input_mapping')) {
-                await this.promptForMissingReferenceVersion(parentNode);
-                return;
-            }
-
-            // Check for flavor node first to add dependencies
             if (this.isFlavorNode(parentNode)) {
-                this.logger.debug('Handling dependencies addition to flavor');
                 await this.handleFlavorDependenciesAddition(parentNode);
-                return;
-            }
-
-            // Handle for dependencies array
-            if (parentNode.jsonPath.endsWith('.dependencies')) {
-                await this.handleDependencyAddition(parentNode);
-                return;
-            }
-
-            // Handle for swappable dependencies array
-            if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
-                await this.handleSwappableDependencyAddition(parentNode);
-                return;
-            }
-
-            // Handle input_mapping additions
-            if (parentNode.jsonPath.endsWith('.input_mapping')) {
-                await this.handleInputMappingAddition(parentNode);
-                return;
-            }
-
-            // Check for dependency flavors array first
-            if (this.isDependencyFlavorsArrayNode(parentNode)) {
-                this.logger.debug('Handling dependency flavors array addition');
+            } else if (this.isDependencyFlavorsArrayNode(parentNode)) {
                 await this.handleDependencyFlavorArrayAddition(parentNode);
-                return;
-            }
-
-            // Get schema validation before proceeding
-            if (!schemaService.isSchemaAvailable()) {
-                const result = await vscode.window.showErrorMessage(
-                    'Schema is not available. Would you like to retry loading the schema?',
-                    'Retry',
-                    'Cancel'
-                );
-
-                if (result === 'Retry') {
-                    await schemaService.refreshSchema();
-                } else {
-                    return;
-                }
-            }
-
-            const schema = schemaService.getSchemaForPath(parentNode.jsonPath);
-            if (!schema) {
-                this.logger.error('No schema available for path', { path: parentNode.jsonPath });
-                vscode.window.showErrorMessage('Cannot add element: No schema available for this location');
-                return;
-            }
-
-            // Show dialog and get new element data
-            const newElement = await AddElementDialog.show(parentNode, schemaService);
-            if (newElement === undefined) {
-                return; // User cancelled
-            }
-
-            // Handle array and object additions
-            if (Array.isArray(parentNode.value)) {
-                const currentArray = parentNode.value;
-                await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newElement]);
-            } else if (typeof parentNode.value === 'object' && parentNode.value !== null) {
-                const currentObject = parentNode.value as Record<string, unknown>;
-                await this.updateJsonValue(parentNode.jsonPath, {
-                    ...currentObject,
-                    ...newElement
-                });
+            } else if (parentNode.label === 'input_mapping') {
+                await this.handleInputMappingAddition(parentNode);
+            } else if (parentNode.label === 'dependencies') {
+                await this.handleDependencyAddition(parentNode);
             } else {
-                throw new Error('Cannot add element to this location');
+                await this.handleRegularDependencyAddition(parentNode);
             }
-
         } catch (error) {
-            this.logger.error('Failed to add element', error);
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            vscode.window.showErrorMessage(`Failed to add element: ${message}`);
+            this.logger.error('Failed to add element', { error });
             throw error;
         }
     }
@@ -2888,10 +2796,25 @@ export class CatalogService {
      * @param node The node to validate.
      * @returns A promise that resolves to true if the validation was successful, false otherwise.
      */
+    @validateSchema()
     public async validateNode(node: CatalogTreeItem): Promise<boolean> {
         try {
             await this.ensureInitialized();
 
+            // Get schema metadata for the node's path
+            const schemaMetadata = await this.schemaService.getSchemaForPath(node.jsonPath);
+            if (schemaMetadata) {
+                const validationResult = await validateValue(node.value, schemaMetadata);
+                if (!validationResult.isValid) {
+                    this.logger.warn('Schema validation failed', {
+                        path: node.jsonPath,
+                        errors: validationResult.errors
+                    });
+                    return false;
+                }
+            }
+
+            // Continue with existing validation logic
             if (node.label === 'catalog_id' && typeof node.value === 'string') {
                 const apiKey = await AuthService.getApiKey(this.context);
                 if (!apiKey) {

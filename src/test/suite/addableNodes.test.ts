@@ -116,11 +116,16 @@ describe('Addable Nodes Functionality', () => {
 
         // Initialize services
         catalogService = new CatalogService(context);
-        schemaService = new SchemaService();
-        await schemaService.initialize();
 
-        // Initialize tree provider
-        treeProvider = new CatalogTreeProvider(catalogService, context, schemaService);
+        // Initialize tree provider with minimal schema service stub
+        const schemaServiceStub = {
+            getSchemaForPath: () => Promise.resolve(undefined),
+            initialize: () => Promise.resolve(),
+            isSchemaAvailable: () => true,
+            onDidUpdateSchema: new vscode.EventEmitter<void>().event
+        } as unknown as SchemaService;
+
+        treeProvider = new CatalogTreeProvider(catalogService, context, schemaServiceStub);
     });
 
     afterEach(() => {

@@ -167,7 +167,7 @@ describe('Flavor Dependency Test Suite', () => {
             value: 'dependencies'
         } as QuickPickItemEx<string>);
 
-        await catalogService.addElement(flavorNode, schemaServiceStub);
+        await catalogService.addElement(flavorNode);
 
         // Verify the stub was called with correct arguments
         assert.ok(
@@ -228,7 +228,7 @@ describe('Flavor Dependency Test Suite', () => {
             swappable_dependencies: []
         };
 
-        await catalogService.addElement(flavorNode, schemaServiceStub);
+        await catalogService.addElement(flavorNode);
 
         // Verify updateJsonValue was called correctly
         assert.ok(
@@ -290,7 +290,7 @@ describe('Flavor Dependency Test Suite', () => {
             value: 'dependencies'
         } as QuickPickItemEx<string>);
 
-        await catalogService.addElement(flavorNode, schemaServiceStub);
+        await catalogService.addElement(flavorNode);
 
         // Verify updateJsonValue was called correctly
         assert.ok(
@@ -339,6 +339,109 @@ describe('Flavor Dependency Test Suite', () => {
             typedValue.dependency_version_2,
             true,
             'dependency_version_2 flag should be set to true'
+        );
+    });
+
+    it('should add dependencies to the flavor', async () => {
+        // Define the flavor type that matches both FlavorNodeValue and FlavorObject
+        interface FlavorType {
+            label: string;
+            configuration: Array<{
+                key: string;
+                type: string;
+                default_value?: string | number | boolean;
+                required: boolean;
+            }>;
+            dependencies?: Array<{
+                name: string;
+                catalog_id?: string;
+                offering_id?: string;
+                version?: string;
+            }>;
+            dependency_version_2?: boolean;
+        }
+
+        // Set up mock catalog data with a properly structured flavor
+        const mockFlavorData: FlavorType = {
+            label: 'Flavor 1',
+            configuration: [] // Required by FlavorNodeValue
+            // No dependencies array initially
+        };
+
+        // Update the mock to return our catalog data
+        fileSystemStub.getCatalogData.resolves({
+            products: [{
+                flavors: [mockFlavorData]
+            }]
+        });
+
+        // Create a flavor node with the correct path pattern and contextValue
+        const flavorNode = new CatalogTreeItem(
+            context,
+            'flavor1',
+            mockFlavorData,
+            '$.products[0].flavors[0]', // Matches isFlavorNode path pattern
+            vscode.TreeItemCollapsibleState.None,
+            'flavor_node' // Correct contextValue for flavor nodes
+        );
+
+        // Mock the quick pick to simulate user selecting regular dependencies
+        const quickPickStub = sandbox.stub(vscode.window, 'showQuickPick');
+        quickPickStub.resolves({
+            label: 'Regular Dependencies',
+            description: 'Add a regular dependencies block',
+            value: 'dependencies'
+        } as QuickPickItemEx<string>);
+
+        // Mock the input box for dependency name
+        const inputBoxStub = sandbox.stub(vscode.window, 'showInputBox');
+        inputBoxStub.resolves('test-dependency');
+
+        await catalogService.addElement(flavorNode);
+
+        // Verify the quick pick was shown for dependency type selection
+        assert.ok(
+            quickPickStub.calledOnce,
+            'showQuickPick should be called once for dependency type selection'
+        );
+
+        // Verify updateJsonValue was called with correct arguments
+        assert.ok(
+            fileSystemStub.updateJsonValue.calledOnce,
+            'updateJsonValue should be called once'
+        );
+
+        const [path, value] = fileSystemStub.updateJsonValue.firstCall.args;
+        assert.strictEqual(
+            path,
+            '$.products[0].flavors[0]',
+            'JSON path should match the flavor node path'
+        );
+
+        // Type check and verify the updated value
+        const updatedValue = value as FlavorType;
+        assert.strictEqual(
+            updatedValue.label,
+            'Flavor 1',
+            'Label should be preserved'
+        );
+        assert.ok(
+            Array.isArray(updatedValue.configuration),
+            'configuration should be an array'
+        );
+        assert.strictEqual(
+            updatedValue.dependency_version_2,
+            true,
+            'dependency_version_2 should be true'
+        );
+        assert.ok(
+            Array.isArray(updatedValue.dependencies),
+            'dependencies should be an array'
+        );
+        assert.strictEqual(
+            updatedValue.dependencies?.length,
+            0,
+            'dependencies should be an empty array'
         );
     });
 });

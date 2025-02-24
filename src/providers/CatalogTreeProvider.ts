@@ -211,11 +211,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Creates tree items from a JSON value.
      * Handles validation state and special node types.
      */
-    private createTreeItems(
+    private async createTreeItems(
         value: unknown,
         parentPath: string,
         parentItem?: CatalogTreeItem
-    ): CatalogTreeItem[] {
+    ): Promise<CatalogTreeItem[]> {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
@@ -228,6 +228,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             if (parentItem?.contextValue !== 'array') {
                 const propertyName = parentPath.split('.').pop()?.replace(/\[\d+\]/g, '') || '';
                 const arrayLabel = `${propertyName} Array[${value.length}]`;
+                const schemaMetadata = await this.getSchemaMetadata(parentPath);
                 const arrayItem = new CatalogTreeItem(
                     this.context,
                     arrayLabel,
@@ -235,16 +236,16 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                     parentPath,
                     this.getCollapsibleState(value, this.expandedNodes.has(parentPath)),
                     'array',
-                    undefined,
+                    schemaMetadata,
                     parentItem
                 );
                 items.push(arrayItem);
             }
 
             // Create items for array elements
-            value.forEach((item, index) => {
+            for (const [index, item] of value.entries()) {
                 const path = this.buildJsonPath(parentPath, index.toString());
-                const schemaMetadata = this.getSchemaMetadata(path);
+                const schemaMetadata = await this.getSchemaMetadata(path);
 
                 let itemLabel = '';
                 let description = '';
@@ -310,14 +311,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
                 }
 
                 items.push(treeItem);
-            });
+            }
             return items;
         }
 
         // Handle object properties
         for (const [key, val] of Object.entries(value)) {
             const path = this.buildJsonPath(parentPath, key);
-            const schemaMetadata = this.getSchemaMetadata(path);
+            const schemaMetadata = await this.getSchemaMetadata(path);
 
             const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
             const catalogId = isIdNode && parentItem?.catalogId ? parentItem.catalogId : undefined;
@@ -401,12 +402,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Gets cached schema metadata for a path.
      */
-    private getSchemaMetadata(path: string): SchemaMetadata | undefined {
+    private async getSchemaMetadata(path: string): Promise<SchemaMetadata | undefined> {
         const cached = this.memoizedSchemaMetadata.get(path);
         if (cached !== undefined) { return cached; }
 
-        const metadata = this.schemaService?.getSchemaForPath(path);
-        this.memoizedSchemaMetadata.set(path, metadata);
+        const metadata = await this.schemaService?.getSchemaForPath(path);
+        if (metadata) {
+            this.memoizedSchemaMetadata.set(path, metadata);
+        }
         return metadata;
     }
 

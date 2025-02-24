@@ -3,49 +3,66 @@ import * as path from 'path';
 import Mocha from 'mocha';
 import { glob } from 'glob';
 
-export async function run(): Promise<void> {
+export function run(): Promise<void> {
     // Create the mocha test
     const mocha = new Mocha({
         ui: 'bdd',
         color: true,
-        timeout: 60000, // Increased timeout for VS Code extension tests
-        retries: 1,     // Allow one retry for flaky tests
-        slow: 1000,     // Mark tests as slow if they take more than 1s
-        reporter: 'spec'
+        reporter: 'spec',
+        timeout: 60000,
+        slow: 1000,
+        bail: false,
+        fullTrace: true
     });
 
-    const testsRoot = path.resolve(__dirname, '.');
+    // Enable debug output
+    process.env.DEBUG = '*';
 
-    try {
-        // Find all test files
-        const files = await glob('**/*.test.{js,ts}', { cwd: testsRoot });
+    const testsRoot = path.resolve(__dirname, '..');
 
-        // Log test discovery info
-        console.log('Found test files:', files);
+    return new Promise((resolve, reject) => {
+        console.log('Finding test files in:', testsRoot);
 
-        // Add files to the test suite
-        files.forEach(f => mocha.addFile(path.resolve(testsRoot, f)));
+        glob('**/**.test.js', { cwd: testsRoot })
+            .then((files: string[]) => {
+                console.log('Found test files:', files);
 
-        // Run the tests
-        return new Promise<void>((resolve, reject) => {
-            try {
-                // Register the BDD interface globally
-                require('mocha/lib/interfaces/bdd');
-
-                mocha.run((failures: number) => {
-                    if (failures > 0) {
-                        reject(new Error(`${failures} tests failed.`));
-                    } else {
-                        resolve();
-                    }
+                // Add files to the test suite
+                files.forEach((f: string) => {
+                    console.log('Adding test file:', f);
+                    mocha.addFile(path.resolve(testsRoot, f));
                 });
-            } catch (err) {
-                console.error('Error running tests:', err);
+
+                console.log('Starting test execution...');
+
+                try {
+                    // Run the mocha test
+                    mocha.run((failures: number) => {
+                        if (failures > 0) {
+                            reject(new Error(`${failures} tests failed.`));
+                        } else {
+                            resolve();
+                        }
+                    }).on('test', (test: Mocha.Test) => {
+                        console.log('Running test:', test.title);
+                    }).on('test end', (test: Mocha.Test) => {
+                        console.log('Test completed:', test.title, test.state);
+                    }).on('suite', (suite: Mocha.Suite) => {
+                        console.log('Starting suite:', suite.title);
+                    }).on('suite end', (suite: Mocha.Suite) => {
+                        console.log('Completed suite:', suite.title);
+                    }).on('fail', (test: Mocha.Test, err: Error) => {
+                        console.error('Test failed:', test.title);
+                        console.error('Error:', err);
+                    });
+                } catch (err) {
+                    console.error('Failed to run tests:', err);
+                    reject(err);
+                }
+            })
+            .catch((err: Error) => {
+                console.error('Error finding test files:', err);
                 reject(err);
-            }
-        });
-    } catch (err) {
-        console.error('Error finding test files:', err);
-        throw err;
-    }
+            });
+    });
 }
