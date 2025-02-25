@@ -16,6 +16,70 @@ describe('EditorHighlight Test Suite', () => {
     let loggerStub: sinon.SinonStubbedInstance<LoggingService>;
     let executeCommandStub: sinon.SinonStub;
 
+    // Helper function to create a mock editor and document without creating actual files
+    function createMockEditor(content: string): { document: vscode.TextDocument; editor: vscode.TextEditor } {
+        const document = {
+            uri: vscode.Uri.parse('mock:file.json'),
+            getText: () => content,
+            version: 1,
+            fileName: 'mock-file.json',
+            isDirty: false,
+            isUntitled: true,
+            languageId: 'json',
+            lineCount: content.split('\n').length,
+            lineAt: (line: number) => {
+                const lines = content.split('\n');
+                return {
+                    text: lines[line],
+                    range: new vscode.Range(line, 0, line, lines[line].length),
+                    rangeIncludingLineBreak: new vscode.Range(line, 0, line, lines[line].length + 1),
+                    firstNonWhitespaceCharacterIndex: 0,
+                    isEmptyOrWhitespace: lines[line].trim().length === 0
+                };
+            },
+            offsetAt: (position: vscode.Position) => {
+                const lines = content.split('\n');
+                let offset = 0;
+                for (let i = 0; i < position.line; i++) {
+                    offset += lines[i].length + 1; // +1 for newline
+                }
+                return offset + position.character;
+            },
+            positionAt: (offset: number) => {
+                const lines = content.split('\n');
+                let currentOffset = 0;
+                for (let line = 0; line < lines.length; line++) {
+                    const lineLength = lines[line].length + 1; // +1 for newline
+                    if (offset < currentOffset + lineLength) {
+                        return new vscode.Position(line, offset - currentOffset);
+                    }
+                    currentOffset += lineLength;
+                }
+                return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
+            },
+            save: () => Promise.resolve(true),
+            eol: vscode.EndOfLine.LF,
+            getWordRangeAtPosition: () => undefined,
+            validatePosition: (position: vscode.Position) => position,
+            validateRange: (range: vscode.Range) => range
+        } as unknown as vscode.TextDocument;
+
+        const editor = {
+            document,
+            selection: new vscode.Selection(0, 0, 0, 0),
+            selections: [new vscode.Selection(0, 0, 0, 0)],
+            options: {},
+            viewColumn: vscode.ViewColumn.One,
+            edit: () => Promise.resolve(true),
+            setDecorations: sandbox.stub(),
+            revealRange: sandbox.stub(),
+            show: sandbox.stub(),
+            hide: sandbox.stub()
+        } as unknown as vscode.TextEditor;
+
+        return { document, editor };
+    }
+
     beforeEach(async () => {
         sandbox = sinon.createSandbox();
 
@@ -26,20 +90,11 @@ describe('EditorHighlight Test Suite', () => {
         // Create command stubs
         executeCommandStub = sandbox.stub(vscode.commands, 'executeCommand').resolves();
 
-        // Set up test document
-        const workspaceEdit = new vscode.WorkspaceEdit();
-        const uri = vscode.Uri.parse('untitled:test.json');
-        workspaceEdit.createFile(uri, { ignoreIfExists: true });
-        await vscode.workspace.applyEdit(workspaceEdit);
-
-        // Create test document with mock data
-        document = await vscode.workspace.openTextDocument({
-            content: JSON.stringify(mockCatalogData, null, 2),
-            language: 'json'
-        });
-
-        // Open editor with test document
-        editor = await vscode.window.showTextDocument(document);
+        // Use mock editor instead of creating real files
+        const mockData = JSON.stringify(mockCatalogData, null, 2);
+        const mockEditorAndDoc = createMockEditor(mockData);
+        document = mockEditorAndDoc.document;
+        editor = mockEditorAndDoc.editor;
 
         // Initialize highlight service
         highlightService = new EditorHighlightService();
@@ -94,13 +149,11 @@ describe('EditorHighlight Test Suite', () => {
         const decorationsBefore = (highlightService as any).currentDecorations.length;
         assert.ok(decorationsBefore > 0, 'Should have decorations before change');
 
-        // Make a small document change
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(document.uri, new vscode.Position(0, 0), ' ');
-        await vscode.workspace.applyEdit(edit);
-
-        // Wait for document change handling
-        await new Promise(resolve => setTimeout(resolve, 20));
+        // Simulate document change event
+        const docChangeHandler = (highlightService as any).documentChangeHandler;
+        if (docChangeHandler) {
+            await docChangeHandler();
+        }
 
         // Re-highlight should work
         await highlightService.highlightJsonPath(path, editor);
@@ -120,17 +173,10 @@ describe('EditorHighlight Test Suite', () => {
         assert.ok(decorations.length > 0, 'Decorations should be present');
     });
 
-    it('should work with multiple editors', async () => {
-        const uri2 = vscode.Uri.parse('untitled:test2.json');
-        const workspaceEdit = new vscode.WorkspaceEdit();
-        workspaceEdit.createFile(uri2, { ignoreIfExists: true });
-        await vscode.workspace.applyEdit(workspaceEdit);
-
-        const document2 = await vscode.workspace.openTextDocument({
-            content: JSON.stringify(mockCatalogData, null, 2),
-            language: 'json'
-        });
-        const editor2 = await vscode.window.showTextDocument(document2);
+    it('should handle multiple editors efficiently', async () => {
+        // Create a second mock editor without creating real files
+        const mockData = JSON.stringify(mockCatalogData, null, 2);
+        const { editor: editor2 } = createMockEditor(mockData);
 
         const path = '$.products[0].label';
         await highlightService.highlightJsonPath(path, editor);
@@ -149,15 +195,13 @@ describe('EditorHighlight Test Suite', () => {
         let decorations = (highlightService as any).currentDecorations;
         assert.ok(decorations.length > 0, 'Should have decorations before clearing');
 
-        // Directly call clearHighlight instead of simulating events
+        // Simulate document click event by manually calling clearHighlight 
+        // since there's no direct documentClickHandler
         highlightService.clearHighlight();
 
-        // Wait for any async operations
-        await new Promise(resolve => setTimeout(resolve, 50));
-
-        // Verify final state
+        // Verify decorations cleared
         decorations = (highlightService as any).currentDecorations;
-        assert.strictEqual(decorations.length, 0, 'Decorations should be cleared');
+        assert.strictEqual(decorations.length, 0, 'Decorations should be cleared after document click');
     });
 
     it('should clear highlight before applying new highlight', async () => {

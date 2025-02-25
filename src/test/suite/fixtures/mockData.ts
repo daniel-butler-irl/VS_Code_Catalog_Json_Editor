@@ -33,10 +33,10 @@ export const mockIBMCloudResponses = {
 
 /**
  * Generates a large mock catalog data structure for performance testing
- * @param numProducts Number of products to generate
- * @returns Mock catalog data with specified number of products
+ * @param numFlavors Number of flavors to generate for the single product
+ * @returns Mock catalog data with a single product containing specified number of flavors
  */
-export function generateLargeMockData(numProducts: number): Record<string, any> {
+export function generateLargeMockData(numFlavors: number): Record<string, any> {
     return {
         catalog_id: 'test-catalog',
         label: 'Test Catalog',
@@ -47,16 +47,16 @@ export function generateLargeMockData(numProducts: number): Record<string, any> 
             name: 'Test Provider',
             email: 'test@example.com'
         },
-        products: Array.from({ length: numProducts }, (_, i) => ({
-            label: `Product ${i}`,
-            name: `product-${i}`,
-            short_description: `Test product ${i} description`,
-            kind: 'solution',
-            catalog_id: `test-catalog-${i}`,
-            offering_id: `offering-${i}`,
-            version: '1.0.0',
-            flavors: [
-                {
+        products: [
+            {
+                label: 'Single Product',
+                name: 'single-product',
+                short_description: 'Test product description',
+                kind: 'solution',
+                catalog_id: 'test-catalog',
+                offering_id: 'offering-id',
+                version: '1.0.0',
+                flavors: Array.from({ length: numFlavors }, (_, i) => ({
                     label: `Flavor ${i}`,
                     name: `flavor-${i}`,
                     dependencies: [
@@ -79,8 +79,8 @@ export function generateLargeMockData(numProducts: number): Record<string, any> 
                             ]
                         } as Dependency
                     ]
-                } as FlavorObject
-            ]
-        }))
+                } as FlavorObject))
+            }
+        ]
     };
 }

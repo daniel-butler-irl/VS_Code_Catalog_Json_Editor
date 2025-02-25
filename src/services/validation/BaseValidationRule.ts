@@ -36,7 +36,8 @@ export abstract class BaseValidationRule implements ValidationRule {
     // Calculate the character offset from the last newline
     character = lastNewLine === -1 ? offset : offset - lastNewLine - 1;
 
-    return { line, character };
+    // Convert to 1-based line numbers for test compatibility
+    return { line: line + 1, character };
   }
 
   protected findPropertyNode(node: Node, propertyName: string): Node | undefined {
@@ -62,7 +63,8 @@ export abstract class BaseValidationRule implements ValidationRule {
     const propNode = this.findPropertyNode(node, propertyName);
     if (propNode) {
       const pos = this.getNodePosition(propNode.offset, rawText);
-      return { line: pos.line - 1, character: 16 }; // Adjust line number and character position to match test expectations
+      // Return the actual position without adjustment
+      return pos;
     }
 
     // If property not found, return the start of the object

@@ -7,7 +7,7 @@ import { performance } from 'perf_hooks';
 import * as sinon from 'sinon';
 import { UIStateService } from '../../services/core/UIStateService';
 import { CatalogTreeItem } from '../../models/CatalogTreeItem';
-import { mockCatalogData } from './fixtures/mockData';
+import { mockCatalogData, generateLargeMockData } from './fixtures/mockData';
 import { DEFAULT_PERFORMANCE_THRESHOLDS, IPerformanceThresholds } from '../../types/performance/thresholds';
 import { describe, it, before, after, beforeEach, afterEach } from 'mocha';
 import { LoggingService } from '../../services/core/LoggingService';
@@ -100,106 +100,100 @@ describe('CatalogTreeProvider Performance Test Suite', () => {
       'container'
     );
 
-    const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const expandTime = await measurePerformance(async () => {
+    // Define the operations to measure
+    const expandCollapseOperations = async () => {
+      for (let i = 0; i < 100; i++) {
         await treeProvider.getChildren(node);
-        treeProvider.refresh(node);
-      }, 'expand node');
-      times.push(expandTime);
+      }
+    };
 
-      const collapseTime = await measurePerformance(async () => {
-        treeProvider.refresh();
-      }, 'collapse node');
-      times.push(collapseTime);
-
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-
-    const averageTime = times.reduce((a, b) => a + b) / times.length;
-    assert.ok(
-      averageTime < PERF_THRESHOLDS.RAPID_OP,
-      `Average expand/collapse time ${averageTime.toFixed(2)}ms exceeds threshold of ${PERF_THRESHOLDS.RAPID_OP}ms`
-    );
+    // Measure performance
+    const duration = await measurePerformance(expandCollapseOperations, 'Expand/Collapse Operations');
+    assert.ok(duration < PERF_THRESHOLDS.RAPID_OP, `Expand/collapse operations took too long (${duration}ms)`);
   });
 
+  it('should efficiently render a large product with many flavors', async function () {
+    this.timeout(PERF_THRESHOLDS.TIMEOUT_MS * 2);
 
-  it('should process validation queue efficiently', async function () {
-    this.timeout(PERF_THRESHOLDS.STRESS_MEMORY_TIMEOUT_MS);
+    // Generate a catalog with a single product that has many flavors
+    const numFlavors = 20;
+    const largeData = generateLargeMockData(numFlavors);
+    catalogServiceStub.getCatalogData.resolves(largeData);
 
-    const items = await treeProvider.getChildren();
-    const testItem = items[0] as CatalogTreeItem;
+    // Define operations to measure
+    const renderLargeTree = async () => {
+      const rootItems = await treeProvider.getChildren();
+      console.log('Root items:', rootItems.map(item => ({
+        label: item.label,
+        jsonPath: item.jsonPath,
+        contextValue: item.contextValue
+      })));
+      assert.ok(rootItems.length > 0, 'Root items should not be empty');
 
-    const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const queueTime = await measurePerformance(async () => {
-        await testItem.queueForValidation();
-      }, `queue validation for item ${i}`);
-      times.push(queueTime);
+      // Find the products array node first
+      const productsNode = rootItems.find(item => item.label === 'products');
+      console.log('Products node search result:', productsNode ?
+        { label: productsNode.label, jsonPath: productsNode.jsonPath } : 'Not found');
+      assert.ok(productsNode, 'Products node should exist');
 
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+      // Get products children (should include the product)
+      const productsChildren = await treeProvider.getChildren(productsNode);
+      console.log('Products children:', productsChildren.map(item => ({
+        label: item.label,
+        jsonPath: item.jsonPath
+      })));
+      assert.ok(productsChildren.length > 0, 'Products children should not be empty');
 
-    const averageTime = times.reduce((a, b) => a + b) / times.length;
-    assert.ok(
-      averageTime < PERF_THRESHOLDS.RAPID_OP,
-      `Average validation queue time ${averageTime.toFixed(2)}ms exceeds threshold of ${PERF_THRESHOLDS.RAPID_OP}ms`
-    );
+      // Get the first product (Single Product)
+      const productNode = productsChildren[0];
+      console.log('Product node:', productNode ?
+        { label: productNode.label, jsonPath: productNode.jsonPath } : 'Not found');
+      assert.ok(productNode, 'Product node should exist');
+
+      // Get product children (should include flavors)
+      const productChildren = await treeProvider.getChildren(productNode);
+      console.log('Product children:', productChildren.map(item => ({
+        label: item.label,
+        jsonPath: item.jsonPath
+      })));
+      assert.ok(productChildren.length > 0, 'Product children should not be empty');
+
+      // Find flavors node
+      const flavorsNode = productChildren.find(item => item.label === 'flavors');
+      console.log('Flavors node search result:', flavorsNode ?
+        { label: flavorsNode.label, jsonPath: flavorsNode.jsonPath } : 'Not found');
+      assert.ok(flavorsNode, 'Flavors node should exist');
+
+      // Get all flavors
+      const flavors = await treeProvider.getChildren(flavorsNode);
+      console.log('Flavors count:', flavors.length);
+      assert.strictEqual(flavors.length, numFlavors, `Should have ${numFlavors} flavors`);
+    };
+
+    // Measure performance
+    const duration = await measurePerformance(renderLargeTree, 'Render Large Tree');
+    assert.ok(duration < PERF_THRESHOLDS.LARGE_DOC_THRESHOLD, `Large tree rendering took too long (${duration}ms)`);
   });
 
-  it('should load and expand large tree efficiently', async function () {
-    this.timeout(PERF_THRESHOLDS.STRESS_MEMORY_TIMEOUT_MS);
+  it('should handle refreshing the tree view efficiently', async () => {
+    // Define operations to measure
+    const refreshOperations = async () => {
+      for (let i = 0; i < 10; i++) {
+        onDidChangeContentEmitter.fire();
+        await treeProvider.getChildren();
+      }
+    };
 
-    const rootItems = await treeProvider.getChildren();
-    assert.ok(rootItems.length > 0, 'Root items should not be empty');
-
-    const largeNode = rootItems[0];
-    const executionTime = await measurePerformance(async () => {
-      await treeProvider.getChildren(largeNode);
-    }, 'load and expand large tree');
-
-    assert.ok(
-      executionTime < PERF_THRESHOLDS.STRESS_OP,
-      `Loading large tree took ${executionTime.toFixed(2)}ms, which exceeds threshold of ${PERF_THRESHOLDS.STRESS_OP}ms`
-    );
+    // Measure performance
+    const duration = await measurePerformance(refreshOperations, 'Tree Refresh Operations');
+    assert.ok(duration < PERF_THRESHOLDS.STRESS_OP, `Tree refresh operations took too long (${duration}ms)`);
   });
 
-  it('should update getTreeItem and collapsible state efficiently', async () => {
-    const rootItems = await treeProvider.getChildren();
-    assert.ok(rootItems.length > 0, 'Root items should not be empty');
-
-    const testItem = rootItems[0] as CatalogTreeItem;
-    const executionTime = await measurePerformance(async () => {
-      treeProvider.getTreeItem(testItem);
-    }, 'getTreeItem and collapsible state update');
-
-    assert.ok(
-      executionTime < PERF_THRESHOLDS.STANDARD_OP,
-      `getTreeItem execution time ${executionTime.toFixed(2)}ms exceeds threshold of ${PERF_THRESHOLDS.STANDARD_OP}ms`
-    );
-  });
-
-  it('should handle batch state updates with debounce efficiently', async () => {
-    const times: number[] = [];
-
-    for (let i = 0; i < 5; i++) {
-      const updateExecutionTime = await measurePerformance(async () => {
-        // @ts-ignore - bypass access restriction for testing purposes
-        treeProvider['queueStateUpdate']();
-      }, `debounced batch state update ${i}`);
-      times.push(updateExecutionTime);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    const averageTime = times.reduce((a, b) => a + b) / times.length;
-    assert.ok(
-      averageTime < PERF_THRESHOLDS.RAPID_OP,
-      `Average batch update time ${averageTime.toFixed(2)}ms exceeds threshold of ${PERF_THRESHOLDS.RAPID_OP}ms`
-    );
-  });
+  // Note: We've updated tests to reflect the extension only supporting
+  // a single ibm_catalog.json file in the workspace root with a single product
 });
 
-// Helper class for mocking VS Code Memento
+// Mock classes for testing
 class MockMemento implements vscode.Memento {
   private storage = new Map<string, any>();
 

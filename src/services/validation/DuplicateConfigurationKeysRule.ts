@@ -43,7 +43,11 @@ export class DuplicateConfigurationKeysRule extends BaseValidationRule {
   }
 
   async validate(value: unknown, config?: ValidationRuleConfig, rawText?: string): Promise<ValidationError[]> {
-    if (!config?.enabled || !rawText || typeof value !== 'object' || value === null) {
+    if (!config?.enabled || !rawText) {
+      this.logger.debug('DuplicateConfigurationKeysRule skipped - disabled or no raw text', {
+        enabled: config?.enabled,
+        hasRawText: !!rawText
+      }, this.logChannel);
       return [];
     }
 
@@ -54,124 +58,168 @@ export class DuplicateConfigurationKeysRule extends BaseValidationRule {
     }, this.logChannel);
 
     const errors: ValidationError[] = [];
-    const root = parseTree(rawText);
 
-    // Helper function to find duplicate keys in an object
-    const findDuplicateKeys = (obj: any, path: string[]): void => {
-      if (!obj || typeof obj !== 'object') {
-        return;
+    try {
+      const root = parseTree(rawText);
+
+      if (!root) {
+        this.logger.debug('No parse tree generated', {}, this.logChannel);
+        return [];
       }
 
-      // Find the node for this object
-      const nodePath = path.map(p => !isNaN(Number(p)) ? Number(p) : p);
-      const objNode = this.findNodeAtPath(root, nodePath);
+      // Recursive function to detect duplicate keys in the JSON structure
+      const findDuplicateKeys = (node: Node, path: string[] = []): void => {
+        if (node.type === 'object' && node.children) {
+          const keysSeen = new Map<string, number[]>();
 
-      if (objNode && objNode.type === 'object' && objNode.children) {
-        // Track seen property names
-        const seenProps = new Map<string, number[]>();
+          // First pass: collect property names and their indices
+          node.children.forEach((prop, index) => {
+            if (prop.type === 'property' && prop.children && prop.children.length > 0) {
+              const keyNode = prop.children[0];
+              if (keyNode.type === 'string' && typeof keyNode.value === 'string') {
+                const key = keyNode.value;
+                const positions = keysSeen.get(key) || [];
+                positions.push(index);
+                keysSeen.set(key, positions);
 
-        // First pass: collect all property names and their positions
-        objNode.children.forEach((propNode, index) => {
-          if (propNode.type === 'property' && propNode.children && propNode.children.length > 0) {
-            const keyNode = propNode.children[0];
-            if (keyNode.type === 'string' && typeof keyNode.value === 'string') {
-              const key = keyNode.value;
-              const positions = seenProps.get(key) || [];
-              positions.push(index);
-              seenProps.set(key, positions);
-            }
-          }
-        });
-
-        // Second pass: report duplicates
-        for (const [key, positions] of seenProps.entries()) {
-          if (positions.length > 1) {
-            // Generate a normalized path for ignore rules
-            const normalizedPath = path.join('.');
-            const formattedPath = `$.${normalizedPath}`;
-
-            this.logger.debug('Found duplicate configuration key', {
-              key,
-              positions,
-              path: normalizedPath,
-              formattedPath // Include formatted path for ignore service
-            }, this.logChannel);
-
-            // Get the object context for better error messages
-            const contextPath = path.join('.');
-            const objectType = this.determineObjectType(contextPath);
-
-            // Report each duplicate instance
-            positions.forEach((pos, i) => {
-              const propNode = objNode.children?.[pos];
-              if (propNode && propNode.type === 'property' && propNode.children && propNode.children.length > 0) {
-                const keyNode = propNode.children[0];
-                const startPos = this.getNodePosition(keyNode.offset, rawText);
-                const endPos = this.getNodePosition(keyNode.offset + keyNode.length, rawText);
-
-                const ordinalPosition = this.getOrdinalString(i + 1);
-
-                // Create an error with enhanced information for filtering
-                const errorMessage = `Duplicate key '${key}' found (${ordinalPosition} occurrence) in ${objectType} at ${contextPath}`;
-                const errorPath = [...path, key].join('.');
-
-                errors.push({
-                  code: 'DUPLICATE_CONFIGURATION_KEY',
-                  message: errorMessage,
-                  path: errorPath, // Include dot-notation path
-                  range: {
-                    start: startPos,
-                    end: endPos
-                  },
-                });
-
-                // Log detailed information that could be used for creating ignore patterns
-                this.logger.debug('Duplicate key details for ignore pattern creation', {
-                  errorMessage,
-                  path: errorPath,
-                  formattedPath,
+                this.logger.debug('Found property key', {
                   key,
-                  objectType,
-                  duplicateIndex: i,
-                  totalOccurrences: positions.length
+                  index,
+                  pathJoined: path.join('.')
                 }, this.logChannel);
               }
-            });
+            }
+          });
+
+          // Second pass: report duplicates
+          for (const [key, positions] of keysSeen.entries()) {
+            if (positions.length > 1) {
+              const normalizedPath = path.join('.');
+
+              this.logger.debug('Found duplicate configuration key', {
+                key,
+                positions,
+                path: normalizedPath
+              }, this.logChannel);
+
+              // Get object context for better error messages
+              const objectType = this.determineObjectType(normalizedPath);
+
+              // Report each duplicate instance
+              positions.forEach((pos, i) => {
+                const propNode = node.children?.[pos];
+                if (propNode && propNode.type === 'property' && propNode.children && propNode.children.length > 0) {
+                  const keyNode = propNode.children[0];
+                  const startPos = this.getNodePositionInternal(keyNode.offset, rawText);
+                  const endPos = this.getNodePositionInternal(keyNode.offset + keyNode.length, rawText);
+
+                  const ordinalPosition = this.getOrdinalString(i + 1);
+
+                  // Create error with enhanced information
+                  const errorMessage = `Duplicate key '${key}' found (${ordinalPosition} occurrence) in ${objectType} at ${normalizedPath}`;
+                  const errorPath = path.length > 0 ? [...path, key].join('.') : key;
+
+                  errors.push({
+                    code: 'DUPLICATE_CONFIGURATION_KEY',
+                    message: errorMessage,
+                    path: errorPath,
+                    range: {
+                      start: startPos,
+                      end: endPos
+                    }
+                  });
+                }
+              });
+            }
           }
+
+          // Recursively process all child objects and array items
+          node.children.forEach(child => {
+            // For property nodes, we need to process the value (second child)
+            if (child.type === 'property' && child.children && child.children.length > 1) {
+              const keyNode = child.children[0];
+              const valueNode = child.children[1];
+              const propertyKey = keyNode.value as string;
+
+              // Only recurse if the value is an object or array
+              if (valueNode.type === 'object' || valueNode.type === 'array') {
+                const newPath = [...path, propertyKey];
+                findDuplicateKeys(valueNode, newPath);
+              }
+            }
+            // For array nodes, process each item
+            else if (child.type === 'array' && child.children) {
+              child.children.forEach((item, index) => {
+                const newPath = [...path, index.toString()];
+                findDuplicateKeys(item, newPath);
+              });
+            }
+          });
         }
-      }
-
-      // Recursively check all objects in arrays
-      if (Array.isArray(obj)) {
-        obj.forEach((item, index) => {
-          if (item && typeof item === 'object') {
-            findDuplicateKeys(item, [...path, String(index)]);
-          }
-        });
-      } else if (typeof obj === 'object' && obj !== null) {
-        // Recursively check all object properties
-        for (const key of Object.keys(obj)) {
-          const value = obj[key];
-          if (value && typeof value === 'object') {
-            findDuplicateKeys(value, [...path, key]);
-          }
+        // Handle arrays - each item could be an object that needs checking
+        else if (node.type === 'array' && node.children) {
+          node.children.forEach((item, index) => {
+            const newPath = [...path, index.toString()];
+            findDuplicateKeys(item, newPath);
+          });
         }
-      }
-    };
+      };
 
-    // Start the recursive check from the root object
-    findDuplicateKeys(value, []);
+      // Start the recursive check from the root node
+      findDuplicateKeys(root);
 
-    this.logger.debug('Duplicate configuration keys validation complete', {
-      errorCount: errors.length,
-      // Include summary of errors for easier debugging without full content
-      errorSummary: errors.map(err => ({
-        message: err.message,
-        path: err.path
-      }))
-    }, this.logChannel);
+      this.logger.debug('Duplicate configuration keys validation complete', {
+        errorCount: errors.length,
+        errorSummary: errors.map(err => ({
+          message: err.message,
+          path: err.path
+        }))
+      }, this.logChannel);
+    } catch (error) {
+      this.logger.error('Error in duplicate configuration keys validation', {
+        error: error instanceof Error ? error.message : String(error)
+      }, this.logChannel);
+    }
 
     return errors;
+  }
+
+  /**
+   * Finds a node in the JSON parse tree by path
+   * @param root The root node of the JSON parse tree
+   * @param path The path to the node as an array of string or number indices
+   * @returns The node if found, undefined otherwise
+   */
+  private findNodeAtPathInternal(root: Node | undefined, path: (string | number)[]): Node | undefined {
+    if (!root) {
+      return undefined;
+    }
+    return findNodeAtLocation(root, path);
+  }
+
+  /**
+   * Gets a position object (line, character) from an offset in the raw text
+   * @param offset The character offset in the raw text
+   * @param rawText The raw JSON text
+   * @returns A position object with line and character properties
+   */
+  private getNodePositionInternal(offset: number, rawText?: string): { line: number; character: number } {
+    if (!rawText) {
+      return { line: 0, character: 0 };
+    }
+
+    let line = 0;
+    let character = 0;
+    for (let i = 0; i < offset && i < rawText.length; i++) {
+      if (rawText[i] === '\n') {
+        line++;
+        character = 0;
+      } else {
+        character++;
+      }
+    }
+
+    return { line, character };
   }
 
   /**

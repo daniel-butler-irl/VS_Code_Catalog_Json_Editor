@@ -1,0 +1,17 @@
+{
+    "ibmCatalog.validation.rules": {
+        "install_type_required": {
+            "enabled": false,
+            "params": {
+                "ignoreValidation": true
+            }
+        },
+        "no_duplicate_config_keys": {
+            "enabled": true
+        },
+        "duplicate_array_items": {
+            "enabled": false,
+            "params": {}
+        }
+    }
+}

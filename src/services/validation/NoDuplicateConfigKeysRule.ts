@@ -4,6 +4,12 @@ import { ValidationRuleConfig } from '../../types/validation/rules';
 import { BaseValidationRule } from './BaseValidationRule';
 import { parseTree, findNodeAtLocation, Node } from 'jsonc-parser';
 import { LoggingService } from '../core/LoggingService';
+// Remove unused imports that are causing errors
+// import * as vscode from 'vscode';
+// import { ValidationErrorCode } from '../../models/ValidationErrorCode';
+// import { ValidationResult } from '../../models/ValidationTypes';
+// import { Logger } from '../../utils/Logger';
+// import * as jsonc from 'jsonc-parser';
 
 /**
  * Rule to check for duplicate key values in products[*].flavors[*].configuration arrays.
@@ -43,7 +49,34 @@ export class NoDuplicateConfigKeysRule extends BaseValidationRule {
   }
 
   async validate(value: unknown, config?: ValidationRuleConfig, rawText?: string): Promise<ValidationError[]> {
-    if (!config?.enabled || !rawText || typeof value !== 'object' || value === null) {
+    // Defensive check for config and enabled flag
+    if (!config) {
+      this.logger.debug('No configuration provided for NoDuplicateConfigKeysRule, using default enabled=true', {
+        ruleId: this.id
+      }, this.logChannel);
+      config = { enabled: true };
+    }
+
+    // Explicitly log the state of the enabled flag to help debugging
+    this.logger.debug('NoDuplicateConfigKeysRule validation requested', {
+      ruleId: this.id,
+      configProvided: !!config,
+      enabled: config?.enabled === true,
+      config
+    }, this.logChannel);
+
+    if (config.enabled !== true) {
+      this.logger.debug('NoDuplicateConfigKeysRule is disabled, skipping validation', {
+        config
+      }, this.logChannel);
+      return [];
+    }
+
+    if (typeof value !== 'object' || value === null) {
+      this.logger.debug('Invalid value type for NoDuplicateConfigKeysRule, skipping validation', {
+        valueType: typeof value,
+        isNull: value === null
+      }, this.logChannel);
       return [];
     }
 
@@ -54,17 +87,13 @@ export class NoDuplicateConfigKeysRule extends BaseValidationRule {
     }, this.logChannel);
 
     const errors: ValidationError[] = [];
-    const root = parseTree(rawText);
 
-    interface KeyInfo {
-      value: string;
-      indices: Array<number>;
-      nodes: Array<Node | undefined>;
-    }
+    // Parse the JSON tree if raw text is available
+    const root = rawText ? parseTree(rawText) : null;
 
     // Helper function to check configuration array for duplicates
-    const checkConfigurationArray = (configArray: any[], basePath: string[]) => {
-      const seenKeys = new Map<string, KeyInfo>();
+    const checkConfigurationArray = (configArray: any[], basePath: (string | number)[]) => {
+      const seenKeys = new Map<string, { indices: number[], nodes: (Node | undefined)[] }>();
 
       // First pass: collect all keys and their indices
       configArray.forEach((item, index) => {
@@ -75,22 +104,21 @@ export class NoDuplicateConfigKeysRule extends BaseValidationRule {
           }
 
           // Find the node for this configuration item
-          const configItemPath = [...basePath, String(index)];
-          const nodePath = configItemPath.map(p => !isNaN(Number(p)) ? Number(p) : p);
-          const configNode = this.findNodeAtPath(root, nodePath);
-
-          // Find the key property node within the configuration item
           let keyNode: Node | undefined;
-          if (configNode) {
-            keyNode = findNodeAtLocation(configNode, ['key']);
+          if (root) {
+            const configItemPath = [...basePath, index];
+            const configNode = this.findNodeAtPath(root, configItemPath);
+
+            // Find the key property node within the configuration item
+            if (configNode) {
+              keyNode = this.findPropertyNode(configNode, 'key');
+              if (keyNode && keyNode.children && keyNode.children.length > 1) {
+                keyNode = keyNode.children[1]; // The value of the key property
+              }
+            }
           }
 
-          const existing = seenKeys.get(key) || {
-            value: key,
-            indices: [] as Array<number>,
-            nodes: [] as Array<Node | undefined>
-          };
-
+          const existing = seenKeys.get(key) || { indices: [], nodes: [] };
           existing.indices.push(index);
           existing.nodes.push(keyNode);
           seenKeys.set(key, existing);
@@ -98,97 +126,75 @@ export class NoDuplicateConfigKeysRule extends BaseValidationRule {
       });
 
       // Second pass: report duplicates
-      for (const { value: key, indices, nodes } of seenKeys.values()) {
+      for (const [key, { indices, nodes }] of seenKeys.entries()) {
         if (indices.length > 1) {
-          // Normalized path for easier ignore rule creation
+          // Format the path for error reporting
           const normalizedPath = basePath.join('.');
-          const formattedDollarPath = `$.${normalizedPath}`;
 
           this.logger.debug('Found duplicate key in configuration array', {
             key,
             indices,
-            path: normalizedPath,
-            formattedPath: formattedDollarPath
+            path: normalizedPath
           }, this.logChannel);
 
-          // Find all instances of this key in the configuration
+          // Report errors for all instances of the duplicate key
           indices.forEach((index, arrayIndex) => {
-            // Get the node for this specific instance
             const keyNode = nodes[arrayIndex];
-            const configItemPath = [...basePath, String(index)];
-            const errorPath = [...configItemPath, 'key'].join('.');
+            const itemPath = [...basePath, index, 'key'];
+            const errorPath = itemPath.join('.');
 
-            if (keyNode) {
-              // Use the key node for precise location
-              const startPos = this.getNodePosition(keyNode.offset, rawText);
-              const endPos = this.getNodePosition(keyNode.offset + keyNode.length, rawText);
+            const otherIndices = indices.filter((_, i) => i !== arrayIndex).join(', ');
+            const errorMessage = `Duplicate key '${key}' found in configuration (other instances at indices ${otherIndices})`;
 
-              const otherIndices = indices.filter((_, i) => i !== arrayIndex);
-              const errorMessage = `Duplicate key '${key}' found in configuration (other instances at indices ${otherIndices.join(', ')})`;
+            if (keyNode && rawText) {
+              // We have a node position we can use
+              const position = this.getNodePosition(keyNode, rawText);
 
-              // Create the error with enhanced information for filtering
               errors.push({
                 code: 'DUPLICATE_CONFIG_KEY',
                 message: errorMessage,
                 path: errorPath,
                 range: {
-                  start: startPos,
-                  end: endPos
+                  start: position,
+                  end: { line: position.line, character: position.character + key.length }
                 }
               });
+            } else if (rawText) {
+              // Fall back to searching for the key in the text
+              const keyPosition = this.findKeyPosition(key, rawText, 0);
 
-              // Log additional information that could be used for creating ignore rules
-              this.logger.debug('Duplicate key details', {
-                key,
+              errors.push({
+                code: 'DUPLICATE_CONFIG_KEY',
+                message: errorMessage,
                 path: errorPath,
-                formattedPath: formattedDollarPath,
-                message: errorMessage
-              }, this.logChannel);
+                range: {
+                  start: keyPosition,
+                  end: { line: keyPosition.line, character: keyPosition.character + key.length }
+                }
+              });
             } else {
-              // Fallback to finding the entire configuration object if key node not found
-              const nodePath = configItemPath.map(p => !isNaN(Number(p)) ? Number(p) : p);
-              const configNode = this.findNodeAtPath(root, nodePath);
-
-              if (configNode) {
-                const startPos = this.getNodePosition(configNode.offset, rawText);
-                const endPos = this.getNodePosition(configNode.offset + configNode.length, rawText);
-
-                const otherIndices = indices.filter((_, i) => i !== arrayIndex);
-                const errorMessage = `Duplicate key '${key}' found in configuration (other instances at indices ${otherIndices.join(', ')})`;
-
-                errors.push({
-                  code: 'DUPLICATE_CONFIG_KEY',
-                  message: errorMessage,
-                  path: configItemPath.join('.'),
-                  range: {
-                    start: startPos,
-                    end: endPos
-                  }
-                });
-
-                // Log additional information for ignore rules
-                this.logger.debug('Duplicate key details (fallback)', {
-                  key,
-                  path: configItemPath.join('.'),
-                  formattedPath: formattedDollarPath,
-                  message: errorMessage
-                }, this.logChannel);
-              }
+              // No position information available
+              errors.push({
+                code: 'DUPLICATE_CONFIG_KEY',
+                message: errorMessage,
+                path: errorPath
+              });
             }
           });
         }
       }
     };
 
-    // Traverse the catalog structure
+    // Traverse the catalog structure to find all configuration arrays
     const obj = value as any;
     if (Array.isArray(obj.products)) {
       obj.products.forEach((product: any, productIndex: number) => {
         if (product && Array.isArray(product.flavors)) {
           product.flavors.forEach((flavor: any, flavorIndex: number) => {
             if (flavor && Array.isArray(flavor.configuration)) {
-              const path = ['products', String(productIndex), 'flavors', String(flavorIndex), 'configuration'];
-              checkConfigurationArray(flavor.configuration, path);
+              const path = ['products', productIndex, 'flavors', flavorIndex, 'configuration'];
+              // Fix: Cast the path to any to avoid the type error
+              checkConfigurationArray(flavor.configuration, path as any);
             }
           });
         }
@@ -197,7 +203,6 @@ export class NoDuplicateConfigKeysRule extends BaseValidationRule {
 
     this.logger.debug('Duplicate config key validation complete', {
       errorCount: errors.length,
-      // Include summary of errors instead of full content
       errorSummary: errors.map(err => ({
         message: err.message,
         path: err.path

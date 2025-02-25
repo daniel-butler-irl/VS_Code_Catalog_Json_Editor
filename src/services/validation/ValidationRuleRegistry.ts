@@ -97,18 +97,28 @@ export class ValidationRuleRegistry {
       ruleCount: this.rules.size,
       rules: Array.from(this.rules.keys()).map(id => ({
         id,
-        enabled: this.getRuleConfig(id)?.enabled
+        enabled: this.getRuleConfig(id)?.enabled,
+        config: this.getRuleConfig(id)
       }))
     }, this.logChannel);
 
     for (const [id, rule] of this.rules) {
+      // Always fetch the latest config
       const config = this.getRuleConfig(id);
-      if (config && config.enabled) {
+
+      // Check if the rule is enabled
+      const isEnabled = config?.enabled === true;
+
+      this.logger.debug(`Rule ${id} configuration:`, {
+        id,
+        enabled: isEnabled,
+        config
+      }, this.logChannel);
+
+      if (isEnabled) {
         this.logger.debug('Running validation rule', {
           ruleId: id,
-          description: rule.description,
-          hasOverrideSchema: !!rule.overrideSchema,
-          hasSchemaModifications: !!rule.schemaModifications
+          description: rule.description
         }, this.logChannel);
 
         const errors = await rule.validate(value, config, rawText);
@@ -131,7 +141,8 @@ export class ValidationRuleRegistry {
       } else {
         this.logger.debug('Skipping disabled validation rule', {
           ruleId: id,
-          description: rule.description
+          description: rule.description,
+          config
         }, this.logChannel);
       }
     }
@@ -149,6 +160,37 @@ export class ValidationRuleRegistry {
 
   // For testing purposes
   public resetInstance(): void {
-    ValidationRuleRegistry.instance = new ValidationRuleRegistry();
+    this.logger.debug('Resetting ValidationRuleRegistry instance for testing', {
+      beforeReset: {
+        ruleCount: this.rules.size,
+        ruleConfigs: Array.from(this.ruleConfigs.entries()).map(([id, config]) => ({
+          id,
+          enabled: config?.enabled,
+          params: config?.params
+        }))
+      }
+    }, this.logChannel);
+
+    // Clear the existing rules and configurations
+    this.rules.clear();
+    this.ruleConfigs.clear();
+
+    // Re-register the default rules with default configurations
+    this.registerRule(new NoDuplicateConfigKeysRule(), { enabled: true });
+    this.registerRule(new DuplicateConfigurationKeysRule(), { enabled: true });
+
+    // Update the static instance
+    ValidationRuleRegistry.instance = this;
+
+    this.logger.debug('ValidationRuleRegistry instance has been reset', {
+      afterReset: {
+        ruleCount: this.rules.size,
+        ruleConfigs: Array.from(this.ruleConfigs.entries()).map(([id, config]) => ({
+          id,
+          enabled: config?.enabled,
+          params: config?.params
+        }))
+      }
+    }, this.logChannel);
   }
 } 

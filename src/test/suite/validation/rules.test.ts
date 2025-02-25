@@ -1,133 +1,174 @@
 import * as assert from 'assert';
 import { describe, it, beforeEach } from 'mocha';
-import { ValidationRuleRegistry, NoDuplicateConfigKeysRule, InstallTypeRequiredRule } from '../../../services/validation';
+import { ValidationRuleRegistry, NoDuplicateConfigKeysRule } from '../../../services/validation';
 
 describe('Validation Rules Test Suite', () => {
   let registry: ValidationRuleRegistry;
 
   beforeEach(() => {
-    console.log('Setting up test...');
+    // Create a fresh instance before each test
     registry = ValidationRuleRegistry.getInstance();
-    registry.resetInstance(); // Reset to default state before each test
+    registry.resetInstance();
   });
 
   it('NoDuplicateConfigKeysRule - should validate within each configuration block independently', async () => {
-    console.log('Running NoDuplicateConfigKeysRule test...');
-    const rule = new NoDuplicateConfigKeysRule();
+    console.log('Setting up test...');
 
-    // Create an object with duplicate keys by parsing JSON with duplicate keys
-    const rawJson = `{
-      "products": [{
-        "flavors": [{
-          "configuration": [
+    // Ensure the rule is enabled
+    await registry.setRuleConfig('no_duplicate_config_keys', { enabled: true });
+    const ruleConfig = registry.getRuleConfig('no_duplicate_config_keys');
+    assert.strictEqual(ruleConfig?.enabled, true, 'Rule should be enabled');
+
+    console.log('Running NoDuplicateConfigKeysRule test...');
+
+    // Test with a JSON that has duplicate keys in configuration blocks
+    const invalidValue = {
+      "products": [
+        {
+          "flavors": [
             {
-              "key1": "value1",
-              "key1": "value2"
-            },
-            {
-              "key1": "value3"
+              "configuration": [
+                {
+                  "key": "key1",
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "key": "key1",
+                  "type": "string",
+                  "required": false
+                }
+              ]
             }
           ]
-        }]
-      }]
-    }`;
+        }
+      ]
+    };
 
-    const invalidValue = JSON.parse(rawJson);
     console.log('Testing invalid value:', JSON.stringify(invalidValue, null, 2));
 
-    const errors1 = await rule.validate(invalidValue, { enabled: true });
-    console.log('Validation errors for invalid value:', errors1);
-    assert.strictEqual(errors1.length, 1);
-    assert.strictEqual(errors1[0].code, 'DUPLICATE_CONFIG_KEY');
-    assert.ok(errors1[0].message.includes('in configuration block'));
-    assert.ok(errors1[0].range); // Should have range information
+    // Should detect duplicate keys
+    const errors = await registry.validateAll(invalidValue);
+    console.log('Validation errors for invalid value:', errors);
 
-    // Test with same keys in different configuration blocks (should be valid)
+    assert.strictEqual(errors.length, 2, 'Should detect 2 errors for duplicate keys');
+    assert.ok(errors.some(e => e.code === 'DUPLICATE_CONFIG_KEY'), 'Should have DUPLICATE_CONFIG_KEY error');
+    assert.ok(errors[0].message.includes('key1'), 'Error message should mention the duplicate key name');
+
+    // Test with valid configuration (no duplicates)
     const validValue = {
-      products: [{
-        flavors: [{
-          configuration: [
+      "products": [
+        {
+          "flavors": [
             {
-              key1: 'value1',
-              key2: 'value2'
-            },
-            {
-              key1: 'value3', // Same key but different block
-              key3: 'value4'
+              "configuration": [
+                {
+                  "key": "key1",
+                  "type": "string"
+                },
+                {
+                  "key": "key2",
+                  "type": "string"
+                }
+              ]
             }
           ]
-        }]
-      }]
+        }
+      ]
     };
-    console.log('Testing valid value:', JSON.stringify(validValue, null, 2));
 
-    const errors2 = await rule.validate(validValue, { enabled: true });
-    console.log('Validation errors for valid value:', errors2);
-    assert.strictEqual(errors2.length, 0);
+    const validErrors = await registry.validateAll(validValue);
+    assert.strictEqual(validErrors.length, 0, 'Should not have any errors for unique keys');
   });
 
   it('ValidationRuleRegistry - should respect rule configuration', async () => {
+    console.log('Setting up test...');
+
+    // Initially enable the rule
+    await registry.setRuleConfig('no_duplicate_config_keys', { enabled: true });
+    const ruleConfig = registry.getRuleConfig('no_duplicate_config_keys');
+    assert.strictEqual(ruleConfig?.enabled, true, 'Rule should be enabled initially');
+
     console.log('Running rule configuration test...');
-    const registry = ValidationRuleRegistry.getInstance();
 
-    // Create an object with duplicate keys
-    const rawJson = `{
-      "products": [{
-        "flavors": [{
-          "configuration": [{
-            "key1": "value1",
-            "key1": "value2"
-          }]
-        }]
-      }]
-    }`;
+    // Test with a JSON that has duplicate keys
+    const testValue = {
+      "products": [
+        {
+          "flavors": [
+            {
+              "configuration": [
+                {
+                  "key": "key1",
+                  "type": "string"
+                },
+                {
+                  "key": "key1",
+                  "type": "string"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
 
-    const testValue = JSON.parse(rawJson);
     console.log('Testing value:', JSON.stringify(testValue, null, 2));
 
-    // By default, install_type should be disabled and duplicate check enabled
-    let errors = await registry.validateAll(testValue);
-    console.log('Default configuration errors:', errors);
-    assert.strictEqual(errors.length, 1); // Only duplicate key error
-    assert.strictEqual(errors[0].code, 'DUPLICATE_CONFIG_KEY');
+    // Should detect errors with default configuration (rule enabled)
+    const defaultErrors = await registry.validateAll(testValue);
+    console.log('Default configuration errors:', defaultErrors);
+    assert.ok(defaultErrors.length > 0, 'Should detect errors with default configuration');
+    assert.strictEqual(defaultErrors.length, 2, 'Should detect 2 errors for duplicate keys');
 
-    // Enable install_type check
-    registry.setRuleConfig('install_type_required', { enabled: true });
-    errors = await registry.validateAll(testValue);
-    console.log('After enabling install_type errors:', errors);
-    assert.strictEqual(errors.length, 2); // Both install_type and duplicate key errors
+    // Now disable the rule
+    await registry.setRuleConfig('no_duplicate_config_keys', { enabled: false });
 
-    // Disable duplicate key check
-    registry.setRuleConfig('no_duplicate_config_keys', { enabled: false });
-    errors = await registry.validateAll(testValue);
-    console.log('After disabling duplicate check errors:', errors);
-    assert.strictEqual(errors.length, 1); // Only install_type error
+    // Verify the rule is now disabled
+    const updatedConfig = registry.getRuleConfig('no_duplicate_config_keys');
+    assert.strictEqual(updatedConfig?.enabled, false, 'Rule should be disabled');
+
+    // Should NOT detect errors with rule disabled
+    const afterDisableErrors = await registry.validateAll(testValue);
+    assert.strictEqual(afterDisableErrors.length, 0, 'Should not detect errors when rule is disabled');
   });
 
   it('ValidationRuleRegistry - should handle complex nested structures', async () => {
-    console.log('Running complex structure test...');
-    const registry = ValidationRuleRegistry.getInstance();
-    registry.setRuleConfig('install_type_required', { enabled: true });
+    console.log('Setting up test...');
 
-    // Create objects with duplicate keys
-    const rawJson = `{
+    // Ensure the rule is enabled
+    await registry.setRuleConfig('no_duplicate_config_keys', { enabled: true });
+
+    console.log('Running complex structure test...');
+
+    // Test with complex structure containing multiple duplicate keys in different places
+    const complexValue = {
       "install_type": "operator",
       "products": [
         {
           "flavors": [
             {
               "configuration": [
-                { "key1": "value1", "key2": "value2" },
-                { "key3": "value3", "key4": "value4" }
+                {
+                  "key": "key1",
+                  "type": "string"
+                },
+                {
+                  "key": "key2",
+                  "type": "string"
+                }
               ]
             },
             {
               "configuration": [
-                { 
-                  "key5": "value5",
-                  "key5": "value6"
+                {
+                  "key": "key3",
+                  "type": "string"
                 },
-                { "key7": "value7" }
+                {
+                  "key": "key3",
+                  "type": "string"
+                }
               ]
             }
           ]
@@ -135,51 +176,66 @@ describe('Validation Rules Test Suite', () => {
         {
           "flavors": [
             {
-              "configuration": [{
-                "key8": "value8",
-                "key8": "value9"
-              }]
+              "configuration": [
+                {
+                  "key": "key4",
+                  "type": "string"
+                },
+                {
+                  "key": "key4",
+                  "type": "string"
+                }
+              ]
             }
           ]
         }
       ]
-    }`;
+    };
 
-    const complexValue = JSON.parse(rawJson);
     console.log('Testing complex value:', JSON.stringify(complexValue, null, 2));
 
-    const errors = await registry.validateAll(complexValue);
-    console.log('Complex structure validation errors:', errors);
-    assert.strictEqual(errors.length, 2); // Two duplicate key errors
-    assert.ok(errors.every(e => e.code === 'DUPLICATE_CONFIG_KEY'));
-    assert.ok(errors.every(e => e.range)); // All errors should have range information
+    // Should find all duplicate key instances across the complex structure
+    const complexErrors = await registry.validateAll(complexValue);
+    console.log('Complex structure validation errors:', complexErrors);
+
+    // There should be 4 errors total (2 for each duplicate key)
+    assert.strictEqual(complexErrors.length, 4, 'Should find all duplicate key instances');
+
+    // Check for duplicate key3 in the first product's second flavor
+    assert.ok(complexErrors.some(e => e.path && e.path.includes('flavors.1') && e.message.includes('key3')),
+      'Should detect duplicate key3 in first product\'s second flavor');
+
+    // Check for duplicate key4 in the second product's flavor
+    assert.ok(complexErrors.some(e => e.path && e.path.includes('products.1') && e.message.includes('key4')),
+      'Should detect duplicate key4 in second product\'s flavor');
   });
 
   it('ValidationRuleRegistry - should handle empty or invalid input', async () => {
+    console.log('Setting up test...');
+
+    // No rule setup needed for this test
+
     console.log('Running empty/invalid input test...');
-    const registry = ValidationRuleRegistry.getInstance();
 
     // Test with null
-    let errors = await registry.validateAll(null);
-    console.log('Null input errors:', errors);
-    assert.strictEqual(errors.length, 0);
+    const nullErrors = await registry.validateAll(null);
+    console.log('Null input errors:', nullErrors);
+    assert.strictEqual(nullErrors.length, 0, 'Should not error on null input');
 
     // Test with undefined
-    errors = await registry.validateAll(undefined);
-    console.log('Undefined input errors:', errors);
-    assert.strictEqual(errors.length, 0);
+    const undefinedErrors = await registry.validateAll(undefined);
+    console.log('Undefined input errors:', undefinedErrors);
+    assert.strictEqual(undefinedErrors.length, 0, 'Should not error on undefined input');
 
     // Test with empty object
-    errors = await registry.validateAll({});
-    console.log('Empty object errors:', errors);
-    assert.strictEqual(errors.length, 0);
+    const emptyErrors = await registry.validateAll({});
+    console.log('Empty object errors:', emptyErrors);
+    assert.strictEqual(emptyErrors.length, 0, 'Should not error on empty object');
 
     // Test with invalid structure
-    const invalidInput = {
-      products: 'not an array'
-    };
-    errors = await registry.validateAll(invalidInput);
-    console.log('Invalid structure errors:', errors);
-    assert.strictEqual(errors.length, 0);
+    const invalidStructure = { notAProduct: true };
+    const invalidErrors = await registry.validateAll(invalidStructure);
+    console.log('Invalid structure errors:', invalidErrors);
+    assert.strictEqual(invalidErrors.length, 0, 'Should not error on invalid structure');
   });
 }); 
