@@ -50,7 +50,7 @@ function cleanup() {
     }
 
     // Clean up test directories
-    const testDirs = ['.vscode-test', 'out/test-workspace', 'out/test-results'];
+    const testDirs = ['out/test-workspace', 'out/test-results'];
     for (const dir of testDirs) {
       const dirPath = path.resolve(__dirname, '../../', dir);
       if (fs.existsSync(dirPath)) {
@@ -94,6 +94,16 @@ async function main() {
       console.log('Created test results directory:', testResultsPath);
     }
 
+    // VS Code test download cache path
+    const vscodeExecutablePath = path.resolve(__dirname, '../../.vscode-test');
+
+    // Download options to enable caching
+    const downloadOptions = {
+      cachePath: vscodeExecutablePath,
+      version: 'stable',
+      downloadOnlyIfMissing: true // Only download if not already available
+    };
+
     console.log('Starting VS Code test run...');
     // Download VS Code, unzip it and run the integration test
     await runTests({
@@ -111,7 +121,8 @@ async function main() {
         '--user-data-dir=.vscode-test/user-data',
         '--no-sandbox', // Add this to prevent sandbox-related issues
         '--disable-dev-shm-usage' // Add this to prevent shared memory issues
-      ]
+      ],
+      ...downloadOptions
     });
 
     console.log('Test run completed successfully');

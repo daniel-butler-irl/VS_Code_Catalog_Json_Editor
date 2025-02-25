@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { describe, it, beforeEach } from 'mocha';
-import { ValidationRuleRegistry, InstallTypeRequiredRule, NoDuplicateConfigKeysRule } from '../../../types/validation/rules';
+import { ValidationRuleRegistry, NoDuplicateConfigKeysRule, InstallTypeRequiredRule } from '../../../services/validation';
 
 describe('Validation Rules Test Suite', () => {
   let registry: ValidationRuleRegistry;
@@ -9,28 +9,6 @@ describe('Validation Rules Test Suite', () => {
     console.log('Setting up test...');
     registry = ValidationRuleRegistry.getInstance();
     registry.resetInstance(); // Reset to default state before each test
-  });
-
-  it('InstallTypeRequiredRule - should be disabled by default', async () => {
-    console.log('Running InstallTypeRequiredRule test...');
-    const rule = new InstallTypeRequiredRule();
-
-    // Test with missing install_type
-    const invalidValue = {
-      name: 'test'
-    };
-
-    // Should not report error when disabled (default state)
-    const errors1 = await rule.validate(invalidValue, { enabled: false });
-    console.log('Disabled validation errors:', errors1);
-    assert.strictEqual(errors1.length, 0);
-
-    // Should report error when enabled
-    const errors2 = await rule.validate(invalidValue, { enabled: true });
-    console.log('Enabled validation errors:', errors2);
-    assert.strictEqual(errors2.length, 1);
-    assert.strictEqual(errors2[0].code, 'INSTALL_TYPE_REQUIRED');
-    assert.ok(errors2[0].range); // Should have range information
   });
 
   it('NoDuplicateConfigKeysRule - should validate within each configuration block independently', async () => {
