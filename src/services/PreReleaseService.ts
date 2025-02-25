@@ -682,6 +682,23 @@ export class PreReleaseService {
   }
 
   /**
+   * Converts GitHub API tarball URL to the standard GitHub archive URL format
+   * @param apiTarballUrl URL in format https://api.github.com/repos/owner/repo/tarball/tag
+   * @returns URL in format https://github.com/owner/repo/archive/refs/tags/tag.tar.gz
+   */
+  private convertToGitHubArchiveUrl(apiTarballUrl: string): string {
+    // Extract the owner, repo, and tag from the API URL
+    const match = apiTarballUrl.match(/https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/tarball\/(.+)$/);
+    if (!match) {
+      this.logger.warn('Could not parse GitHub API tarball URL', { apiTarballUrl });
+      return apiTarballUrl; // Return original if no match
+    }
+
+    const [, owner, repo, tag] = match;
+    return `https://github.com/${owner}/${repo}/archive/refs/tags/${tag}.tar.gz`;
+  }
+
+  /**
    * Extracts catalog details from a GitHub release tarball
    * @param tarballUrl URL of the GitHub release tarball
    * @returns Extracted catalog details including all flavors
@@ -700,9 +717,12 @@ export class PreReleaseService {
     try {
       await fs.promises.mkdir(tempDir, { recursive: true });
 
+      // Convert the API tarball URL to the archive URL format
+      const archiveUrl = this.convertToGitHubArchiveUrl(tarballUrl);
+
       // Download the tarball
-      this.logger.info('Downloading tarball', { archiveUrl: tarballUrl });
-      const response = await axios.get(tarballUrl, { responseType: 'arraybuffer' });
+      this.logger.info('Downloading tarball', { archiveUrl, originalUrl: tarballUrl });
+      const response = await axios.get(archiveUrl, { responseType: 'arraybuffer' });
       await fs.promises.writeFile(tempFile, response.data);
       this.logger.info('Downloaded tarball', { fileSize: response.data.length, tempFile });
 
@@ -1321,204 +1341,217 @@ export class PreReleaseService {
    * @param details Pre-release details
    */
   private async importToCatalog(details: PreReleaseDetails): Promise<void> {
-    this.logger.debug('Starting catalog import process', {
-      version: details.version,
-      catalogId: details.catalogId,
-      hasView: !!this.view
-    }, 'preRelease');
-
-    // Get catalog details first
-    const catalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
-    this.logger.info('Retrieved catalog details for import', {
-      catalogId: details.catalogId,
-      offeringId: catalogDetails.offeringId,
-      name: catalogDetails.name,
-      label: catalogDetails.label,
-      currentVersionCount: catalogDetails.versions.length
-    }, 'preRelease');
-
-    // Start import process
-    this.logger.info('Starting flavor import process', {
-      catalogId: details.catalogId,
-      offeringId: catalogDetails.offeringId,
-      version: details.version
-    }, 'preRelease');
-
-    const ibmCloudService = await this.getIBMCloudService();
-
-    // Get the release details to extract flavor information
-    const releaseDetails = await this.extractCatalogDetailsFromTarball(details.targetVersion!);
-
-    if (!releaseDetails.flavors || releaseDetails.flavors.length === 0) {
-      throw new Error('No flavors found in the catalog manifest');
+    if (!details.targetVersion) {
+      throw new Error('Target version URL is required for catalog import');
     }
 
-    // Use the flavors that were already selected in createPreRelease
-    if (!details.selectedFlavors || details.selectedFlavors.length === 0) {
-      throw new Error('No flavors were selected for import');
-    }
-
-    // Double check which flavors are still available (in case catalog was updated between selection and import)
-    const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
-      details.selectedFlavors,
-      catalogDetails.versions,
-      details.version
-    );
-
-    if (availableFlavors.length === 0) {
-      throw new Error(`No flavors available to import for version ${details.version}. They may have been imported by another user.`);
-    }
-
-    // Use only the flavors that are still available
-    const flavorsToImport = availableFlavors;
-
-    this.logger.info('Starting import of selected flavors', {
-      totalFlavors: releaseDetails.flavors.length,
-      selectedFlavors: flavorsToImport.length,
-      selectedFlavorNames: flavorsToImport.map((f: CatalogFlavor) => f.name),
-      alreadyImportedCount: alreadyImportedFlavors.length,
-      alreadyImportedFlavors: alreadyImportedFlavors.map(f => f.name)
-    }, 'preRelease');
-
-    // Import each selected flavor as a separate version
-    for (const flavor of flavorsToImport) {
-      // Verify one last time that this specific flavor hasn't been imported
-      if (this.flavorExistsInVersion(catalogDetails.versions, details.version, flavor.name)) {
-        this.logger.warn('Skipping flavor that was imported by another user', {
-          version: details.version,
-          flavorName: flavor.name
-        }, 'preRelease');
-        continue;
-      }
-
-      this.logger.info('Importing flavor', {
-        flavorName: flavor.name,
-        flavorLabel: flavor.label,
-        install_type: flavor.install_type || 'fullstack'
-      }, 'preRelease');
-
-      try {
-        await ibmCloudService.importVersion(
-          details.catalogId!,
-          catalogDetails.offeringId,
-          {
-            zipurl: details.targetVersion!,
-            targetVersion: details.targetVersion!,
-            version: details.version,
-            catalogIdentifier: details.catalogId!,
-            flavor: {
-              metadata: {
-                name: flavor.name,
-                label: flavor.label || flavor.name,
-                install_type: flavor.install_type || 'fullstack'
-              }
-            }
-          }
-        );
-
-        this.logger.info('Successfully imported flavor version to catalog', {
-          catalogId: details.catalogId,
-          offeringId: catalogDetails.offeringId,
-          version: details.version,
-          flavorName: flavor.name
-        }, 'preRelease');
-      } catch (error) {
-        this.logger.error('Failed to import flavor version', {
-          error,
-          catalogId: details.catalogId,
-          offeringId: catalogDetails.offeringId,
-          version: details.version,
-          flavorName: flavor.name
-        }, 'preRelease');
-        throw new Error(`Failed to import flavor ${flavor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    }
-
-    // Clear caches and force refresh of offerings
-    await ibmCloudService.clearOfferingCache(details.catalogId!);
-    await ibmCloudService.getOfferingsForCatalog(details.catalogId!, true);
-
-    this.logger.debug('Cleared offering cache and refreshed offerings', {
-      catalogId: details.catalogId
-    }, 'preRelease');
-
-    // Force a refresh of the selected catalog details
-    this.logger.debug('Getting updated catalog details', {
-      catalogId: details.catalogId
-    }, 'preRelease');
-    const updatedCatalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
-    this.logger.debug('Retrieved updated catalog details', {
-      catalogId: details.catalogId,
-      offeringId: updatedCatalogDetails.offeringId,
-      newVersionCount: updatedCatalogDetails.versions.length
-    }, 'preRelease');
-
-    // Get GitHub releases for version mapping
-    this.logger.debug('Getting GitHub releases for version mapping', {}, 'preRelease');
-    const githubReleases = await this.getGitHubReleases().catch(error => {
-      this.logger.warn('Failed to fetch GitHub releases for version mapping', { error }, 'preRelease');
-      return [];
-    });
-    this.logger.debug('Retrieved GitHub releases', {
-      releaseCount: githubReleases.length,
-      releases: githubReleases.map(r => r.tag_name)
-    }, 'preRelease');
-
-    // Create version mappings
-    this.logger.debug('Creating version mappings', {
-      catalogId: details.catalogId,
-      offeringId: updatedCatalogDetails.offeringId
-    }, 'preRelease');
-    const versionMappings = this.getVersionMappingSummary(
-      details.catalogId!,
-      updatedCatalogDetails.offeringId,
-      githubReleases,
-      updatedCatalogDetails.versions
-    );
-    this.logger.debug('Created version mappings', {
-      mappingCount: versionMappings.length,
-      mappings: versionMappings.map(m => ({
-        version: m.version,
-        hasGithubRelease: !!m.githubRelease,
-        githubTag: m.githubRelease?.tag,
-        catalogVersionCount: m.catalogVersions?.length || 0,
-        catalogFlavors: m.catalogVersions?.map(cv => cv.flavor.label)
-      }))
-    }, 'preRelease');
-
-    // Update the UI with new catalog details
-    if (this.view) {
-      this.logger.debug('Updating UI with new catalog details', {
+    try {
+      this.logger.debug('Starting catalog import process', {
+        version: details.version,
         catalogId: details.catalogId,
-        hasVersionMappings: !!versionMappings.length
-      }, 'preRelease');
-      const detailsWithMappings = {
-        ...updatedCatalogDetails,
-        versionMappings
-      };
-
-      await this.view.webview.postMessage({
-        command: 'updateCatalogDetails',
-        catalogDetails: detailsWithMappings
-      });
-      this.logger.debug('Sent updateCatalogDetails message to webview', {
-        command: 'updateCatalogDetails',
         hasView: !!this.view
       }, 'preRelease');
-    } else {
-      this.logger.warn('No view available to update UI', {
+
+      // Get catalog details first
+      const catalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
+
+      // Convert the API tarball URL to the archive URL format for IBM Cloud Catalog
+      const archiveUrl = this.convertToGitHubArchiveUrl(details.targetVersion);
+
+      this.logger.info('Retrieved catalog details for import', {
+        catalogId: details.catalogId,
+        offeringId: catalogDetails.offeringId,
+        name: catalogDetails.name,
+        label: catalogDetails.label,
+        currentVersionCount: catalogDetails.versions.length
+      }, 'preRelease');
+
+      // Start import process
+      this.logger.info('Starting flavor import process', {
+        catalogId: details.catalogId,
+        offeringId: catalogDetails.offeringId,
+        version: details.version
+      }, 'preRelease');
+
+      const ibmCloudService = await this.getIBMCloudService();
+
+      // Get the release details to extract flavor information
+      const releaseDetails = await this.extractCatalogDetailsFromTarball(details.targetVersion);
+
+      if (!releaseDetails.flavors || releaseDetails.flavors.length === 0) {
+        throw new Error('No flavors found in the catalog manifest');
+      }
+
+      // Use the flavors that were already selected in createPreRelease
+      if (!details.selectedFlavors || details.selectedFlavors.length === 0) {
+        throw new Error('No flavors were selected for import');
+      }
+
+      // Double check which flavors are still available (in case catalog was updated between selection and import)
+      const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+        details.selectedFlavors,
+        catalogDetails.versions,
+        details.version
+      );
+
+      if (availableFlavors.length === 0) {
+        throw new Error(`No flavors available to import for version ${details.version}. They may have been imported by another user.`);
+      }
+
+      // Use only the flavors that are still available
+      const flavorsToImport = availableFlavors;
+
+      this.logger.info('Starting import of selected flavors', {
+        totalFlavors: releaseDetails.flavors.length,
+        selectedFlavors: flavorsToImport.length,
+        selectedFlavorNames: flavorsToImport.map((f: CatalogFlavor) => f.name),
+        alreadyImportedCount: alreadyImportedFlavors.length,
+        alreadyImportedFlavors: alreadyImportedFlavors.map(f => f.name)
+      }, 'preRelease');
+
+      // Import each selected flavor as a separate version
+      for (const flavor of flavorsToImport) {
+        // Verify one last time that this specific flavor hasn't been imported
+        if (this.flavorExistsInVersion(catalogDetails.versions, details.version, flavor.name)) {
+          this.logger.warn('Skipping flavor that was imported by another user', {
+            version: details.version,
+            flavorName: flavor.name
+          }, 'preRelease');
+          continue;
+        }
+
+        this.logger.info('Importing flavor', {
+          flavorName: flavor.name,
+          flavorLabel: flavor.label,
+          install_type: flavor.install_type || 'fullstack'
+        }, 'preRelease');
+
+        try {
+          await ibmCloudService.importVersion(
+            details.catalogId!,
+            catalogDetails.offeringId,
+            {
+              zipurl: archiveUrl,
+              targetVersion: details.targetVersion!,
+              version: details.version,
+              catalogIdentifier: details.catalogId!,
+              flavor: {
+                metadata: {
+                  name: flavor.name,
+                  label: flavor.label || flavor.name,
+                  install_type: flavor.install_type || 'fullstack'
+                }
+              }
+            }
+          );
+
+          this.logger.info('Successfully imported flavor version to catalog', {
+            catalogId: details.catalogId,
+            offeringId: catalogDetails.offeringId,
+            version: details.version,
+            flavorName: flavor.name
+          }, 'preRelease');
+        } catch (error) {
+          this.logger.error('Failed to import flavor version', {
+            error,
+            catalogId: details.catalogId,
+            offeringId: catalogDetails.offeringId,
+            version: details.version,
+            flavorName: flavor.name
+          }, 'preRelease');
+          throw new Error(`Failed to import flavor ${flavor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+
+      // Clear caches and force refresh of offerings
+      await ibmCloudService.clearOfferingCache(details.catalogId!);
+      await ibmCloudService.getOfferingsForCatalog(details.catalogId!, true);
+
+      this.logger.debug('Cleared offering cache and refreshed offerings', {
         catalogId: details.catalogId
       }, 'preRelease');
-    }
 
-    this.logger.info('Successfully imported all flavors to catalog and updated UI', {
-      catalogId: details.catalogId,
-      offeringId: updatedCatalogDetails.offeringId,
-      version: details.version,
-      flavorCount: releaseDetails.flavors.length,
-      flavors: releaseDetails.flavors.map(f => f.name),
-      hasView: !!this.view
-    }, 'preRelease');
+      // Force a refresh of the selected catalog details
+      this.logger.debug('Getting updated catalog details', {
+        catalogId: details.catalogId
+      }, 'preRelease');
+      const updatedCatalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
+      this.logger.debug('Retrieved updated catalog details', {
+        catalogId: details.catalogId,
+        offeringId: updatedCatalogDetails.offeringId,
+        newVersionCount: updatedCatalogDetails.versions.length
+      }, 'preRelease');
+
+      // Get GitHub releases for version mapping
+      this.logger.debug('Getting GitHub releases for version mapping', {}, 'preRelease');
+      const githubReleases = await this.getGitHubReleases().catch(error => {
+        this.logger.warn('Failed to fetch GitHub releases for version mapping', { error }, 'preRelease');
+        return [];
+      });
+      this.logger.debug('Retrieved GitHub releases', {
+        releaseCount: githubReleases.length,
+        releases: githubReleases.map(r => r.tag_name)
+      }, 'preRelease');
+
+      // Create version mappings
+      this.logger.debug('Creating version mappings', {
+        catalogId: details.catalogId,
+        offeringId: updatedCatalogDetails.offeringId
+      }, 'preRelease');
+      const versionMappings = this.getVersionMappingSummary(
+        details.catalogId!,
+        updatedCatalogDetails.offeringId,
+        githubReleases,
+        updatedCatalogDetails.versions
+      );
+      this.logger.debug('Created version mappings', {
+        mappingCount: versionMappings.length,
+        mappings: versionMappings.map(m => ({
+          version: m.version,
+          hasGithubRelease: !!m.githubRelease,
+          githubTag: m.githubRelease?.tag,
+          catalogVersionCount: m.catalogVersions?.length || 0,
+          catalogFlavors: m.catalogVersions?.map(cv => cv.flavor.label)
+        }))
+      }, 'preRelease');
+
+      // Update the UI with new catalog details
+      if (this.view) {
+        this.logger.debug('Updating UI with new catalog details', {
+          catalogId: details.catalogId,
+          hasVersionMappings: !!versionMappings.length
+        }, 'preRelease');
+        const detailsWithMappings = {
+          ...updatedCatalogDetails,
+          versionMappings
+        };
+
+        await this.view.webview.postMessage({
+          command: 'updateCatalogDetails',
+          catalogDetails: detailsWithMappings
+        });
+        this.logger.debug('Sent updateCatalogDetails message to webview', {
+          command: 'updateCatalogDetails',
+          hasView: !!this.view
+        }, 'preRelease');
+      } else {
+        this.logger.warn('No view available to update UI', {
+          catalogId: details.catalogId
+        }, 'preRelease');
+      }
+
+      this.logger.info('Successfully imported all flavors to catalog and updated UI', {
+        catalogId: details.catalogId,
+        offeringId: updatedCatalogDetails.offeringId,
+        version: details.version,
+        flavorCount: releaseDetails.flavors.length,
+        flavors: releaseDetails.flavors.map(f => f.name),
+        hasView: !!this.view
+      }, 'preRelease');
+    } catch (error) {
+      this.logger.error('Failed to import to catalog', { error, catalogId: details.catalogId }, 'preRelease');
+      throw error;
+    }
   }
 
   /**
