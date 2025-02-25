@@ -6,9 +6,10 @@ import addFormats from 'ajv-formats';
 import { LoggingService } from './core/LoggingService';
 import { SchemaMetadata } from '../types/schema';
 import { ValidationUIService } from './ValidationUIService';
-import { ValidationRuleRegistry } from '../types/validation/rules';
+import { ValidationRuleRegistry } from './validation';
 import { SchemaModification, SchemaModificationType } from '../types/validation/rules';
 import { parseTree } from 'jsonc-parser';
+import { SchemaValidationIgnoreService } from './validation/SchemaValidationIgnoreService';
 
 interface Schema {
   $schema?: string;
@@ -48,6 +49,9 @@ export class SchemaService {
   private initPromise: Promise<void>;
   private ajv: Ajv;
 
+  // Add a static instance property to make the service accessible globally
+  private static instance: SchemaService;
+
   constructor(private readonly context: vscode.ExtensionContext) {
     this.logger.debug('Initializing SchemaService', {
       contextUri: context.extensionUri.fsPath
@@ -65,13 +69,39 @@ export class SchemaService {
     addFormats(this.ajv);
 
     this.initPromise = this.initialize();
+
+    // Set the static instance
+    SchemaService.instance = this;
+  }
+
+  /**
+   * Get the singleton instance of the schema service
+   */
+  public static getInstance(): SchemaService | undefined {
+    return SchemaService.instance;
+  }
+
+  /**
+   * Public method to ensure the schema is initialized.
+   * This is a wrapper around the private initialize method.
+   * @returns Promise that resolves when initialization is complete
+   */
+  public async ensureInitialized(): Promise<void> {
+    try {
+      await this.initialize();
+    } catch (error) {
+      this.logger.error('Schema initialization failed', {
+        error: error instanceof Error ? error.message : String(error)
+      }, 'schemaValidation');
+      // Schema will be null, which is handled by other methods
+    }
   }
 
   /**
    * Initializes the schema service by fetching the schema.
    * Always tries to fetch fresh schema first, falls back to local cache if fetch fails.
    */
-  public async initialize(): Promise<void> {
+  private async initialize(): Promise<void> {
     if (this.schema) {
       return;
     }
@@ -92,7 +122,9 @@ export class SchemaService {
         this.logger.error('Failed to compile schema with Ajv', {
           error: compileError instanceof Error ? compileError.message : String(compileError)
         }, 'schemaValidation');
-        throw compileError;
+        // Don't throw, just log the error and set schema to null
+        this.schema = null;
+        return;
       }
 
       // Save fetched schema locally
@@ -131,7 +163,18 @@ export class SchemaService {
     }
 
     // If we get here, both fresh fetch and local cache failed
-    throw new Error('Failed to load schema from both GitHub and local cache');
+    // Don't throw an error, just log it and set schema to null
+    this.logger.error('Failed to load schema from both GitHub and local cache', undefined, 'schemaValidation');
+    this.schema = null;
+  }
+
+  /**
+   * Ensure schema is loaded without throwing an error
+   * @returns true if schema is available, false otherwise
+   */
+  private async ensureSchemaLoaded(): Promise<boolean> {
+    await this.initPromise;
+    return this.schema !== null;
   }
 
   /**
@@ -244,7 +287,21 @@ export class SchemaService {
    * Converts an Ajv error to our internal error format with location information
    */
   private convertAjvError(error: any, document?: vscode.TextDocument): ValidationErrorWithLocation {
-    const path = error.instancePath ? `$${error.instancePath}` : '$';
+    // For required property errors, adjust the path to include the missing property name
+    // This helps with more specific filtering
+    let path = error.instancePath ? `$${error.instancePath}` : '$';
+
+    // For required property errors, include the missing property in the path
+    if (error.keyword === 'required' && error.params?.missingProperty) {
+      path = `${path}/${error.params.missingProperty}`;
+
+      this.logger.debug('Enhanced path for required property error', {
+        originalPath: error.instancePath ? `$${error.instancePath}` : '$',
+        enhancedPath: path,
+        missingProperty: error.params.missingProperty
+      }, 'schemaValidation');
+    }
+
     let range: vscode.Range | undefined;
 
     if (document) {
@@ -257,6 +314,7 @@ export class SchemaService {
       this.logger.debug('Converting Ajv error', {
         errorKeyword: error.keyword,
         path: error.instancePath,
+        formattedPath: path,
         pathParts,
         params: error.params
       }, 'schemaValidation');
@@ -389,80 +447,82 @@ export class SchemaService {
   }
 
   /**
-   * Validates a value against the schema at a specific path
+   * Validates a JSON document against a schema
+   * @param document The document to validate
+   * @param schema The schema to validate against
+   * @returns An array of validation errors
    */
-  public async validateValueAtPath(jsonPath: string, value: unknown, document?: vscode.TextDocument): Promise<ValidationErrorWithLocation[]> {
+  public async validateDocument(document: vscode.TextDocument, schema: Schema | null): Promise<ValidationErrorWithLocation[]> {
     try {
-      await this.ensureSchemaLoaded();
+      const jsonPath = document.uri.fsPath;
+      const text = document.getText();
+      let value: any;
 
-      // For root path validation, use the entire schema
-      if (jsonPath === '$') {
-        const ruleRegistry = ValidationRuleRegistry.getInstance();
-        const ruleErrors = await ruleRegistry.validateAll(value, document?.getText());
-
-        // Modify schema based on enabled rules
-        const modifiedSchema = this.modifySchemaForRules(this.schema!, ruleRegistry);
-
-        const validate = this.ajv.compile(modifiedSchema);
-        const valid = validate(value);
-        const errors: ValidationErrorWithLocation[] = [];
-
-        // Add schema validation errors with proper location information
-        if (!valid && validate.errors) {
-          errors.push(...validate.errors.map(err => this.convertAjvError(err, document)));
-        }
-
-        // Add custom validation rule errors (these already have proper location info)
-        errors.push(...ruleErrors.map(err => ({
-          message: err.message,
-          path: err.path || '$',
-          range: err.range ? this.convertToVSCodeRange(err.range) : undefined
-        })));
-
-        // Update UI feedback if document is provided
-        if (document) {
-          const validationUIService = ValidationUIService.getInstance();
-          const diagnostics = errors.map(err => ({
-            message: err.message,
-            range: err.range || new vscode.Range(0, 0, 0, 0),
-            severity: vscode.DiagnosticSeverity.Error
-          }));
-          validationUIService.updateValidation(document, diagnostics);
-        }
-
-        return errors;
-      }
-
-      const schema = await this.getSchemaForPath(jsonPath);
-
-      if (!schema) {
-        this.logger.warn('No schema found for validation', {
-          path: jsonPath
+      try {
+        value = JSON.parse(text);
+      } catch (e: unknown) {
+        this.logger.error('Failed to parse JSON', {
+          path: jsonPath,
+          error: e instanceof Error ? e.message : String(e)
         }, 'schemaValidation');
         return [{
-          message: 'No schema found for path',
-          path: jsonPath
+          message: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+          path: jsonPath,
+          range: undefined
         }];
       }
 
-      this.logger.debug('Validating value against schema', {
+      // Log file path only, not the entire JSON content
+      this.logger.debug('Validating document', {
         path: jsonPath,
-        value: JSON.stringify(value, null, 2),
-        schema: JSON.stringify(schema, null, 2)
+        contentLength: text.length,
+        schemaId: schema?.$id || 'schema not available'
       }, 'schemaValidation');
-
-      const validate = this.ajv.compile(schema);
-      const valid = validate(value);
 
       const errors: ValidationErrorWithLocation[] = [];
 
-      // Add schema validation errors with proper location information
-      if (!valid && validate.errors) {
-        errors.push(...validate.errors.map(err => this.convertAjvError(err, document)));
+      // Add schema validation errors only if schema is available
+      if (schema) {
+        const validate = this.ajv.compile(schema);
+        const valid = validate(value);
+
+        if (!valid && validate.errors) {
+          const schemaErrors = validate.errors.map(err => this.convertAjvError(err, document));
+
+          // Log all schema errors before filtering
+          this.logger.debug('Schema validation errors before filtering', {
+            errorCount: schemaErrors.length,
+            errors: schemaErrors.map(e => ({
+              message: e.message,
+              path: e.path
+            }))
+          }, 'schemaValidation');
+
+          // Filter out ignored schema validation errors
+          const ignoreService = SchemaValidationIgnoreService.getInstance();
+          const filteredSchemaErrors = ignoreService.filterIgnoredErrors(schemaErrors);
+
+          // Log filtered schema errors
+          this.logger.debug('Schema validation errors after filtering', {
+            errorCount: filteredSchemaErrors.length,
+            errors: filteredSchemaErrors.map(e => ({
+              message: e.message,
+              path: e.path
+            }))
+          }, 'schemaValidation');
+
+          errors.push(...filteredSchemaErrors);
+        }
+      } else {
+        // Schema is not available, log warning
+        this.logger.warn('Schema validation skipped - schema not available', {
+          path: jsonPath
+        }, 'schemaValidation');
       }
 
       // Add custom validation rule errors (these already have proper location info)
-      const ruleErrors = await ValidationRuleRegistry.getInstance().validateAll(value);
+      // These will run whether schema is available or not
+      const ruleErrors = await ValidationRuleRegistry.getInstance().validateAll(value, text);
       errors.push(...ruleErrors.map(err => ({
         message: err.message,
         path: err.path || jsonPath,
@@ -472,27 +532,26 @@ export class SchemaService {
       if (errors.length > 0) {
         this.logger.warn('Validation failed', {
           path: jsonPath,
-          errors,
-          value: JSON.stringify(value, null, 2)
+          errorCount: errors.length
         }, 'schemaValidation');
 
         return errors;
       }
 
       this.logger.debug('Validation successful', {
-        path: jsonPath,
-        value: JSON.stringify(value, null, 2)
+        path: jsonPath
       }, 'schemaValidation');
 
       return [];
-    } catch (error) {
+    } catch (error: unknown) {
+      const docPath = document.uri.fsPath;
       this.logger.error('Validation error', {
         error: error instanceof Error ? error.message : String(error),
-        jsonPath
+        path: docPath
       }, 'schemaValidation');
       return [{
         message: `Validation error: ${error instanceof Error ? error.message : String(error)}`,
-        path: jsonPath
+        path: docPath
       }];
     }
   }
@@ -664,13 +723,6 @@ export class SchemaService {
     }
   }
 
-  private async ensureSchemaLoaded(): Promise<void> {
-    await this.initPromise;
-    if (!this.schema) {
-      throw new Error('Schema not available');
-    }
-  }
-
   private fetchSchema(): Promise<Schema> {
     return new Promise((resolve, reject) => {
       const request = https.get(SchemaService.SCHEMA_URL, {
@@ -718,6 +770,15 @@ export class SchemaService {
     this.logger.debug('Refreshing schema', undefined, 'schemaValidation');
     this.schema = null;
     await this.initialize();
+  }
+
+  /**
+   * Gets the schema for validation
+   * @returns The schema if available, or null if not available
+   */
+  public async getSchema(): Promise<Schema | null> {
+    await this.ensureSchemaLoaded();
+    return this.schema;
   }
 
   /**
@@ -832,5 +893,105 @@ export class SchemaService {
     }
 
     return current;
+  }
+
+  /**
+   * Generates a formatted error summary for creating ignore patterns
+   * This method creates a structured representation of validation errors
+   * that can be used to create ignore patterns without logging the entire file
+   * 
+   * @param errors The validation errors to summarize
+   * @returns A formatted error summary object
+   */
+  public generateErrorSummary(errors: ValidationErrorWithLocation[]): any {
+    // Group errors by message pattern
+    const errorGroups = new Map<string, {
+      pattern: string;
+      paths: string[];
+      count: number;
+      sample: ValidationErrorWithLocation;
+    }>();
+
+    // Process each error
+    errors.forEach(error => {
+      // Create a simplified pattern by removing specific details
+      const pattern = error.message
+        .replace(/'.+?'/g, "'*'") // Replace quoted values with '*'
+        .replace(/\d+/g, "*");    // Replace numbers with '*'
+
+      // Get or create group
+      const group = errorGroups.get(pattern) || {
+        pattern,
+        paths: [],
+        count: 0,
+        sample: error
+      };
+
+      // Add path if not already in the group
+      if (error.path && !group.paths.includes(error.path)) {
+        group.paths.push(error.path);
+      }
+
+      // Increment count
+      group.count++;
+
+      // Update the group
+      errorGroups.set(pattern, group);
+    });
+
+    // Convert to array and sort by count (most frequent first)
+    const summary = Array.from(errorGroups.values())
+      .sort((a, b) => b.count - a.count)
+      .map(group => ({
+        pattern: group.pattern,
+        count: group.count,
+        paths: group.paths.slice(0, 5), // Show up to 5 paths as examples
+        hasMorePaths: group.paths.length > 5,
+        suggestedIgnorePattern: {
+          messagePattern: group.sample.message
+            .replace(/'/g, "\\'")         // Escape quotes
+            .replace(/\(/g, "\\(")        // Escape parentheses
+            .replace(/\)/g, "\\)"),       // Escape parentheses
+          pathPattern: this.suggestPathPattern(group.paths)
+        }
+      }));
+
+    return {
+      totalErrors: errors.length,
+      errorGroups: summary,
+      usage: "Use this information to create ignore patterns in SchemaValidationIgnoreService"
+    };
+  }
+
+  /**
+   * Suggests a path pattern based on common elements in paths
+   */
+  private suggestPathPattern(paths: string[]): string {
+    if (paths.length === 0) {
+      return "";
+    }
+
+    // Find common segments in the paths
+    const segments = paths.map(path => path.split(/[\.\[\]\/]/g).filter(Boolean));
+
+    // Find repeating patterns in paths
+    const commonPatterns: string[] = [];
+
+    // Look for product/flavor patterns
+    if (segments.some(s => s.includes('products') && s.includes('flavors'))) {
+      commonPatterns.push("products\\[\\d+\\]\\.flavors\\[\\d+\\]");
+    }
+
+    // Look for compliance patterns
+    if (segments.some(s => s.includes('compliance'))) {
+      commonPatterns.push("\\.compliance");
+    }
+
+    if (commonPatterns.length === 0) {
+      // If no common patterns found, suggest a generic pattern based on first path
+      return paths[0].replace(/\d+/g, "\\d+").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+    }
+
+    return commonPatterns.join("");
   }
 }

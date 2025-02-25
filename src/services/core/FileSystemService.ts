@@ -239,18 +239,23 @@ export class FileSystemService {
             const document = await vscode.workspace.openTextDocument(this.currentCatalogFile.uri);
 
             // Validate the entire file
-            await this.schemaService.initialize();
-            const errors = await this.schemaService.validateValueAtPath('$', parsedData, document);
+            try {
+                // Get schema, might be null if not available
+                const schema = await this.schemaService.getSchema();
+                const errors = await this.schemaService.validateDocument(document, schema);
 
-            if (errors.length > 0) {
-                this.logger.warn('Schema validation errors found:', {
-                    errors,
-                    file: this.currentCatalogFile.uri.fsPath
-                }, 'schemaValidation');
-            } else {
-                this.logger.debug('Schema validation passed', {
-                    file: this.currentCatalogFile.uri.fsPath
-                }, 'schemaValidation');
+                if (errors.length > 0) {
+                    // Still log validation errors but continue with loading
+                    this.logger.warn(`Validation found ${errors.length} errors`, {
+                        path: this.currentCatalogFile.uri.fsPath
+                    });
+                }
+            } catch (error) {
+                // Just log the error but continue with loading
+                this.logger.error('Error validating catalog file', {
+                    error: error instanceof Error ? error.message : String(error),
+                    path: this.currentCatalogFile.uri.fsPath
+                });
             }
 
             this.catalogData = parsedData;

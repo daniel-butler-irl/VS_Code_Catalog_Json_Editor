@@ -18,8 +18,17 @@ import { PreReleaseWebview } from './webview/PreReleaseWebview';
 import { AuthenticationSession } from 'vscode';
 import { PreReleaseService } from './services/PreReleaseService';
 import { ValidationUIService } from './services/ValidationUIService';
+import { ValidationRuleRegistry, SchemaValidationIgnoreService } from './services/validation';
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+// Define a type for the API we're exposing
+interface ExtensionExports {
+    getCatalogService: () => CatalogService;
+    getSchemaService: () => SchemaService;
+    getValidationUIService: () => ValidationUIService;
+    getPreReleaseService: () => PreReleaseService;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<ExtensionExports> {
     const logger = LoggingService.getInstance();
     logger.setLogLevel(LogLevel.DEBUG); // Set to debug level during activation
     logger.info('Starting IBM Catalog Extension activation');
@@ -56,6 +65,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const uiStateService = UIStateService.getInstance(context);
         context.subscriptions.push(uiStateService);
 
+        // Initialize validation services early
+        logger.debug('Initializing validation services', undefined, 'main');
+        const validationRuleRegistry = ValidationRuleRegistry.getInstance();
+        const schemaValidationIgnoreService = SchemaValidationIgnoreService.getInstance();
+
+        // Log the current validation configuration
+        logger.debug('Validation configuration', {
+            rules: validationRuleRegistry.getAllRules().map(rule => ({
+                id: rule.id,
+                description: rule.description,
+                enabled: validationRuleRegistry.getRuleConfig(rule.id)?.enabled
+            })),
+            ignorePatterns: schemaValidationIgnoreService.getIgnoredErrorsSummary()
+        }, 'schemaValidation');
+
         logger.debug('Initializing PreReleaseService', undefined, 'main');
         await PreReleaseService.initialize(context);
 
@@ -65,7 +89,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         logger.debug('Initializing schema and catalog services', undefined, 'main');
         const schemaService = new SchemaService(context);
-        const schemaInitPromise = schemaService.initialize();
+
+        try {
+            await schemaService.ensureInitialized();
+            logger.info('Schema service initialized successfully');
+        } catch (error) {
+            // Log the error but continue without schema
+            logger.warn('Failed to initialize schema service, continuing without schema validation', {
+                error: error instanceof Error ? error.message : String(error)
+            });
+            // No need to show error to user here, the ValidationUIService will handle that
+        }
+
         const catalogService = new CatalogService(context);
         const catalogInitPromise = catalogService.initialize();
 
@@ -99,8 +134,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         logger.debug('Waiting for critical services to initialize', undefined, 'main');
         const [catalogInitialized] = await Promise.all([
-            catalogInitPromise,
-            schemaInitPromise
+            catalogInitPromise
         ]);
 
         if (!catalogInitialized) {
@@ -118,14 +152,154 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         logger.setLogLevel(LogLevel.INFO);
 
         // Initialize validation UI service
+        logger.debug('Initializing validation UI service', undefined, 'main');
         const validationUIService = ValidationUIService.getInstance();
         context.subscriptions.push(validationUIService);
+
+        // Register document validation event handlers
+        logger.debug('Registering document validation event handlers', undefined, 'main');
+        context.subscriptions.push(
+            vscode.workspace.onDidOpenTextDocument(async (document) => {
+                if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                    await validationUIService.validateDocument(document);
+                }
+            }),
+            vscode.workspace.onDidChangeTextDocument(async (event) => {
+                if (event.document.languageId === 'json' || event.document.languageId === 'jsonc') {
+                    await validationUIService.validateDocument(event.document);
+                }
+            }),
+            vscode.workspace.onDidSaveTextDocument(async (document) => {
+                if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                    await validationUIService.validateDocument(document);
+                }
+            })
+        );
+
+        // Validate any already open JSON documents
+        logger.debug('Validating open JSON documents', undefined, 'main');
+        vscode.workspace.textDocuments.forEach(async (document) => {
+            if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                await validationUIService.validateDocument(document);
+            }
+        });
+
+        // Show validation error patterns for creating ignore rules
+        const showValidationPatternsSummaryCommand = vscode.commands.registerCommand(
+            'catalog-json-editor.showValidationPatterns',
+            async () => {
+                try {
+                    // Get the active text editor
+                    const editor = vscode.window.activeTextEditor;
+                    if (!editor) {
+                        vscode.window.showErrorMessage('No active editor found. Please open a file first.');
+                        return;
+                    }
+
+                    const document = editor.document;
+                    if (!document || document.languageId !== 'json') {
+                        vscode.window.showErrorMessage('Please open a JSON file to validate.');
+                        return;
+                    }
+
+                    // Get schema service
+                    const schemaService = SchemaService.getInstance();
+                    if (!schemaService) {
+                        vscode.window.showErrorMessage('Schema service not available.');
+                        return;
+                    }
+
+                    // Validate document
+                    const schema = await schemaService.getSchema();
+                    if (schema === null) {
+                        vscode.window.showWarningMessage('Schema is not available. Running validation without schema.');
+                        // Continue with validation without schema
+                        const errors = await schemaService.validateDocument(document, null);
+
+                        if (errors.length === 0) {
+                            vscode.window.showInformationMessage('No validation errors found with non-schema rules.');
+                            return;
+                        }
+
+                        // Generate error summary even without schema
+                        const summary = schemaService.generateErrorSummary(errors);
+                        showValidationSummary(summary);
+                        return;
+                    }
+
+                    const errors = await schemaService.validateDocument(document, schema);
+
+                    if (errors.length === 0) {
+                        vscode.window.showInformationMessage('No validation errors found.');
+                        return;
+                    }
+
+                    // Generate error summary
+                    const summary = schemaService.generateErrorSummary(errors);
+                    showValidationSummary(summary);
+
+                    // Function to display the validation summary
+                    function showValidationSummary(summary: any) {
+                        // Create output channel for display
+                        const channel = vscode.window.createOutputChannel('IBM Catalog Validation Patterns');
+                        channel.clear();
+                        channel.appendLine(`# Validation Pattern Summary`);
+                        channel.appendLine(`Total errors: ${summary.totalErrors}`);
+                        channel.appendLine(``);
+
+                        channel.appendLine(`## Error Groups`);
+                        summary.errorGroups.forEach((group: any, index: number) => {
+                            channel.appendLine(`### Group ${index + 1}: ${group.pattern} (${group.count} occurrences)`);
+
+                            channel.appendLine(`Example paths:`);
+                            group.paths.forEach((path: string) => {
+                                channel.appendLine(`  - ${path}`);
+                            });
+                            if (group.hasMorePaths) {
+                                channel.appendLine(`  - (and more...)`);
+                            }
+
+                            channel.appendLine(`\nSuggested ignore pattern:`);
+                            channel.appendLine(`{`);
+                            channel.appendLine(`  messagePattern: /${group.suggestedIgnorePattern.messagePattern}/,`);
+                            if (group.suggestedIgnorePattern.pathPattern) {
+                                channel.appendLine(`  pathPattern: /${group.suggestedIgnorePattern.pathPattern}/,`);
+                            }
+                            channel.appendLine(`  description: "Auto-generated ignore pattern for ${group.pattern}"`);
+                            channel.appendLine(`}`);
+                            channel.appendLine(``);
+                        });
+
+                        channel.appendLine(`## How to Use These Patterns`);
+                        channel.appendLine(`To ignore specific validation errors, add the suggested patterns to the SchemaValidationIgnoreService.`);
+                        channel.appendLine(`See the existing patterns in src/services/validation/SchemaValidationIgnoreService.ts for examples.`);
+
+                        channel.show();
+                    }
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    vscode.window.showErrorMessage(`Error generating validation pattern summary: ${errorMessage}`);
+                    console.error('Error in showValidationPatterns command:', error);
+                }
+            }
+        );
+
+        context.subscriptions.push(showValidationPatternsSummaryCommand);
+
+        // Expose services for other extensions to use
+        return {
+            getCatalogService: () => catalogService,
+            getSchemaService: () => schemaService,
+            getValidationUIService: () => ValidationUIService.getInstance(),
+            getPreReleaseService: () => preReleaseService
+        };
     } catch (error) {
         logger.error('Failed to activate extension', {
-            error: error instanceof Error ? error.message : String(error)
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined
         }, 'main');
-        vscode.window.showErrorMessage(`Failed to activate IBM Catalog Editor: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        throw error;
+        void vscode.window.showErrorMessage(`Failed to activate extension: ${error instanceof Error ? error.message : String(error)}`);
+        throw error; // Re-throw to show error to user and prevent extension from activating partially
     }
 }
 
@@ -242,6 +416,169 @@ function registerEssentialCommands(
                 LoggingService.getInstance().error('Failed to add element', { error }, 'main');
                 vscode.window.showErrorMessage(`Failed to add element: ${message}`);
             }
+        }),
+        // Register schema validation ignore pattern commands
+        vscode.commands.registerCommand('ibmCatalog.addSchemaValidationIgnorePattern', async () => {
+            const logger = LoggingService.getInstance();
+            logger.debug('Adding schema validation ignore pattern');
+
+            try {
+                const ignoreService = SchemaValidationIgnoreService.getInstance();
+
+                // Prompt for pattern
+                const pattern = await vscode.window.showInputBox({
+                    prompt: 'Enter a regular expression pattern to ignore schema validation errors',
+                    placeHolder: 'e.g. .*install_type.*'
+                });
+
+                if (!pattern) {
+                    return;
+                }
+
+                // Add the pattern
+                try {
+                    ignoreService.addIgnorePattern({
+                        messagePattern: new RegExp(pattern),
+                        description: 'User-added ignore pattern'
+                    });
+                    vscode.window.showInformationMessage(`Added schema validation ignore pattern: ${pattern}`);
+
+                    // Trigger revalidation of open documents
+                    const activeEditor = vscode.window.activeTextEditor;
+                    if (activeEditor) {
+                        const document = activeEditor.document;
+                        if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                            // Trigger revalidation by making a small edit and undoing it
+                            const edit = new vscode.WorkspaceEdit();
+                            edit.insert(document.uri, new vscode.Position(0, 0), ' ');
+                            await vscode.workspace.applyEdit(edit);
+                            await vscode.commands.executeCommand('undo');
+                        }
+                    }
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Invalid regular expression: ${pattern}`);
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                logger.error('Failed to add schema validation ignore pattern', { error }, 'main');
+                vscode.window.showErrorMessage(`Failed to add schema validation ignore pattern: ${message}`);
+            }
+        }),
+        // Register view schema validation ignore patterns command
+        vscode.commands.registerCommand('ibmCatalog.viewSchemaIgnorePatterns', async () => {
+            const logger = LoggingService.getInstance();
+            logger.debug('Viewing schema validation ignore patterns');
+
+            try {
+                const ignoreService = SchemaValidationIgnoreService.getInstance();
+
+                // Get the patterns from the service
+                // We need to access the private field, so we'll use a workaround
+                const patterns = (ignoreService as any).ignorePatterns || [];
+
+                if (patterns.length === 0) {
+                    vscode.window.showInformationMessage('No schema validation ignore patterns defined');
+                    return;
+                }
+
+                // Define a type for our QuickPick items
+                interface PatternQuickPickItem extends vscode.QuickPickItem {
+                    patternObj: RegExp;
+                }
+
+                // Create a quick pick for each pattern
+                const items: PatternQuickPickItem[] = patterns.map((pattern: RegExp, index: number) => ({
+                    label: `${index + 1}. ${pattern.toString()}`,
+                    description: '',
+                    patternObj: pattern
+                }));
+
+                // Show the patterns in a quick pick
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select a pattern to remove',
+                    title: 'Schema Validation Ignore Patterns'
+                });
+
+                if (selected) {
+                    // Ask if the user wants to remove the pattern
+                    const remove = await vscode.window.showQuickPick(['Yes', 'No'], {
+                        placeHolder: 'Remove this pattern?',
+                        title: `Remove pattern: ${selected.patternObj.toString()}`
+                    });
+
+                    if (remove === 'Yes') {
+                        // Remove the pattern
+                        const newPatterns = patterns.filter((p: RegExp) => p !== selected.patternObj);
+                        ignoreService.setIgnorePatterns(newPatterns);
+
+                        vscode.window.showInformationMessage(`Removed schema validation ignore pattern: ${selected.patternObj.toString()}`);
+
+                        // Trigger revalidation of open documents
+                        const activeEditor = vscode.window.activeTextEditor;
+                        if (activeEditor) {
+                            const document = activeEditor.document;
+                            if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                                // Trigger revalidation by making a small edit and undoing it
+                                const edit = new vscode.WorkspaceEdit();
+                                edit.insert(document.uri, new vscode.Position(0, 0), ' ');
+                                await vscode.workspace.applyEdit(edit);
+                                await vscode.commands.executeCommand('undo');
+                            }
+                        }
+                    }
+                }
+            } catch (error: unknown) {
+                logger.error('Error viewing schema validation ignore patterns', error instanceof Error ? error : new Error(String(error)));
+                vscode.window.showErrorMessage(`Error viewing schema validation ignore patterns: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }),
+        // New command to view ignored validation errors
+        vscode.commands.registerCommand('ibmCatalog.viewIgnoredValidationErrors', async () => {
+            const logger = LoggingService.getInstance();
+            logger.debug('Viewing ignored validation errors');
+
+            try {
+                const ignoreService = SchemaValidationIgnoreService.getInstance();
+                const ignoredErrors = ignoreService.getIgnoredErrorsSummary();
+
+                if (ignoredErrors.size === 0) {
+                    vscode.window.showInformationMessage('No validation errors have been ignored yet.');
+                    return;
+                }
+
+                // Convert the map to an array of items for the quick pick
+                const items = Array.from(ignoredErrors.entries()).map(([message, count]) => ({
+                    label: `(${count}) ${message.length > 80 ? message.substring(0, 80) + '...' : message}`,
+                    description: '',
+                    detail: message.length > 80 ? message : undefined,
+                    count
+                }));
+
+                // Sort by count (descending)
+                items.sort((a, b) => b.count - a.count);
+
+                // Show the ignored errors in a quick pick
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select an error to see details',
+                    title: 'Ignored Validation Errors'
+                });
+
+                if (selected) {
+                    // Show the full error message
+                    const fullMessage = selected.detail || selected.label;
+
+                    // Create a temporary output channel to show the full error
+                    const channel = vscode.window.createOutputChannel('IBM Catalog - Ignored Validation Errors');
+                    channel.appendLine(`Error message: ${fullMessage}`);
+                    channel.appendLine(`Occurrences: ${selected.count}`);
+                    channel.appendLine('\nThis error is currently being ignored by the validation system.');
+                    channel.appendLine('To stop ignoring this error, remove the corresponding ignore pattern.');
+                    channel.show();
+                }
+            } catch (error: unknown) {
+                logger.error('Error viewing ignored validation errors', error instanceof Error ? error : new Error(String(error)));
+                vscode.window.showErrorMessage(`Error viewing ignored validation errors: ${error instanceof Error ? error.message : String(error)}`);
+            }
         })
     );
 }
@@ -255,7 +592,17 @@ async function initializeRemainingFeatures(
 ): Promise<void> {
     const logger = LoggingService.getInstance();
     const schemaService = new SchemaService(context);
-    await schemaService.initialize();
+
+    try {
+        await schemaService.ensureInitialized();
+        logger.info('Schema service initialized successfully');
+    } catch (error) {
+        // Log the error but continue without schema
+        logger.warn('Failed to initialize schema service, continuing without schema validation', {
+            error: error instanceof Error ? error.message : String(error)
+        });
+        // No need to show error to user here, the ValidationUIService will handle that
+    }
 
     // Initialize file watcher if workspace exists
     let fileWatcher: CatalogFileSystemWatcher | undefined;

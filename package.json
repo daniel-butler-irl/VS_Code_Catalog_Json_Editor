@@ -32,6 +32,37 @@
           "type": "boolean",
           "default": true,
           "description": "Enable debug level logging for the IBM Catalog extension"
+        },
+        "ibmCatalog.validation.rules": {
+          "type": "object",
+          "default": {
+            "install_type_required": {
+              "enabled": false,
+              "params": {
+                "ignoreValidation": true
+              }
+            }
+          },
+          "description": "Configuration for validation rules",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Whether the rule is enabled"
+              },
+              "params": {
+                "type": "object",
+                "description": "Additional parameters for the rule",
+                "properties": {
+                  "ignoreValidation": {
+                    "type": "boolean",
+                    "description": "Whether to ignore schema validation for this rule"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -47,6 +78,18 @@
         "title": "Login to IBM Cloud",
         "category": "IBM Catalog",
         "icon": "$(sign-in)"
+      },
+      {
+        "command": "ibmCatalog.addSchemaIgnorePattern",
+        "title": "Add Schema Validation Ignore Pattern",
+        "category": "IBM Catalog (Developer)",
+        "icon": "$(exclude)"
+      },
+      {
+        "command": "ibmCatalog.viewSchemaIgnorePatterns",
+        "title": "View Schema Validation Ignore Patterns",
+        "category": "IBM Catalog (Developer)",
+        "icon": "$(list-filter)"
       },
       {
         "command": "ibmCatalog.logout",
@@ -126,6 +169,36 @@
         "title": "Delete Element",
         "category": "IBM Catalog",
         "icon": "$(trash)"
+      },
+      {
+        "command": "ibmCatalog.viewSchemaValidationIgnorePatterns",
+        "title": "View Schema Validation Ignore Patterns",
+        "category": "IBM Catalog (Developer)",
+        "icon": "$(list-filter)"
+      },
+      {
+        "command": "ibmCatalog.addSchemaValidationIgnorePattern",
+        "title": "Add Schema Validation Ignore Pattern",
+        "category": "IBM Catalog (Developer)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ibmCatalog.viewIgnoredValidationErrors",
+        "title": "View Ignored Validation Errors",
+        "category": "IBM Catalog (Developer)",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "catalog-json-editor.refreshSchema",
+        "title": "IBM Catalog: Refresh JSON Schema"
+      },
+      {
+        "command": "catalog-json-editor.validateSchema",
+        "title": "IBM Catalog: Validate Current Document"
+      },
+      {
+        "command": "catalog-json-editor.showValidationPatterns",
+        "title": "IBM Catalog: Show Validation Pattern Summary"
       }
     ],
     "viewsContainers": {
