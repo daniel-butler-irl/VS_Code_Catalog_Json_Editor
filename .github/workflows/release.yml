@@ -53,19 +53,14 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           MINOR_VERSION=$(node -p "require('semver').minor(require('./package.json').version)")
           IS_ODD=$((MINOR_VERSION % 2))
-          IS_PREVIEW=$(node -p "require('./package.json').preview || false")
           
-          if [[ $IS_ODD == 1 && "$IS_PREVIEW" != "true" ]]; then
-            echo "Error: Odd minor versions (x.1.x, x.3.x, etc.) must have preview flag set to true"
-            exit 1
-          fi
-          
-          if [[ $IS_ODD == 0 && "$IS_PREVIEW" == "true" ]]; then
-            echo "Error: Even minor versions (x.2.x, x.4.x, etc.) cannot have preview flag set to true"
-            exit 1
+          if [[ $IS_ODD == 1 ]]; then
+            echo "Info: Using odd minor version (x.1.x, x.3.x, etc.) - will be published as pre-release"
+          else
+            echo "Info: Using even minor version (x.2.x, x.4.x, etc.) - will be published as stable release"
           fi
 
-      - name: Block Preview on Main
+      - name: Block Odd Minor Versions on Main
         if: github.ref == 'refs/heads/main'
         run: |
           MINOR_VERSION=$(node -p "require('semver').minor(require('./package.json').version)")
