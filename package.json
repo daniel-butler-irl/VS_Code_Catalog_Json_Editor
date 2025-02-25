@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.7.29",
+  "version": "0.7.30",
   "publisher": "DanielButler",
   "preview": true,
   "repository": {
@@ -14,6 +14,15 @@
     "vscode": "^1.87.0"
   },
   "main": "./dist/extension.js",
+  "files": [
+    "dist/**",
+    "media/**",
+    "schemas/**",
+    "LICENSE*",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "workspaceContains:**/ibm_catalog.json",
@@ -437,14 +446,14 @@
     "pretest": "npm run compile && npm run compile:tests",
     "lint": "eslint . --config eslint.config.mjs",
     "test": "node --force-node-api-uncaught-exceptions-policy=true --unhandled-rejections=strict ./out/test/runTest.js",
-    "vscode:prepublish": "node esbuild.mjs --production",
+    "vscode:prepublish": "npm run clean && node esbuild.mjs --production",
     "esbuild-base": "node esbuild.mjs",
     "esbuild": "node esbuild.mjs",
     "esbuild:test": "node esbuild.mjs --test",
     "esbuild:watch": "node esbuild.mjs --watch",
     "esbuild:test:watch": "node esbuild.mjs --test --watch",
-    "package": "vsce package",
-    "publish": "vsce publish",
+    "package": "npm run esbuild && vsce package",
+    "publish": "npm run esbuild && vsce publish",
     "clean": "rimraf dist out",
     "prebuild": "npm run clean",
     "build": "npm run esbuild",

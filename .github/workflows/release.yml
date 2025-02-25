@@ -236,28 +236,17 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      # Step 15: Create GitHub Release
+      # Step 15: Create GitHub Release with Assets
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
+          files: ./ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
           tag_name: ${{ env.CURRENT_VERSION }}
           name: Release v${{ env.CURRENT_VERSION }}
           body_path: ./CHANGELOG.md
           draft: false
           prerelease: ${{ needs.determine_release_type.outputs.is_prerelease }}
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
-      # Step 16: Upload .vsix to Release
-      - name: Upload .vsix to Release
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
-          asset_name: ibm-catalog-json-editor-${{ env.CURRENT_VERSION }}.vsix
-          asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
