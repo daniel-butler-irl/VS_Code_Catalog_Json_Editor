@@ -1424,39 +1424,23 @@ export class IBMCloudService {
         );
 
         // Sort catalog versions by semver (newest first)
-        const sortedCatalogVersions = [...catalogVersions].sort((a, b) =>
-            -this.compareSemVer(a.version, b.version)
-        );
+        const sortedCatalogVersions = [...catalogVersions]
+            .filter(v => v.tgz_url) // Filter out versions without tgz_url
+            .sort((a, b) => this.compareSemVer(b.version, a.version));
 
-        // Get unique versions from catalog with their flavors
-        const versionMap = new Map<string, Set<string>>();
-        sortedCatalogVersions.forEach(v => {
-            if (!versionMap.has(v.version)) {
-                versionMap.set(v.version, new Set());
-            }
-            versionMap.get(v.version)?.add(v.flavor.name);
-        });
+        // Get unique versions from catalog
+        const uniqueCatalogVersions = Array.from(new Set(
+            sortedCatalogVersions.map(v => v.version)
+        ));
 
-        // Convert to array and sort by version
-        const uniqueCatalogVersions = Array.from(versionMap.entries())
-            .sort(([versionA], [versionB]) => -this.compareSemVer(versionA, versionB));
-
-        this.logger.debug('Unique catalog versions with flavors', {
-            catalogId,
-            offeringId,
-            versions: uniqueCatalogVersions.map(([version, flavors]) => ({
-                version,
-                flavorCount: flavors.size,
-                flavors: Array.from(flavors)
-            }))
-        }, 'preRelease');
-
+        const processedVersions = new Set<string>();
         const mappings: VersionMappingSummary[] = [];
 
         // Add the latest GitHub release first (if any)
         if (sortedGithubReleases.length > 0) {
             const latestGitHub = sortedGithubReleases[0];
-            const version = latestGitHub.tag_name.replace(/^v/, '').split('-')[0];
+            // Only remove 'v' prefix, keep any postfix
+            const version = latestGitHub.tag_name.replace(/^v/, '');
 
             // Find any matching catalog versions
             const matchingCatalogVersions = sortedCatalogVersions
@@ -1476,17 +1460,26 @@ export class IBMCloudService {
                 },
                 catalogVersions: matchingCatalogVersions.length > 0 ? matchingCatalogVersions : null
             });
+
+            processedVersions.add(version);
         }
 
         // Add up to 4 latest catalog versions that aren't already included
-        for (const [version, flavors] of uniqueCatalogVersions) {
+        for (const version of uniqueCatalogVersions) {
             // Skip if this version is already in mappings
-            if (mappings.some(m => m.version === version)) {
+            if (processedVersions.has(version)) {
                 continue;
             }
 
-            // Get all catalog entries for this version
-            const catalogEntries = sortedCatalogVersions
+            // Find the matching GitHub release (if any)
+            const githubRelease = sortedGithubReleases.find(r => {
+                // Only remove 'v' prefix, keep any postfix
+                const releaseVersion = r.tag_name.replace(/^v/, '');
+                return releaseVersion === version;
+            });
+
+            // Get all catalog versions for this version
+            const versionEntries = sortedCatalogVersions
                 .filter(v => v.version === version)
                 .map(v => ({
                     version: v.version,
@@ -1495,65 +1488,44 @@ export class IBMCloudService {
                     githubTag: v.githubTag
                 }));
 
-            // Find matching GitHub release (if any)
-            const githubRelease = sortedGithubReleases.find(r => {
-                const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
-                return releaseVersion === version || r.tag_name === `v${version}`;
-            });
+            if (versionEntries.length > 0) {
+                mappings.push({
+                    version,
+                    githubRelease: githubRelease ? {
+                        tag: githubRelease.tag_name,
+                        tarball_url: githubRelease.tarball_url
+                    } : null,
+                    catalogVersions: versionEntries
+                });
+            }
 
-            mappings.push({
-                version,
-                githubRelease: githubRelease ? {
-                    tag: githubRelease.tag_name,
-                    tarball_url: githubRelease.tarball_url
-                } : null,
-                catalogVersions: catalogEntries
-            });
-
-            // Stop after we have 5 total mappings
+            // Stop after 5 mappings
             if (mappings.length >= 5) {
                 break;
             }
+
+            processedVersions.add(version);
         }
 
-        // Log the final mapping summary
-        this.logger.debug('Final version mapping summary', {
-            catalogId,
-            offeringId,
-            kindType,
-            totalMappings: mappings.length,
-            mappedVersions: mappings.map(v => ({
-                version: v.version,
-                hasGithubRelease: !!v.githubRelease,
-                githubTag: v.githubRelease?.tag,
-                catalogVersionCount: v.catalogVersions?.length || 0,
-                catalogFlavors: v.catalogVersions?.map(cv => cv.flavor.label)
-            }))
-        }, 'preRelease');
-
         // Add information about whether all flavors are published
-        const latestVersion = uniqueCatalogVersions[0];
-        if (latestVersion) {
-            const [version, flavors] = latestVersion;
-            const allFlavorsPublished = sortedCatalogVersions
-                .filter(v => v.version === version)
-                .every(v => flavors.has(v.flavor.name));
+        if (uniqueCatalogVersions.length > 0) {
+            const latestVersion = uniqueCatalogVersions[0];
+            const allFlavors = new Set<string>();
+            const publishedFlavors = new Set<string>();
 
-            this.logger.debug('Latest version flavor status', {
-                version,
-                totalFlavors: flavors.size,
-                publishedFlavors: sortedCatalogVersions
-                    .filter(v => v.version === version)
-                    .map(v => v.flavor.name),
-                allFlavorsPublished
-            }, 'preRelease');
-
-            // Add this information to the mappings
-            mappings.forEach(m => {
-                if (m.version === version) {
-                    m.allFlavorsPublished = allFlavorsPublished;
+            // Get all flavors from all versions
+            sortedCatalogVersions.forEach(v => {
+                allFlavors.add(v.flavor.name);
+                if (v.version === latestVersion) {
+                    publishedFlavors.add(v.flavor.name);
                 }
             });
+
+            // Get the matching mapping
+            const latestMapping = mappings.find(m => m.version === latestVersion);
+            if (latestMapping) {
+                latestMapping.allFlavorsPublished = allFlavors.size === publishedFlavors.size;
+            }
         }
 
         return mappings;

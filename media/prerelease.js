@@ -557,7 +557,7 @@
         const proposedVersion = versionInput?.value;
         const proposedPostfix = postfixInput?.value;
         const githubReleases = lastReleases.map(r => ({
-            version: r.tag_name.replace(/^v/, '').split('-')[0],
+            version: r.tag_name.replace(/^v/, ''),
             tag: r.tag_name
         }));
 
@@ -600,7 +600,7 @@
         // Check if version is already released in catalog or GitHub
         const isVersionReleasedInCatalog = catalogVersions?.some(v => v.version === proposedVersion);
         const isVersionReleasedInGithub = githubReleases?.some(r => {
-            const version = r.tag.replace(/^v/, '').split('-')[0];
+            const version = r.tag.replace(/^v/, '');
             return version === proposedVersion;
         });
 
@@ -622,7 +622,7 @@
                 <div class="version-row">
                     <div class="version-label">Catalog:</div>
                     <div class="version-content">
-                        <span class="version-number">${proposedVersion}</span>
+                        <span class="version-number">${proposedVersion}-${proposedPostfix}</span>
                         ${versionFlavors && versionFlavors.length > 0 ? `
                             <div class="flavors-section">
                                 <div class="flavors-label">Flavors:</div>
@@ -763,27 +763,37 @@
         // Try to get the next version from catalog first
         if (catalogDetails?.versions) {
             const catalogVersions = Array.from(new Set(catalogDetails.versions.map(v => v.version)))
-                .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+                .filter(v => /^\d+\.\d+\.\d+(-.*)?$/.test(v))
                 .sort((a, b) => -semverCompare(a, b));
 
             if (catalogVersions.length) {
                 const latest = catalogVersions[0];
-                const [major, minor, patch] = latest.split('.').map(Number);
-                versionInput.value = `${major}.${minor}.${patch + 1}`;
+                // Extract only the semver part (x.y.z) for incrementing, preserving any postfix
+                const postfix = latest.includes('-') ? '-' + latest.split('-').slice(1).join('-') : '';
+                const semverPart = latest.split('-')[0];
+                const baseParts = semverPart.split('.').map(Number);
+                const [major, minor, patch] = baseParts;
+                // Create new version with incremented patch and preserved postfix
+                versionInput.value = `${major}.${minor}.${patch + 1}${postfix}`;
                 console.debug('Suggested next version from catalog:', versionInput.value);
                 return;
             }
         }
 
         // Fallback to GitHub version if catalog version is not available
-        const githubVersions = Array.from(new Set(githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0])))
-            .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+        const githubVersions = Array.from(new Set(githubReleases.map(r => r.tag_name.replace(/^v/, ''))))
+            .filter(v => /^\d+\.\d+\.\d+(-.*)?$/.test(v))
             .sort((a, b) => -semverCompare(a, b));
 
         if (githubVersions.length) {
             const latest = githubVersions[0];
-            const [major, minor, patch] = latest.split('.').map(Number);
-            versionInput.value = `${major}.${minor}.${patch + 1}`;
+            // Extract only the semver part (x.y.z) for incrementing, preserving any postfix
+            const postfix = latest.includes('-') ? '-' + latest.split('-').slice(1).join('-') : '';
+            const semverPart = latest.split('-')[0];
+            const baseParts = semverPart.split('.').map(Number);
+            const [major, minor, patch] = baseParts;
+            // Create new version with incremented patch and preserved postfix
+            versionInput.value = `${major}.${minor}.${patch + 1}${postfix}`;
             console.debug('Suggested next version from GitHub:', versionInput.value);
             return;
         }
@@ -1325,8 +1335,9 @@
             const catalogEntries = versionMap.get(tag) || [];
             processedTags.add(tag);
 
-            // Add the base version to processed versions
-            const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '').split('-')[0];
+            // IMPORTANT: Only remove 'v' prefix, keep the entire postfix (e.g., "-beta", "-alpha")
+            const baseVersion = (typeof tag === 'string' ? tag : String(tag)).replace(/^v/, '');
+            // Extract postfix if present for display purposes
             const postfix = typeof tag === 'string' && tag.includes('-') ? tag.split('-').slice(1).join('-') : '';
             processedVersions.add(baseVersion);
 

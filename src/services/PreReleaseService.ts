@@ -1000,12 +1000,12 @@ export class PreReleaseService {
           const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
             releaseDetails.flavors,
             catalogDetails.versions,
-            details.version
+            `${details.version}-${details.postfix}`
           );
 
           // Log flavor availability
           this.logger.debug('Flavor availability for version', {
-            version: details.version,
+            version: `${details.version}-${details.postfix}`,
             totalFlavors: releaseDetails.flavors.length,
             availableFlavors: availableFlavors.map(f => f.name),
             alreadyImported: alreadyImportedFlavors
@@ -1013,7 +1013,7 @@ export class PreReleaseService {
 
           // If no flavors are available, show error and return
           if (availableFlavors.length === 0) {
-            const errorMessage = `All flavors are already imported for version ${details.version}:\n` +
+            const errorMessage = `All flavors are already imported for version ${details.version}-${details.postfix}:\n` +
               alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
             throw new Error(errorMessage);
           }
@@ -1022,7 +1022,7 @@ export class PreReleaseService {
           const selectedFlavors = await this.selectFlavorsToImport(
             availableFlavors,
             catalogDetails.versions,
-            details.version
+            `${details.version}-${details.postfix}`
           );
 
           if (selectedFlavors.length === 0) {
@@ -1040,7 +1040,7 @@ export class PreReleaseService {
             `Offering Name: ${releaseDetails.name}\n` +
             `Offering Label: ${releaseDetails.label}\n` +
             `GitHub Release Tag: ${tagName}\n` +
-            `Catalog Version: ${details.version}\n` +
+            `Catalog Version: ${details.version}-${details.postfix}\n` +
             `Selected Flavors to Import:\n${selectedFlavors.map(f =>
               `  • ${f.label}: ${f.name}`
             ).join('\n')}` +
@@ -1347,7 +1347,7 @@ export class PreReleaseService {
 
     try {
       this.logger.debug('Starting catalog import process', {
-        version: details.version,
+        version: `${details.version}-${details.postfix}`,
         catalogId: details.catalogId,
         hasView: !!this.view
       }, 'preRelease');
@@ -1370,7 +1370,7 @@ export class PreReleaseService {
       this.logger.info('Starting flavor import process', {
         catalogId: details.catalogId,
         offeringId: catalogDetails.offeringId,
-        version: details.version
+        version: `${details.version}-${details.postfix}`
       }, 'preRelease');
 
       const ibmCloudService = await this.getIBMCloudService();
@@ -1391,11 +1391,11 @@ export class PreReleaseService {
       const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
         details.selectedFlavors,
         catalogDetails.versions,
-        details.version
+        `${details.version}-${details.postfix}`
       );
 
       if (availableFlavors.length === 0) {
-        throw new Error(`No flavors available to import for version ${details.version}. They may have been imported by another user.`);
+        throw new Error(`No flavors available to import for version ${details.version}-${details.postfix}. They may have been imported by another user.`);
       }
 
       // Use only the flavors that are still available
@@ -1412,9 +1412,9 @@ export class PreReleaseService {
       // Import each selected flavor as a separate version
       for (const flavor of flavorsToImport) {
         // Verify one last time that this specific flavor hasn't been imported
-        if (this.flavorExistsInVersion(catalogDetails.versions, details.version, flavor.name)) {
+        if (this.flavorExistsInVersion(catalogDetails.versions, `${details.version}-${details.postfix}`, flavor.name)) {
           this.logger.warn('Skipping flavor that was imported by another user', {
-            version: details.version,
+            version: `${details.version}-${details.postfix}`,
             flavorName: flavor.name
           }, 'preRelease');
           continue;
@@ -1433,7 +1433,7 @@ export class PreReleaseService {
             {
               zipurl: archiveUrl,
               targetVersion: details.targetVersion!,
-              version: details.version,
+              version: `${details.version}-${details.postfix}`,
               catalogIdentifier: details.catalogId!,
               flavor: {
                 metadata: {
@@ -1448,7 +1448,7 @@ export class PreReleaseService {
           this.logger.info('Successfully imported flavor version to catalog', {
             catalogId: details.catalogId,
             offeringId: catalogDetails.offeringId,
-            version: details.version,
+            version: `${details.version}-${details.postfix}`,
             flavorName: flavor.name
           }, 'preRelease');
         } catch (error) {
@@ -1456,7 +1456,7 @@ export class PreReleaseService {
             error,
             catalogId: details.catalogId,
             offeringId: catalogDetails.offeringId,
-            version: details.version,
+            version: `${details.version}-${details.postfix}`,
             flavorName: flavor.name
           }, 'preRelease');
           throw new Error(`Failed to import flavor ${flavor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1898,12 +1898,12 @@ export class PreReleaseService {
         const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
           releaseDetails.flavors,
           catalogDetails.versions,
-          data.version
+          `${data.version}-${data.postfix}`
         );
 
         // Log flavor availability
         this.logger.debug('Flavor availability for version', {
-          version: data.version,
+          version: `${data.version}-${data.postfix}`,
           totalFlavors: releaseDetails.flavors.length,
           availableFlavors: availableFlavors.map(f => f.name),
           alreadyImported: alreadyImportedFlavors
@@ -1911,7 +1911,7 @@ export class PreReleaseService {
 
         // If no flavors are available, show error and return
         if (availableFlavors.length === 0) {
-          const errorMessage = `All flavors are already imported for version ${data.version}:\n` +
+          const errorMessage = `All flavors are already imported for version ${data.version}-${data.postfix}:\n` +
             alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
           throw new Error(errorMessage);
         }
@@ -1920,7 +1920,7 @@ export class PreReleaseService {
         const selectedFlavors = await this.selectFlavorsToImport(
           availableFlavors,
           catalogDetails.versions,
-          data.version
+          `${data.version}-${data.postfix}`
         );
 
         if (selectedFlavors.length === 0) {
@@ -1938,7 +1938,7 @@ export class PreReleaseService {
           `Offering Name: ${releaseDetails.name}\n` +
           `Offering Label: ${releaseDetails.label}\n` +
           `GitHub Release Tag: ${tagName}\n` +
-          `Catalog Version: ${data.version}\n` +
+          `Catalog Version: ${data.version}-${data.postfix}\n` +
           `Selected Flavors to Import:\n${selectedFlavors.map(f =>
             `  • ${f.label}: ${f.name}`
           ).join('\n')}` +
@@ -2609,7 +2609,8 @@ export class PreReleaseService {
     // Add the latest GitHub release first (if any)
     if (sortedGithubReleases.length > 0) {
       const latestGitHub = sortedGithubReleases[0];
-      const version = latestGitHub.tag_name.replace(/^v/, '').split('-')[0];
+      // Only remove the 'v' prefix, keep any postfix
+      const version = latestGitHub.tag_name.replace(/^v/, '');
 
       // Find any matching catalog versions
       const matchingCatalogVersions = sortedCatalogVersions
@@ -2661,7 +2662,8 @@ export class PreReleaseService {
       if (catalogEntries.length > 0) {
         // Find matching GitHub release (if any)
         const githubRelease = sortedGithubReleases.find(r => {
-          const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
+          // Only remove the 'v' prefix for comparison, keep postfix
+          const releaseVersion = r.tag_name.replace(/^v/, '');
           return releaseVersion === version || r.tag_name === `v${version}`;
         });
 
@@ -2730,9 +2732,9 @@ export class PreReleaseService {
           }))
         }, 'preRelease');
 
-        // Get all unique versions
+        // Get all unique versions - only remove 'v' prefix, keep any postfixes
         const allVersions = new Set([
-          ...githubReleases.map(r => r.tag_name.replace(/^v/, '').split('-')[0]),
+          ...githubReleases.map(r => r.tag_name.replace(/^v/, '')),
           ...catalogDetails.versions.map(v => v.version)
         ]);
 
@@ -2755,7 +2757,8 @@ export class PreReleaseService {
         // Create mapping for each version
         for (const version of sortedVersions) {
           const githubRelease = githubReleases.find(r => {
-            const releaseVersion = r.tag_name.replace(/^v/, '').split('-')[0];
+            // Only remove the 'v' prefix for comparison, keep postfix
+            const releaseVersion = r.tag_name.replace(/^v/, '');
             return releaseVersion === version;
           });
 
