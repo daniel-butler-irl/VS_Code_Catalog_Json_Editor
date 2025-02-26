@@ -41,7 +41,7 @@ Thank you for your interest in contributing to the IBM Catalog JSON Editor exten
 
 ## Project Structure
 
-```
+```plaintext
 src/
 ├── services/          # Core services and business logic
 ├── providers/         # VS Code providers (TreeProvider, etc.)
@@ -95,7 +95,7 @@ Follow semantic versioning (MAJOR.MINOR.PATCH) with an odd/even strategy:
 
 Example version sequence:
 
-```
+```plaintext
 1.1.0 (preview) -> 1.1.1 (preview) -> 1.2.0 (stable) -> 1.3.0 (preview) -> 1.4.0 (stable)
 ```
 
@@ -191,7 +191,7 @@ This strategy ensures:
 2. **Commit Messages**
    Follow Conventional Commits:
 
-   ```
+   ```plaintext
    type(scope): description
 
    [optional body]

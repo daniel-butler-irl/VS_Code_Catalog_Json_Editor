@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog JSON Editor",
   "description": "VS Code extension for managing IBM Cloud catalog JSON files",
-  "version": "0.7.32",
+  "version": "0.7.33",
   "publisher": "DanielButler",
   "preview": true,
   "repository": {
@@ -16,13 +16,7 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished",
-    "workspaceContains:**/ibm_catalog.json",
-    "onView:ibmCatalogTree",
-    "onView:ibmCatalogPreRelease",
-    "onCommand:ibmCatalog.login",
-    "onCommand:ibmCatalog.loginGithub",
-    "onCommand:ibmCatalog.openPreReleasePanel",
-    "onCommand:ibmCatalog.createPreRelease"
+    "workspaceContains:**/ibm_catalog.json"
   ],
   "contributes": {
     "configuration": {

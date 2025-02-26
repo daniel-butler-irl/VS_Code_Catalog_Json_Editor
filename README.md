@@ -82,7 +82,7 @@ The extension provides context-aware prompts to guide you through various operat
 
 - **How to Access**:
 
-  ```
+  ```plaintext
   Add New: Click + icon next to "dependencies" array
   Edit: Double-click or press Space/Enter on any dependency field
   Delete: Right-click on dependency and select "Delete"
@@ -105,7 +105,7 @@ The extension provides context-aware prompts to guide you through various operat
 - **Version Selection** (After offering selection)
   - Predefined constraint options:
 
-    ```
+    ```plaintext
     Latest Compatible (^1.2.3): Updates within major version
     Patch Updates Only (~1.2.3): Updates patch version only
     Greater Than or Equal (>=1.2.3): Always use newer versions
@@ -127,7 +127,7 @@ The extension provides context-aware prompts to guide you through various operat
 
 - **How to Access**:
 
-  ```
+  ```plaintext
   Add Group: Click + icon next to "swappable_dependencies" array
   Add to Group: Click + icon inside a swappable group
   Set Default: Double-click "default_dependency" field
@@ -146,7 +146,7 @@ The extension provides context-aware prompts to guide you through various operat
 
 - **How to Access**:
 
-  ```
+  ```plaintext
   New Mapping: Click + icon next to "input_mapping" array
   Edit Existing: Double-click the respective field:
     - version_input
@@ -161,7 +161,7 @@ The extension provides context-aware prompts to guide you through various operat
      - Maps configuration inputs to dependency
      - Direction options:
 
-       ```
+       ```plaintext
        ↑ Default (false): Dependency up to parent
        ↓ Parent down (true): Parent to dependency
        ↑ Explicit up (false): Force upward mapping
@@ -185,7 +185,7 @@ The extension provides context-aware prompts to guide you through various operat
   4. **Static Value Mapping**
      - Supports multiple data types:
 
-       ```
+       ```plaintext
        String: Text values with optional validation
        Number: Integers or decimals with range checks
        Boolean: True/false with toggle
@@ -201,7 +201,7 @@ The extension provides context-aware prompts to guide you through various operat
 
 - **How to Access**:
 
-  ```
+  ```plaintext
   Panel: Click "Pre-release" in side panel
   Create: Click "Create Release" button
   Import: Click "Import" button
