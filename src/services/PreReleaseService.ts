@@ -1913,11 +1913,20 @@ export class PreReleaseService {
           throw new Error(`GitHub release ${tagName} not found. A GitHub release is required for catalog import.`);
         }
 
+        // Extract catalog details from GitHub release tarball
+        const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
+
+        // Filter available flavors and already imported flavors
+        const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
+          releaseDetails.flavors,
+          catalogDetails.versions,
+          `${data.version}-${data.postfix}`
+        );
 
         // If no flavors are available, show error and return
         if (availableFlavors.length === 0) {
           const errorMessage = `All flavors are already imported for version ${data.version}-${data.postfix}:\n` +
-            alreadyImportedFlavors.map(f => `  • ${f.label}: ${f.name}`).join('\n');
+            alreadyImportedFlavors.map((f: CatalogFlavor) => `  • ${f.label}: ${f.name}`).join('\n');
           throw new Error(errorMessage);
         }
 
@@ -1944,10 +1953,10 @@ export class PreReleaseService {
           `Offering Label: ${releaseDetails.label}\n` +
           `GitHub Release Tag: ${tagName}\n` +
           `Catalog Version: ${data.version}-${data.postfix}\n` +
-          `Selected Flavors to Import:\n${selectedFlavors.map(f =>
+          `Selected Flavors to Import:\n${selectedFlavors.map((f: CatalogFlavor) =>
             `  • ${f.label}: ${f.name}`
           ).join('\n')}` +
-          (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map(f =>
+          (alreadyImportedFlavors.length > 0 ? `\n\nAlready Imported Flavors:\n${alreadyImportedFlavors.map((f: CatalogFlavor) =>
             `  • ${f.label}: ${f.name}`
           ).join('\n')}` : '') +
           `\n\nNote: A separate version will be imported for each selected flavor.`;
