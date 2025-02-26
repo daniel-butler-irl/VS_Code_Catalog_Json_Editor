@@ -160,26 +160,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         logger.debug('Registering document validation event handlers', undefined, 'main');
         context.subscriptions.push(
             vscode.workspace.onDidOpenTextDocument(async (document) => {
-                if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                if ((document.languageId === 'json' || document.languageId === 'jsonc') &&
+                    document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
                     await validationUIService.validateDocument(document);
                 }
             }),
             vscode.workspace.onDidChangeTextDocument(async (event) => {
-                if (event.document.languageId === 'json' || event.document.languageId === 'jsonc') {
+                if ((event.document.languageId === 'json' || event.document.languageId === 'jsonc') &&
+                    event.document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
                     await validationUIService.validateDocument(event.document);
                 }
             }),
             vscode.workspace.onDidSaveTextDocument(async (document) => {
-                if (document.languageId === 'json' || document.languageId === 'jsonc') {
+                if ((document.languageId === 'json' || document.languageId === 'jsonc') &&
+                    document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
                     await validationUIService.validateDocument(document);
                 }
             })
         );
 
         // Validate any already open JSON documents
-        logger.debug('Validating open JSON documents', undefined, 'main');
+        logger.debug('Validating open IBM Catalog JSON documents', undefined, 'main');
         vscode.workspace.textDocuments.forEach(async (document) => {
-            if (document.languageId === 'json' || document.languageId === 'jsonc') {
+            if ((document.languageId === 'json' || document.languageId === 'jsonc') &&
+                document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
                 await validationUIService.validateDocument(document);
             }
         });
@@ -199,6 +203,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
                     const document = editor.document;
                     if (!document || document.languageId !== 'json') {
                         vscode.window.showErrorMessage('Please open a JSON file to validate.');
+                        return;
+                    }
+
+                    // Check if this is an ibm_catalog.json file
+                    if (!document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
+                        vscode.window.showErrorMessage('This command is only available for ibm_catalog.json files.');
                         return;
                     }
 
