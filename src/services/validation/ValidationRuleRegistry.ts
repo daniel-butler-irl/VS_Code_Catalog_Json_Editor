@@ -3,6 +3,8 @@ import { ValidationError } from '../../types/validation';
 import { ValidationRule, ValidationRuleConfig } from '../../types/validation/rules';
 import { NoDuplicateConfigKeysRule } from './NoDuplicateConfigKeysRule';
 import { DuplicateConfigurationKeysRule } from './DuplicateConfigurationKeysRule';
+import { DuplicateDependencyInputRule } from './DuplicateDependencyInputRule';
+import { InputMappingValidationRule } from './InputMappingValidationRule';
 import { ValidationConfigService } from './ValidationConfigService';
 import { LoggingService } from '../core/LoggingService';
 
@@ -23,6 +25,8 @@ export class ValidationRuleRegistry {
     // Register default rules
     this.registerRule(new NoDuplicateConfigKeysRule(), { enabled: true });
     this.registerRule(new DuplicateConfigurationKeysRule(), { enabled: true });
+    this.registerRule(new DuplicateDependencyInputRule(), { enabled: true });
+    this.registerRule(new InputMappingValidationRule(), { enabled: true });
 
     this.logger.debug('Validation rules registered', {
       ruleCount: this.rules.size,
@@ -178,6 +182,8 @@ export class ValidationRuleRegistry {
     // Re-register the default rules with default configurations
     this.registerRule(new NoDuplicateConfigKeysRule(), { enabled: true });
     this.registerRule(new DuplicateConfigurationKeysRule(), { enabled: true });
+    this.registerRule(new DuplicateDependencyInputRule(), { enabled: true });
+    this.registerRule(new InputMappingValidationRule(), { enabled: true });
 
     // Update the static instance
     ValidationRuleRegistry.instance = this;
