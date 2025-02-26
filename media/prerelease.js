@@ -318,7 +318,7 @@
                     handleError(message.error);
                     break;
                 case 'refreshComplete':
-                    handleRefreshComplete();
+                    handleRefreshComplete(message);
                     break;
                 case 'releaseComplete':
                     handleReleaseComplete(message.success, message.error, message.cancelled);
@@ -369,7 +369,7 @@
         updateButtonStates();
     }
 
-    function handleRefreshComplete() {
+    function handleRefreshComplete(message) {
         hideLoading();
         if (mainContent) {
             mainContent.classList.remove('loading-state');
@@ -378,13 +378,59 @@
             getLatestBtn.disabled = false;
         }
 
-        // Clear version input to allow new suggestion
-        if (versionInput) {
-            versionInput.value = '';
+        // Update local variables if we have new GitHub releases
+        if (message && message.githubReleases) {
+            console.debug(`Received ${message.githubReleases.length} GitHub releases in refresh complete`);
+            
+            // Store the releases for later use
+            githubReleases = message.githubReleases;
+            lastReleases = message.githubReleases;
+            
+            // Debug: Log the first few releases
+            if (message.githubReleases.length > 0) {
+                console.debug('Latest GitHub releases after refresh:', 
+                    message.githubReleases.slice(0, 3).map(r => ({
+                        tag: r.tag_name,
+                        created: r.created_at
+                    }))
+                );
+            }
         }
 
-        // Update version suggestion after refresh
-        suggestNextVersion();
+        // Check if we have a recently created version
+        const createdVersion = message && message.createdVersion;
+        const createdPostfix = message && message.createdPostfix;
+        console.debug('Refresh complete with created version:', { createdVersion, createdPostfix });
+        
+        // If we just created a version, use it to suggest the next one
+        if (createdVersion && versionInput) {
+            // Extract the base version (semver part)
+            const baseVersion = createdVersion.split('-')[0];
+            const parts = baseVersion.split('.').map(Number);
+            
+            // Increment the patch version
+            if (parts.length >= 3) {
+                parts[2] = parts[2] + 1;
+                const nextVersion = parts.join('.');
+                versionInput.value = nextVersion;
+                console.debug(`Suggesting next version ${nextVersion} after release creation of ${createdVersion}`);
+            } else {
+                // Clear version input as fallback if version format is unexpected
+                console.debug(`Invalid version format ${createdVersion}, falling back to suggestNextVersion()`);
+                versionInput.value = '';
+                // Let the normal suggestion process run
+                suggestNextVersion();
+            }
+        } else {
+            // No created version provided, use normal suggestion logic
+            console.debug('No created version provided, using normal version suggestion');
+            if (versionInput) {
+                versionInput.value = '';
+            }
+            // Update version suggestion after refresh
+            suggestNextVersion();
+        }
+        
         updateTagPreview();
     }
 
@@ -598,15 +644,33 @@
         if (!nextVersionDiv) return;
 
         // Check if version is already released in catalog or GitHub
-        const isVersionReleasedInCatalog = catalogVersions?.some(v => v.version === proposedVersion);
+        const isVersionReleasedInCatalog = catalogVersions?.some(v => {
+            // Extract base version (without postfix) from catalog version
+            const catalogBaseVersion = v.version.split('-')[0];
+            const baseProposedVersion = proposedVersion.split('-')[0];
+            
+            // Compare base versions (without postfixes)
+            return catalogBaseVersion === baseProposedVersion;
+        });
+        
         const isVersionReleasedInGithub = githubReleases?.some(r => {
+            // Remove 'v' prefix and get base version (without postfix)
             const version = r.tag.replace(/^v/, '');
-            return version === proposedVersion;
+            const baseVersion = version.split('-')[0]; // Get just the semver part before any postfix
+            const baseProposedVersion = proposedVersion.split('-')[0]; // Get proposed version without postfix
+            
+            // Compare base versions (without postfixes)
+            return baseVersion === baseProposedVersion;
         });
 
-        // Get all flavors for the proposed version
+        // Get all flavors for the proposed version base
+        const baseProposedVersion = proposedVersion.split('-')[0];
         const versionFlavors = catalogVersions
-            ?.filter(v => v.version === proposedVersion)
+            ?.filter(v => {
+                // Compare base versions without postfixes
+                const catalogBaseVersion = v.version.split('-')[0];
+                return catalogBaseVersion === baseProposedVersion;
+            })
             .map(v => v.flavor)
             .filter(f => f);
 
@@ -760,42 +824,63 @@
             return;
         }
 
-        // Try to get the next version from catalog first
-        if (catalogDetails?.versions) {
-            const catalogVersions = Array.from(new Set(catalogDetails.versions.map(v => v.version)))
-                .filter(v => /^\d+\.\d+\.\d+(-.*)?$/.test(v))
-                .sort((a, b) => -semverCompare(a, b));
+        console.debug('Suggesting next version based on:', {
+            catalogVersionsCount: catalogDetails?.versions?.length || 0,
+            githubReleasesCount: lastReleases?.length || 0
+        });
 
-            if (catalogVersions.length) {
-                const latest = catalogVersions[0];
-                // Extract only the semver part (x.y.z) for incrementing, preserving any postfix
-                const postfix = latest.includes('-') ? '-' + latest.split('-').slice(1).join('-') : '';
-                const semverPart = latest.split('-')[0];
-                const baseParts = semverPart.split('.').map(Number);
-                const [major, minor, patch] = baseParts;
-                // Create new version with incremented patch and preserved postfix
-                versionInput.value = `${major}.${minor}.${patch + 1}${postfix}`;
-                console.debug('Suggested next version from catalog:', versionInput.value);
-                return;
-            }
+        // Debug the latest releases
+        if (lastReleases && lastReleases.length > 0) {
+            console.debug('Latest GitHub releases for suggestion:',
+                lastReleases.slice(0, 3).map(r => ({
+                    tag: r.tag_name,
+                    created: r.created_at,
+                    url: r.html_url
+                }))
+            );
         }
+        
+        // Try to find the latest version from GitHub releases first (most accurate)
+        const githubVersions = Array.from(new Set(lastReleases.map(r => {
+            // Remove 'v' prefix and extract base version without postfix
+            const version = r.tag_name.replace(/^v/, '');
+            return version.split('-')[0]; // Return only the semver part
+        })))
+        .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+        .sort((a, b) => -semverCompare(a, b));
 
-        // Fallback to GitHub version if catalog version is not available
-        const githubVersions = Array.from(new Set(githubReleases.map(r => r.tag_name.replace(/^v/, ''))))
-            .filter(v => /^\d+\.\d+\.\d+(-.*)?$/.test(v))
-            .sort((a, b) => -semverCompare(a, b));
+        console.debug('Sorted GitHub versions for suggestion:', githubVersions);
 
         if (githubVersions.length) {
             const latest = githubVersions[0];
-            // Extract only the semver part (x.y.z) for incrementing, preserving any postfix
-            const postfix = latest.includes('-') ? '-' + latest.split('-').slice(1).join('-') : '';
-            const semverPart = latest.split('-')[0];
-            const baseParts = semverPart.split('.').map(Number);
+            const baseParts = latest.split('.').map(Number);
             const [major, minor, patch] = baseParts;
-            // Create new version with incremented patch and preserved postfix
-            versionInput.value = `${major}.${minor}.${patch + 1}${postfix}`;
+            // Create new version with incremented patch
+            versionInput.value = `${major}.${minor}.${patch + 1}`;
             console.debug('Suggested next version from GitHub:', versionInput.value);
             return;
+        }
+
+        // Fallback to catalog version if GitHub version is not available
+        if (catalogDetails?.versions) {
+            const catalogVersions = Array.from(new Set(catalogDetails.versions.map(v => {
+                // Get only the base version without postfix
+                return v.version.split('-')[0];
+            })))
+            .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+            .sort((a, b) => -semverCompare(a, b));
+
+            console.debug('Sorted catalog versions for suggestion:', catalogVersions);
+
+            if (catalogVersions.length) {
+                const latest = catalogVersions[0];
+                const baseParts = latest.split('.').map(Number);
+                const [major, minor, patch] = baseParts;
+                // Create new version with incremented patch
+                versionInput.value = `${major}.${minor}.${patch + 1}`;
+                console.debug('Suggested next version from catalog:', versionInput.value);
+                return;
+            }
         }
 
         // If no versions found in either source and not on main/master branch
@@ -927,6 +1012,10 @@
             return;
         }
 
+        // Save the current version before clearing it
+        const createdVersion = versionInput?.value || '';
+        const createdPostfix = postfixInput?.value || '';
+
         // Clear inputs on success
         if (versionInput) {
             versionInput.value = '';
@@ -938,7 +1027,10 @@
         // Force a refresh to get latest versions
         vscode.postMessage({
             command: 'forceRefresh',
-            catalogId: catalogSelect?.value
+            catalogId: catalogSelect?.value,
+            // Pass the created version to ensure it's processed correctly
+            createdVersion: createdVersion,
+            createdPostfix: createdPostfix
         });
 
         // Request catalog details update

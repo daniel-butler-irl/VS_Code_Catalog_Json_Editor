@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { PreReleaseService } from '../services/PreReleaseService';
 import { LoggingService } from '../services/core/LoggingService';
+import { PreReleaseDetails } from '../types/catalog/prerelease';
 
 interface WebviewMessage {
   command: string;
@@ -10,14 +11,6 @@ interface WebviewMessage {
   };
   catalogId?: string;
   url?: string;
-}
-
-interface PreReleaseDetails {
-  version: string;
-  postfix: string;
-  publishToCatalog: boolean;
-  releaseGithub: boolean;
-  targetVersion?: string;
 }
 
 export class PreReleaseWebview implements vscode.WebviewViewProvider {
@@ -406,8 +399,17 @@ export class PreReleaseWebview implements vscode.WebviewViewProvider {
           // Add a small delay to ensure GitHub and catalog APIs have propagated the changes
           await new Promise(resolve => setTimeout(resolve, 2000));
 
-          this.logger.debug('Refreshing panel after pre-release creation', {}, 'preRelease');
-          await this.refresh();
+          this.logger.debug('Refreshing panel after pre-release creation', {
+            version: data.version,
+            postfix: data.postfix
+          }, 'preRelease');
+
+          // Pass created version information to the refresh process
+          await this.preReleaseService.handleForceRefresh(
+            data.catalogId,
+            data.version,
+            data.postfix
+          );
 
           this.logger.info('Pre-release created successfully', {
             version: `v${data.version}-${data.postfix}`,

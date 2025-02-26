@@ -1286,10 +1286,11 @@ export class IBMCloudService {
             this.cacheService.delete(catalogOfferingsCacheKey);
             this.cacheService.delete(`offerings:${catalogId}`); // Clear deduplication cache
 
-            this.logger.debug('Cleared specific caches after import', {
+            this.logger.debug('Cleared specific caches after importing all flavors', {
                 catalogId,
                 offeringId,
                 version: options.version,
+                flavorCount: flavors.length,
                 clearedCaches: [
                     'version cache',
                     'offerings cache',
@@ -1297,7 +1298,7 @@ export class IBMCloudService {
                 ]
             }, 'preRelease');
 
-            // Force fetch fresh offerings data first
+            // Force fetch fresh offerings data only once after all flavors are imported
             const offerings = await this.getOfferingsForCatalog(catalogId, true);
             const offering = offerings.find(o => o.id === offeringId);
 
@@ -1314,7 +1315,7 @@ export class IBMCloudService {
             );
 
             if (freshVersionData.versions.length) {
-                this.logger.debug('Fetched fresh version data after import', {
+                this.logger.debug('Fetched fresh version data after importing all flavors', {
                     catalogId,
                     offeringId,
                     versionCount: freshVersionData.versions.length,

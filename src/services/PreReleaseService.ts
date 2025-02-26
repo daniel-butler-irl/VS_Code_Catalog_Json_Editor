@@ -914,10 +914,16 @@ export class PreReleaseService {
    * @returns boolean indicating if the flavor exists
    */
   private flavorExistsInVersion(versions: CatalogVersion[], version: string, flavorName: string): boolean {
-    return versions.some(v =>
-      v.version === version &&
-      v.flavor.name === flavorName
-    );
+    // Extract the base version without postfix for comparison
+    const baseVersionToCheck = version.split('-')[0];
+
+    return versions.some(v => {
+      // Extract the base version of the catalog version without postfix
+      const catalogBaseVersion = v.version.split('-')[0];
+
+      // Compare base versions (without postfixes) and flavor name
+      return catalogBaseVersion === baseVersionToCheck && v.flavor.name === flavorName;
+    });
   }
 
   /**
@@ -1409,6 +1415,10 @@ export class PreReleaseService {
         alreadyImportedFlavors: alreadyImportedFlavors.map(f => f.name)
       }, 'preRelease');
 
+      // Track successful and failed flavors
+      const successfulFlavors: string[] = [];
+      const failedFlavors: { name: string; error: string }[] = [];
+
       // Import each selected flavor as a separate version
       for (const flavor of flavorsToImport) {
         // Verify one last time that this specific flavor hasn't been imported
@@ -1451,6 +1461,8 @@ export class PreReleaseService {
             version: `${details.version}-${details.postfix}`,
             flavorName: flavor.name
           }, 'preRelease');
+
+          successfulFlavors.push(flavor.name);
         } catch (error) {
           this.logger.error('Failed to import flavor version', {
             error,
@@ -1459,28 +1471,52 @@ export class PreReleaseService {
             version: `${details.version}-${details.postfix}`,
             flavorName: flavor.name
           }, 'preRelease');
-          throw new Error(`Failed to import flavor ${flavor.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+          failedFlavors.push({
+            name: flavor.name,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+
+          // Continue with other flavors instead of throwing and aborting the entire process
         }
       }
 
-      // Clear caches and force refresh of offerings
-      await ibmCloudService.clearOfferingCache(details.catalogId!);
-      await ibmCloudService.getOfferingsForCatalog(details.catalogId!, true);
+      // Clear caches and force refresh of offerings only once after all imports
+      if (successfulFlavors.length > 0) {
+        this.logger.debug('Clearing offering cache and refreshing offerings after all imports', {
+          catalogId: details.catalogId,
+          successfulFlavors,
+          failedFlavors: failedFlavors.map(f => f.name)
+        }, 'preRelease');
 
-      this.logger.debug('Cleared offering cache and refreshed offerings', {
-        catalogId: details.catalogId
-      }, 'preRelease');
+        await ibmCloudService.clearOfferingCache(details.catalogId!);
+        await ibmCloudService.getOfferingsForCatalog(details.catalogId!, true);
 
-      // Force a refresh of the selected catalog details
-      this.logger.debug('Getting updated catalog details', {
-        catalogId: details.catalogId
-      }, 'preRelease');
-      const updatedCatalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
-      this.logger.debug('Retrieved updated catalog details', {
-        catalogId: details.catalogId,
-        offeringId: updatedCatalogDetails.offeringId,
-        newVersionCount: updatedCatalogDetails.versions.length
-      }, 'preRelease');
+        // Force a refresh of the selected catalog details
+        const updatedCatalogDetails = await this.getSelectedCatalogDetails(details.catalogId!);
+        this.logger.debug('Retrieved updated catalog details', {
+          catalogId: details.catalogId,
+          offeringId: updatedCatalogDetails.offeringId,
+          newVersionCount: updatedCatalogDetails.versions.length
+        }, 'preRelease');
+      }
+
+      // Display import results to the user
+      if (failedFlavors.length > 0) {
+        const successMessage = successfulFlavors.length > 0
+          ? `Successfully imported ${successfulFlavors.length} flavor(s): ${successfulFlavors.join(', ')}.`
+          : '';
+
+        const errorMessage = `Some flavors failed to import: ${failedFlavors.map(f => f.name).join(', ')}. ${successMessage}`;
+
+        if (successfulFlavors.length === 0) {
+          throw new Error(errorMessage);
+        } else {
+          void vscode.window.showWarningMessage(errorMessage);
+        }
+      } else {
+        void vscode.window.showInformationMessage(`Successfully imported all ${successfulFlavors.length} flavor(s) to the catalog.`);
+      }
 
       // Get GitHub releases for version mapping
       this.logger.debug('Getting GitHub releases for version mapping', {}, 'preRelease');
@@ -1496,60 +1532,14 @@ export class PreReleaseService {
       // Create version mappings
       this.logger.debug('Creating version mappings', {
         catalogId: details.catalogId,
-        offeringId: updatedCatalogDetails.offeringId
-      }, 'preRelease');
-      const versionMappings = this.getVersionMappingSummary(
-        details.catalogId!,
-        updatedCatalogDetails.offeringId,
-        githubReleases,
-        updatedCatalogDetails.versions
-      );
-      this.logger.debug('Created version mappings', {
-        mappingCount: versionMappings.length,
-        mappings: versionMappings.map(m => ({
-          version: m.version,
-          hasGithubRelease: !!m.githubRelease,
-          githubTag: m.githubRelease?.tag,
-          catalogVersionCount: m.catalogVersions?.length || 0,
-          catalogFlavors: m.catalogVersions?.map(cv => cv.flavor.label)
-        }))
-      }, 'preRelease');
-
-      // Update the UI with new catalog details
-      if (this.view) {
-        this.logger.debug('Updating UI with new catalog details', {
-          catalogId: details.catalogId,
-          hasVersionMappings: !!versionMappings.length
-        }, 'preRelease');
-        const detailsWithMappings = {
-          ...updatedCatalogDetails,
-          versionMappings
-        };
-
-        await this.view.webview.postMessage({
-          command: 'updateCatalogDetails',
-          catalogDetails: detailsWithMappings
-        });
-        this.logger.debug('Sent updateCatalogDetails message to webview', {
-          command: 'updateCatalogDetails',
-          hasView: !!this.view
-        }, 'preRelease');
-      } else {
-        this.logger.warn('No view available to update UI', {
-          catalogId: details.catalogId
-        }, 'preRelease');
-      }
-
-      this.logger.info('Successfully imported all flavors to catalog and updated UI', {
-        catalogId: details.catalogId,
-        offeringId: updatedCatalogDetails.offeringId,
-        version: details.version,
-        flavorCount: releaseDetails.flavors.length,
-        flavors: releaseDetails.flavors.map(f => f.name),
-        hasView: !!this.view
+        offeringId: catalogDetails.offeringId
       }, 'preRelease');
     } catch (error) {
-      this.logger.error('Failed to import to catalog', { error, catalogId: details.catalogId }, 'preRelease');
+      this.logger.error('Error during catalog import', {
+        error,
+        catalogId: details.catalogId,
+        version: `${details.version}-${details.postfix}`
+      }, 'preRelease');
       throw error;
     }
   }
@@ -1560,12 +1550,35 @@ export class PreReleaseService {
    * @returns Suggested next version number
    */
   public suggestNextVersion(currentVersion: string): string {
-    if (!semver.valid(currentVersion)) {
-      throw new Error('Invalid version number');
+    // Input validation
+    if (!currentVersion) {
+      this.logger.warn('Empty or invalid version provided to suggestNextVersion', { currentVersion });
+      return '1.0.0'; // Default first version
+    }
+
+    // Clean up the version string - remove any 'v' prefix and postfix information
+    const cleanVersion = currentVersion.replace(/^v/, '').split('-')[0];
+
+    this.logger.debug('Suggesting next version based on', {
+      currentVersion,
+      cleanVersion
+    }, 'preRelease');
+
+    if (!semver.valid(cleanVersion)) {
+      this.logger.warn('Invalid semver format', { currentVersion, cleanVersion });
+      return '1.0.0'; // Default to first version if input is invalid
     }
 
     // For pre-releases, increment the patch version
-    return semver.inc(currentVersion, 'patch') || currentVersion;
+    const nextVersion = semver.inc(cleanVersion, 'patch');
+
+    this.logger.debug('Next version suggestion', {
+      currentVersion,
+      cleanVersion,
+      nextVersion
+    }, 'preRelease');
+
+    return nextVersion || cleanVersion;
   }
 
   /**
@@ -1696,8 +1709,8 @@ export class PreReleaseService {
     }
   }
 
-  public async handleForceRefresh(catalogId?: string): Promise<void> {
-    this.logger.debug('Force refreshing data', { catalogId }, 'preRelease');
+  public async handleForceRefresh(catalogId?: string, createdVersion?: string, createdPostfix?: string): Promise<void> {
+    this.logger.debug('Force refreshing data', { catalogId, createdVersion, createdPostfix }, 'preRelease');
 
     if (!this.view) {
       this.logger.debug('No view available for force refresh', {}, 'preRelease');
@@ -1764,12 +1777,24 @@ export class PreReleaseService {
         } : undefined
       });
 
+      // Send the refresh complete message with created version info
+      await this.view.webview.postMessage({
+        command: 'refreshComplete',
+        githubReleases,
+        createdVersion,
+        createdPostfix
+      });
+
       await this.view.webview.postMessage({
         command: 'setLoadingState',
         loading: false
       });
 
-      this.logger.info('Force refresh completed successfully', { catalogId }, 'preRelease');
+      this.logger.info('Force refresh completed successfully', {
+        catalogId,
+        createdVersion,
+        createdPostfix
+      }, 'preRelease');
     } catch (error) {
       this.logger.error('Failed to force refresh', { error, catalogId }, 'preRelease');
 
@@ -1888,26 +1913,6 @@ export class PreReleaseService {
           throw new Error(`GitHub release ${tagName} not found. A GitHub release is required for catalog import.`);
         }
 
-        // Set the target version URL for catalog import
-        data.targetVersion = githubRelease.tarball_url;
-
-        // Extract catalog details from the release tarball
-        const releaseDetails = await this.extractCatalogDetailsFromTarball(githubRelease.tarball_url);
-
-        // Filter available flavors
-        const { availableFlavors, alreadyImportedFlavors } = this.filterAvailableFlavors(
-          releaseDetails.flavors,
-          catalogDetails.versions,
-          `${data.version}-${data.postfix}`
-        );
-
-        // Log flavor availability
-        this.logger.debug('Flavor availability for version', {
-          version: `${data.version}-${data.postfix}`,
-          totalFlavors: releaseDetails.flavors.length,
-          availableFlavors: availableFlavors.map(f => f.name),
-          alreadyImported: alreadyImportedFlavors
-        }, 'preRelease');
 
         // If no flavors are available, show error and return
         if (availableFlavors.length === 0) {
@@ -2003,7 +2008,7 @@ export class PreReleaseService {
         }
 
         // Force refresh the data using the same path as "Get Latest Versions"
-        await this.handleForceRefresh(data.catalogId);
+        await this.handleForceRefresh(data.catalogId, data.version, data.postfix);
 
         this.logger.info('Pre-release created and data refreshed successfully', {
           version: `v${data.version}-${data.postfix}`,
@@ -2612,9 +2617,15 @@ export class PreReleaseService {
       // Only remove the 'v' prefix, keep any postfix
       const version = latestGitHub.tag_name.replace(/^v/, '');
 
-      // Find any matching catalog versions
+      // Extract base version without postfix for comparison
+      const baseVersion = version.split('-')[0];
+
+      // Find any matching catalog versions by comparing base versions without postfixes
       const matchingCatalogVersions = sortedCatalogVersions
-        .filter(v => v.version === version)
+        .filter(v => {
+          const catalogBaseVersion = v.version.split('-')[0];
+          return catalogBaseVersion === baseVersion;
+        })
         .map(v => ({
           version: v.version,
           flavor: {
@@ -2635,13 +2646,28 @@ export class PreReleaseService {
           },
           catalogVersions: matchingCatalogVersions
         });
+      } else {
+        // Even if there are no matching catalog versions, add the GitHub release
+        mappings.push({
+          version,
+          githubRelease: {
+            tag: latestGitHub.tag_name,
+            tarball_url: latestGitHub.tarball_url
+          },
+          catalogVersions: null
+        });
       }
     }
 
     // Add up to 4 latest catalog versions that aren't already included
     for (const version of uniqueCatalogVersions) {
       // Skip if this version is already in mappings
-      if (mappings.some(m => m.version === version)) {
+      if (mappings.some(m => {
+        // Compare base versions without postfixes 
+        const mappingBaseVersion = m.version.split('-')[0];
+        const catalogBaseVersion = version.split('-')[0];
+        return mappingBaseVersion === catalogBaseVersion;
+      })) {
         continue;
       }
 
@@ -2660,11 +2686,16 @@ export class PreReleaseService {
         }));
 
       if (catalogEntries.length > 0) {
+        // Get base version without postfix
+        const baseVersion = version.split('-')[0];
+
         // Find matching GitHub release (if any)
         const githubRelease = sortedGithubReleases.find(r => {
           // Only remove the 'v' prefix for comparison, keep postfix
           const releaseVersion = r.tag_name.replace(/^v/, '');
-          return releaseVersion === version || r.tag_name === `v${version}`;
+          const releaseBaseVersion = releaseVersion.split('-')[0];
+          // Compare base versions without postfixes
+          return releaseBaseVersion === baseVersion;
         });
 
         mappings.push({
