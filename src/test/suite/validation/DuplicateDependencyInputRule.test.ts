@@ -88,13 +88,9 @@ describe('DuplicateDependencyInputRule', () => {
                 {
                   dependency_input: 'region',
                   version_input: 'region1'
-                }
-              ]
-            },
-            {
-              input_mapping: [
+                },
                 {
-                  dependency_input: 'region',
+                  dependency_input: 'region',  // Duplicate within same dependency
                   version_input: 'region2'
                 }
               ]
@@ -123,13 +119,9 @@ describe('DuplicateDependencyInputRule', () => {
                     {
                       dependency_input: 'region',
                       version_input: 'region1'
-                    }
-                  ]
-                },
-                {
-                  input_mapping: [
+                    },
                     {
-                      dependency_input: 'region',
+                      dependency_input: 'region',  // Duplicate within same dependency
                       version_input: 'region2'
                     }
                   ]
@@ -177,7 +169,7 @@ describe('DuplicateDependencyInputRule', () => {
     assert.ok(result[0].message.includes('Duplicate dependency_input \'region\''));
   });
 
-  it('should treat different reference_version settings as duplicates', async () => {
+  it('should treat different reference_version settings as duplicates within same dependency', async () => {
     const data = {
       products: [
         {
@@ -188,11 +180,7 @@ describe('DuplicateDependencyInputRule', () => {
                   dependency_input: 'region',
                   version_input: 'region',
                   reference_version: true
-                }
-              ]
-            },
-            {
-              input_mapping: [
+                },
                 {
                   dependency_input: 'region',
                   version_input: 'region',
@@ -222,11 +210,7 @@ describe('DuplicateDependencyInputRule', () => {
                 {
                   dependency_input: 'region',
                   version_input: 'region1'
-                }
-              ]
-            },
-            {
-              input_mapping: [
+                },
                 {
                   dependency_input: 'region',
                   version_input: 'region2'
@@ -250,5 +234,49 @@ describe('DuplicateDependencyInputRule', () => {
     // Verify paths are correct
     assert.ok(result[0].path.includes('dependency_input'));
     assert.ok(result[1].path.includes('dependency_input'));
+  });
+
+  // New test case for allowing same input mappings in different dependencies
+  it('should NOT detect duplicate dependency_input values when they are in different dependencies', async () => {
+    const data = {
+      products: [
+        {
+          dependencies: [
+            {
+              name: "dependency1",
+              input_mapping: [
+                {
+                  dependency_input: 'region',
+                  version_input: 'region1'
+                },
+                {
+                  dependency_input: 'zone',
+                  version_input: 'zone1'
+                }
+              ]
+            },
+            {
+              name: "dependency2",
+              input_mapping: [
+                {
+                  dependency_input: 'region',  // Same dependency_input as in dependency1
+                  version_input: 'region2'
+                },
+                {
+                  dependency_input: 'zone',    // Same dependency_input as in dependency1
+                  version_input: 'zone2'
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const rawJson = JSON.stringify(data, null, 2);
+    const result = await rule.validate(data, { enabled: true }, rawJson);
+
+    // There should be no errors because duplicates across different dependencies should be allowed
+    assert.strictEqual(result.length, 0);
   });
 }); 

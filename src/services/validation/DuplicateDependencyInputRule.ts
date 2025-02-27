@@ -143,16 +143,6 @@ export class DuplicateDependencyInputRule extends BaseValidationRule {
     root: Node | null | undefined,
     rawText?: string
   ): void {
-    // Map to track dependency_input values and their occurrences across input_mappings
-    interface DependencyInputOccurrence {
-      depIndex: number;
-      mappingIndex: number;
-      path: (string | number)[];
-      node?: Node;
-    }
-
-    const seenInputs = new Map<string, DependencyInputOccurrence[]>();
-
     // Process each dependency in the array
     for (let depIndex = 0; depIndex < dependencies.length; depIndex++) {
       const dependency = dependencies[depIndex];
@@ -170,6 +160,15 @@ export class DuplicateDependencyInputRule extends BaseValidationRule {
           inputMappingCount: dependency.input_mapping.length,
           path: inputMappingPath.join('.')
         }, this.logChannel);
+
+        // Map to track dependency_input values and their occurrences within this single dependency
+        interface DependencyInputOccurrence {
+          mappingIndex: number;
+          path: (string | number)[];
+          node?: Node;
+        }
+
+        const seenInputsInThisDependency = new Map<string, DependencyInputOccurrence[]>();
 
         // Process each mapping in the input_mapping array
         for (let mappingIndex = 0; mappingIndex < dependency.input_mapping.length; mappingIndex++) {
@@ -197,74 +196,49 @@ export class DuplicateDependencyInputRule extends BaseValidationRule {
               }
             }
 
-            // Record this occurrence
+            // Record this occurrence within this dependency only
             const fullPath = [...inputMappingPath, mappingIndex, 'dependency_input'];
-            const occurrences = seenInputs.get(depInput) || [];
+            const occurrences = seenInputsInThisDependency.get(depInput) || [];
             occurrences.push({
-              depIndex,
               mappingIndex,
               path: fullPath,
               node: depInputNode
             });
-            seenInputs.set(depInput, occurrences);
+            seenInputsInThisDependency.set(depInput, occurrences);
 
             this.logger.debug('Found dependency_input in mapping', {
               depInput,
               depIndex,
               mappingIndex,
-              occurrences: occurrences.length
+              occurrencesInThisDependency: occurrences.length
             }, this.logChannel);
           }
         }
-      }
-    }
 
-    // Report duplicates
-    for (const [depInput, occurrences] of seenInputs.entries()) {
-      if (occurrences.length > 1) {
-        this.logger.debug('Found duplicate dependency_input across input_mappings', {
-          depInput,
-          occurrenceCount: occurrences.length,
-          locations: occurrences.map(o => `${o.depIndex}:${o.mappingIndex}`)
-        }, this.logChannel);
+        // Report duplicates within this single dependency
+        for (const [depInput, occurrences] of seenInputsInThisDependency.entries()) {
+          if (occurrences.length > 1) {
+            this.logger.debug('Found duplicate dependency_input within single dependency input_mapping', {
+              depInput,
+              depIndex,
+              occurrenceCount: occurrences.length,
+              locations: occurrences.map(o => `${o.mappingIndex}`)
+            }, this.logChannel);
 
-        // Create error for each occurrence
-        occurrences.forEach((occurrence, idx) => {
-          // Format the error location details
-          const otherLocations = occurrences
-            .filter((_, i) => i !== idx)
-            .map(o => `dependency[${o.depIndex}].input_mapping[${o.mappingIndex}]`)
-            .join(', ');
+            // Create error for each occurrence
+            occurrences.forEach((occurrence, idx) => {
+              // Format the error location details
+              const otherLocations = occurrences
+                .filter((_, i) => i !== idx)
+                .map(o => `input_mapping[${o.mappingIndex}]`)
+                .join(', ');
 
-          const errorPath = occurrence.path.join('.');
-          const errorMessage = `Duplicate dependency_input '${depInput}' found. Also appears in: ${otherLocations}`;
+              const errorPath = occurrence.path.join('.');
+              const errorMessage = `Duplicate dependency_input '${depInput}' found within same dependency. Also appears in: ${otherLocations}`;
 
-          if (occurrence.node && rawText) {
-            // Get position from node
-            const position = this.getNodePositionInternal(occurrence.node.offset, rawText);
-
-            errors.push({
-              code: 'DUPLICATE_DEPENDENCY_INPUT',
-              message: errorMessage,
-              path: errorPath,
-              range: {
-                start: position,
-                end: {
-                  line: position.line,
-                  character: position.character + depInput.length
-                }
-              }
-            });
-          } else if (rawText) {
-            // Fall back to text search
-            const pattern = new RegExp(`"dependency_input"\\s*:\\s*"${depInput}"`, 'g');
-            let matchIndex = 0;
-            let match;
-
-            while ((match = pattern.exec(rawText)) !== null) {
-              if (matchIndex === idx) {
-                const matchStart = match.index + match[0].indexOf(depInput);
-                const position = this.getNodePositionInternal(matchStart, rawText);
+              if (occurrence.node && rawText) {
+                // Get position from node
+                const position = this.getNodePositionInternal(occurrence.node.offset, rawText);
 
                 errors.push({
                   code: 'DUPLICATE_DEPENDENCY_INPUT',
@@ -274,23 +248,20 @@ export class DuplicateDependencyInputRule extends BaseValidationRule {
                     start: position,
                     end: {
                       line: position.line,
-                      character: position.character + depInput.length
+                      character: position.character + depInput.length + 2
                     }
                   }
                 });
-                break;
+              } else {
+                errors.push({
+                  code: 'DUPLICATE_DEPENDENCY_INPUT',
+                  message: errorMessage,
+                  path: errorPath
+                });
               }
-              matchIndex++;
-            }
-          } else {
-            // No position information
-            errors.push({
-              code: 'DUPLICATE_DEPENDENCY_INPUT',
-              message: errorMessage,
-              path: errorPath
             });
           }
-        });
+        }
       }
     }
   }
