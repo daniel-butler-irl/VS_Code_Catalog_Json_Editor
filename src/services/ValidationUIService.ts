@@ -226,8 +226,20 @@ export class ValidationUIService {
         path: document.uri.fsPath
       }, this.logChannel);
 
+      // Always run non-schema validation rules first
+      const nonSchemaErrors = await this.runNonSchemaValidationAndGetErrors(document);
+      this.logger.info('Non-schema validation completed', {
+        errorCount: nonSchemaErrors.length,
+        errors: nonSchemaErrors.map(e => ({
+          code: e.code,
+          severity: e.severity,
+          message: e.message.substring(0, 50)
+        }))
+      }, this.logChannel);
+
       // Get the schema service directly from its static instance
       const schemaService = SchemaService.getInstance();
+      let schemaErrors: any[] = [];
 
       if (!schemaService) {
         // Try to get it from extension exports as a fallback
@@ -235,12 +247,10 @@ export class ValidationUIService {
 
         if (!exportedSchemaService) {
           this.logger.error('Schema service not available', undefined, this.logChannel);
-
           // Add warning to problems panel
           this.showSchemaUnavailableWarning(document);
-
-          // Run other validation rules that don't require schema
-          this.runNonSchemaValidation(document);
+          // Use only non-schema validation results
+          this.processValidationResults(document, nonSchemaErrors);
           return;
         }
 
@@ -248,56 +258,47 @@ export class ValidationUIService {
         try {
           await exportedSchemaService.ensureInitialized();
           const schema = await exportedSchemaService.getSchema();
-          const errors = await exportedSchemaService.validateDocument(document, schema);
-          this.processValidationResults(document, errors);
+          schemaErrors = await exportedSchemaService.validateDocument(document, schema);
         } catch (error) {
           // Log error but continue with non-schema validation
           this.logger.error('Error getting schema from exported service', {
             error: error instanceof Error ? error.message : String(error)
           }, this.logChannel);
-
           // Add warning to problems panel
           this.showSchemaUnavailableWarning(document);
-
-          // Run other validation rules that don't require schema
-          this.runNonSchemaValidation(document);
+          // Use only non-schema validation results
+          this.processValidationResults(document, nonSchemaErrors);
+          return;
         }
-        return;
+      } else {
+        // Use the schema service instance
+        try {
+          await schemaService.ensureInitialized();
+          const schema = await schemaService.getSchema();
+          schemaErrors = await schemaService.validateDocument(document, schema);
+        } catch (error) {
+          // Log error but continue with non-schema validation
+          this.logger.error('Error getting schema', {
+            error: error instanceof Error ? error.message : String(error)
+          }, this.logChannel);
+          // Add warning to problems panel
+          this.showSchemaUnavailableWarning(document);
+          // Use only non-schema validation results
+          this.processValidationResults(document, nonSchemaErrors);
+          return;
+        }
       }
 
-      // Use the schema service instance
-      try {
-        await schemaService.ensureInitialized();
-        const schema = await schemaService.getSchema();
-        const errors = await schemaService.validateDocument(document, schema);
-        this.processValidationResults(document, errors);
-      } catch (error) {
-        // Log error but continue with non-schema validation
-        this.logger.error('Error getting schema', {
-          error: error instanceof Error ? error.message : String(error)
-        }, this.logChannel);
+      // Combine schema and non-schema validation results
+      const allErrors = [...nonSchemaErrors, ...schemaErrors];
+      this.processValidationResults(document, allErrors);
 
-        // Add warning to problems panel
-        this.showSchemaUnavailableWarning(document);
-
-        // Run other validation rules that don't require schema
-        this.runNonSchemaValidation(document);
-      }
     } catch (error: unknown) {
       this.logger.error('Error validating document', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         path: document.uri.fsPath
       }, this.logChannel);
-
-      // Try to run non-schema validation even when an error occurs
-      try {
-        this.runNonSchemaValidation(document);
-      } catch (e) {
-        this.logger.error('Error running non-schema validation', {
-          error: e instanceof Error ? e.message : String(e)
-        }, this.logChannel);
-      }
     }
   }
 
@@ -329,9 +330,9 @@ export class ValidationUIService {
   }
 
   /**
-   * Runs only validation rules that don't require the schema
+   * Runs non-schema validation and returns the errors
    */
-  private async runNonSchemaValidation(document: vscode.TextDocument): Promise<void> {
+  private async runNonSchemaValidationAndGetErrors(document: vscode.TextDocument): Promise<any[]> {
     try {
       const text = document.getText();
       let value: any;
@@ -340,45 +341,30 @@ export class ValidationUIService {
         value = JSON.parse(text);
       } catch (e) {
         // JSON parsing error, already handled elsewhere
-        return;
+        return [];
       }
 
       // Run only the validation rules that don't require schema
       const ruleErrors = await ValidationRuleRegistry.getInstance().validateAll(value, text);
 
-      // Get any existing diagnostics (including our schema warning)
-      const existingDiagnostics = this.diagnosticCollection.get(document.uri) || [];
+      // Log validation errors with severity
+      const errorsWithSeverity = ruleErrors.filter(err => err.severity);
+      if (errorsWithSeverity.length > 0) {
+        this.logger.info('Non-schema validation errors with severity', {
+          errors: errorsWithSeverity.map(err => ({
+            code: err.code,
+            severity: err.severity,
+            message: err.message.substring(0, 50)
+          }))
+        }, this.logChannel);
+      }
 
-      // Convert rule errors to diagnostics and append to existing
-      const ruleDiagnostics = ruleErrors.map(err => {
-        const diagnostic = new vscode.Diagnostic(
-          err.range ? new vscode.Range(
-            err.range.start.line,
-            err.range.start.character,
-            err.range.end.line,
-            err.range.end.character
-          ) : new vscode.Range(0, 0, 0, 0),
-          err.message,
-          vscode.DiagnosticSeverity.Error
-        );
-        diagnostic.source = 'ibm-catalog-validation';
-        return diagnostic;
-      });
-
-      // Combine existing warnings with new rule errors
-      const allDiagnostics = [...existingDiagnostics, ...ruleDiagnostics];
-
-      // Update diagnostics
-      this.diagnosticCollection.set(document.uri, allDiagnostics);
-
-      this.logger.debug('Completed non-schema validation', {
-        document: document.uri.fsPath,
-        errorCount: ruleDiagnostics.length
-      }, this.logChannel);
+      return ruleErrors;
     } catch (error) {
       this.logger.error('Error in non-schema validation', {
         error: error instanceof Error ? error.message : String(error)
       }, this.logChannel);
+      return [];
     }
   }
 
@@ -386,21 +372,69 @@ export class ValidationUIService {
    * Process validation results and update the UI
    */
   private processValidationResults(document: vscode.TextDocument, errors: Array<any>): void {
-    this.logger.debug('Validation completed', {
-      path: document.uri.fsPath,
-      errorCount: errors.length,
-      errors: errors.map((e: { message: string; path: string }) => ({
-        message: e.message,
-        path: e.path
+    // Deduplicate errors based on message and path
+    const uniqueErrors = new Map<string, any>();
+    errors.forEach(error => {
+      const key = `${error.message}:${error.path || ''}`;
+      // Keep the error with severity if it exists, otherwise keep the first occurrence
+      if (!uniqueErrors.has(key) || error.severity) {
+        uniqueErrors.set(key, error);
+      }
+    });
+
+    const deduplicatedErrors = Array.from(uniqueErrors.values());
+
+    // Log all errors with their original severities
+    this.logger.info('Processing validation results (after deduplication)', {
+      errorCount: deduplicatedErrors.length,
+      allErrors: deduplicatedErrors.map(e => ({
+        code: e.code || 'UNKNOWN',
+        severity: e.severity,
+        message: e.message.substring(0, 50)
       }))
     }, this.logChannel);
 
     // Convert errors to the format expected by updateValidation
-    const diagnosticErrors = errors.map((error: { message: string; range?: vscode.Range; path: string }) => ({
-      message: error.message,
-      range: error.range || new vscode.Range(0, 0, 0, 0),
-      severity: vscode.DiagnosticSeverity.Error
-    }));
+    const diagnosticErrors = deduplicatedErrors.map((error: { message: string; range?: vscode.Range; path: string; severity?: string; code?: string }) => {
+      // Map validation severity to VS Code DiagnosticSeverity
+      let diagnosticSeverity = vscode.DiagnosticSeverity.Error; // Default to error
+
+      if (error.severity) {
+        switch (error.severity.toLowerCase()) {
+          case 'warning':
+            diagnosticSeverity = vscode.DiagnosticSeverity.Warning;
+            break;
+          case 'information':
+            diagnosticSeverity = vscode.DiagnosticSeverity.Information;
+            break;
+          case 'hint':
+            diagnosticSeverity = vscode.DiagnosticSeverity.Hint;
+            break;
+        }
+
+        // Log each severity mapping
+        this.logger.info('Severity mapping', {
+          code: error.code || 'UNKNOWN',
+          message: error.message.substring(0, 50),
+          originalSeverity: error.severity,
+          mappedSeverity: vscode.DiagnosticSeverity[diagnosticSeverity]
+        }, this.logChannel);
+      }
+
+      return {
+        message: error.message,
+        range: error.range || new vscode.Range(0, 0, 0, 0),
+        severity: diagnosticSeverity
+      };
+    });
+
+    // Log final diagnostics before updating UI
+    this.logger.info('Final diagnostics', {
+      diagnostics: diagnosticErrors.map(d => ({
+        message: d.message.substring(0, 50),
+        severity: vscode.DiagnosticSeverity[d.severity]
+      }))
+    }, this.logChannel);
 
     // Update the UI
     this.updateValidation(document, diagnosticErrors);
