@@ -445,7 +445,8 @@
     "build:test": "npm run esbuild:test",
     "dev": "npm run esbuild:watch",
     "start:vscode": "npm run build && code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}",
-    "start:vscode:watch": "concurrently \"npm run esbuild:watch\" \"code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}\""
+    "start:vscode:watch": "concurrently \"npm run esbuild:watch\" \"code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}\"",
+    "update-icon": "node svg-to-png.js"
   },
   "devDependencies": {
     "@types/chai": "^5.0.1",
@@ -481,6 +482,7 @@
     "mocha-junit-reporter": "^2.2.1",
     "rimraf": "^5.0.10",
     "semver": "^7.6.3",
+    "sharp": "^0.33.5",
     "sinon": "^19.0.2",
     "source-map-support": "^0.5.21",
     "ts-jest": "^29.2.5",
