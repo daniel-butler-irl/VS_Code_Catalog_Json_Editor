@@ -1,14 +1,14 @@
-# IBM Catalog JSON Editor
+# IBM Catalog Tools
 
 > ⚠️ **WARNING**: This extension is in active development. While stable for production use, new features are regularly added. Please report any issues on the GitHub repository.
 
 ## Overview
 
-IBM Catalog JSON Editor is a Visual Studio Code extension designed to streamline the management and editing of `ibm_catalog.json` files. Tailored for IBM Cloud architects and developers, this extension offers an intuitive side panel that visualizes the JSON structure in a tree format, facilitating easy navigation, editing, and IBM Cloud integration.
+IBM Catalog Tools is a Visual Studio Code extension that provides a comprehensive set of tools for developing offerings in the IBM Cloud Catalog. Originally focused on JSON editing, this extension now offers enhanced capabilities including pre-release management, dependency handling, and IBM Cloud integration. The intuitive side panel visualizes the JSON structure in a tree format, facilitating easy navigation, editing, and seamless integration with IBM Cloud services.
 
 ## Features
 
-1. **File Management**
+1. **JSON Structure Management**
    - Auto-detection of `ibm_catalog.json` files in the workspace
    - Create new catalog files with a default structure
    - Real-time file system watching and synchronization
@@ -283,7 +283,7 @@ The following elements can be added and configured in your catalog:
 
 1. Open VS Code
 2. Click the Extensions icon (`Cmd+Shift+X` or `Ctrl+Shift+X`)
-3. Search for "IBM Catalog JSON Editor"
+3. Search for "IBM Catalog Tools"
 4. Click "Install"
 
 ### Manual Installation

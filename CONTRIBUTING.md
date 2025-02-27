@@ -1,6 +1,6 @@
-# Contributing to IBM Catalog JSON Editor
+# Contributing to IBM Catalog Tools
 
-Thank you for your interest in contributing to the IBM Catalog JSON Editor extension! This document provides guidelines and information for developers who want to contribute to the project.
+Thank you for your interest in contributing to the IBM Catalog Tools extension! This document provides guidelines and information for developers who want to contribute to the project.
 
 ## Development Setup
 

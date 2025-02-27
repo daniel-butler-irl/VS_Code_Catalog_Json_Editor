@@ -1,7 +1,7 @@
 {
   "name": "ibm-catalog-json-editor",
-  "displayName": "IBM Catalog JSON Editor",
-  "description": "VS Code extension for managing IBM Cloud catalog JSON files",
+  "displayName": "IBM Catalog Tools",
+  "description": "VS Code extension for managing IBM Cloud catalog offerings, JSON files and pre-releases",
   "version": "0.7.33",
   "publisher": "DanielButler",
   "preview": true,
@@ -199,7 +199,7 @@
       "activitybar": [
         {
           "id": "ibm-catalog-explorer",
-          "title": "IBM Catalog Explorer",
+          "title": "IBM Catalog Tools",
           "icon": "$(json)"
         }
       ]
