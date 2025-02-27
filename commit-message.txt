@@ -1,0 +1,15 @@
+refactor: streamline validation rules and improve test coverage
+
+- Refactor validation rule implementations for better maintainability
+- Remove InstallTypeRequiredRule that's no longer needed
+- Update validation tests for better coverage
+- Fix line endings in validation files
+- Add test-workspace to support testing scenarios
+
+fix: resolve GitHub Actions warnings for bundling and packaging
+
+- Add "files" property to package.json to specify included files
+- Update .vscodeignore file to properly exclude unnecessary files
+- Update build scripts to ensure proper bundling before packaging
+- Replace deprecated GitHub Actions upload-release-asset with modern approach
+- Bump version from 0.7.29 to 0.7.30 

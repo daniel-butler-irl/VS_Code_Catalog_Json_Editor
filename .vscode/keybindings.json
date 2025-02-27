@@ -1,0 +1,8 @@
+[
+    {
+        "key": "ctrl+f6",
+        "command": "workbench.action.debug.start",
+        "args": "Run Extension in VS Code",
+        "when": "!inDebugMode"
+    }
+] 

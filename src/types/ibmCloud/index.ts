@@ -42,15 +42,16 @@ export interface OfferingItem {
 }
 
 export interface Kind {
-    id: string;
+    id?: string;
     format_kind?: string;
     format_kind_label?: string;
     install_kind?: string;
     install_kind_label?: string;
     target_kind?: string;
     target_kind_label?: string;
+    target_kinds?: string[];
     versions?: OfferingVersion[];
-    metadata?: Record<string, unknown>;
+    metadata?: Record<string, any>;
 }
 
 export interface OfferingVersion {
@@ -63,6 +64,7 @@ export interface OfferingVersion {
     offering_id?: string;
     kind_id?: string;
     tags?: string[];
+    tgz_url?: string;
     configuration?: Configuration[];
     outputs?: Output[];
 }
@@ -83,8 +85,6 @@ export interface Configuration {
 export interface OfferingFlavor {
     name: string;
     label: string;
-    label_i18n?: Record<string, string>;
-    index?: number;
-    description?: string;
-    displayName?: string;
+    description: string;
+    install_type?: 'extension' | 'fullstack';
 }

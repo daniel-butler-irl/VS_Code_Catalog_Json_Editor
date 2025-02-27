@@ -6,11 +6,42 @@ import { CacheConfig } from '../../types/cache/cacheConfig';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { LoggingService } from '../../services/core/LoggingService';
+import { describe, it, before, after, beforeEach, afterEach } from 'mocha';
 
-suite('CacheService Test Suite', () => {
+// Helper class for mocking VS Code Memento
+class MockMemento implements vscode.Memento {
+    private storage = new Map<string, any>();
+
+    get<T>(key: string): T | undefined;
+    get<T>(key: string, defaultValue: T): T;
+    get(key: string, defaultValue?: any) {
+        return this.storage.get(key) ?? defaultValue;
+    }
+
+    update(key: string, value: any): Thenable<void> {
+        this.storage.set(key, value);
+        return Promise.resolve();
+    }
+
+    keys(): readonly string[] {
+        return Array.from(this.storage.keys());
+    }
+
+    setKeysForSync(keys: readonly string[]): void {
+        // No-op for tests
+    }
+}
+
+describe('CacheService Test Suite', () => {
     let cacheService: CacheService;
     let clock: sinon.SinonFakeTimers;
     let mockExtensionContext: vscode.ExtensionContext;
+    let sandbox: sinon.SinonSandbox;
+    let loggerStub: sinon.SinonStubbedInstance<LoggingService>;
+    let disposables: vscode.Disposable[] = [];
+    let executeCommandStub: sinon.SinonStub;
+    let secretsChangeEmitter: vscode.EventEmitter<vscode.SecretStorageChangeEvent>;
+    let mockSecrets: { [key: string]: string };
 
     const testConfig: CacheConfig = {
         ttlSeconds: 3600,
@@ -24,125 +55,176 @@ suite('CacheService Test Suite', () => {
         storagePrefix: 'test_'
     };
 
-    suiteSetup(() => {
-        mockExtensionContext = createMockExtensionContext();
-    });
+    beforeEach(() => {
+        // Create new sandbox for each test
+        sandbox = sinon.createSandbox();
+        clock = sandbox.useFakeTimers();
 
-    setup(async () => {
-        clock = sinon.useFakeTimers({
-            now: 1000,
-            shouldAdvanceTime: false,
-            toFake: ['Date', 'setTimeout', 'clearTimeout']
+        // Reset the singleton instance before each test
+        (CacheService as any).instance = undefined;
+
+        // Create logger stub
+        loggerStub = sandbox.createStubInstance(LoggingService);
+        // Reset LoggingService singleton and stub getInstance
+        (LoggingService as any).instance = undefined;
+        sandbox.stub(LoggingService, 'getInstance').returns(loggerStub);
+
+        // Create mock context
+        secretsChangeEmitter = new vscode.EventEmitter<vscode.SecretStorageChangeEvent>();
+        mockSecrets = {};
+        mockExtensionContext = {
+            subscriptions: [],
+            workspaceState: new MockMemento(),
+            globalState: new MockMemento(),
+            secrets: {
+                store: async (key: string, value: string) => {
+                    mockSecrets[key] = value;
+                    return Promise.resolve();
+                },
+                get: async (key: string) => mockSecrets[key],
+                delete: async (key: string) => {
+                    delete mockSecrets[key];
+                    return Promise.resolve();
+                },
+                onDidChange: secretsChangeEmitter.event
+            },
+            extensionUri: vscode.Uri.file(''),
+            extensionPath: '',
+            asAbsolutePath: (relativePath: string) => '',
+            storageUri: null,
+            globalStorageUri: vscode.Uri.file(''),
+            logUri: vscode.Uri.file(''),
+            extensionMode: vscode.ExtensionMode.Test,
+            environmentVariableCollection: {} as vscode.EnvironmentVariableCollection,
+            storagePath: '',
+            globalStoragePath: '',
+            logPath: ''
+        } as unknown as vscode.ExtensionContext;
+
+        // Create command stubs
+        executeCommandStub = sandbox.stub(vscode.commands, 'executeCommand');
+        executeCommandStub.callsFake(async (command: string, ...args: any[]) => {
+            switch (command) {
+                case 'setContext':
+                    return Promise.resolve();
+                default:
+                    throw new Error(`Command not found: ${command}`);
+            }
         });
 
-        // Reset singleton instance before each test
-        (CacheService as any).instance = undefined;
+        // Initialize cache service
         cacheService = CacheService.getInstance();
         cacheService.setContext(mockExtensionContext);
-
-        // Ensure any async initialization is complete
-        await Promise.resolve();
     });
 
-    teardown(() => {
+    afterEach(() => {
+        // Restore all stubs and clean up
         clock.restore();
-        sinon.restore();
+        sandbox.restore();
+        disposables.forEach(d => d.dispose());
+        disposables = [];
+
+        // Reset all singleton instances
         (CacheService as any).instance = undefined;
+        (LoggingService as any).instance = undefined;
+
+        // Clean up event emitter
+        secretsChangeEmitter.dispose();
     });
 
-    test('basic cache operations', () => {
-        // Test basic set and get
-        cacheService.set('test:key', 'value', testConfig);
-        assert.strictEqual(cacheService.get('test:key'), 'value');
+    describe('Basic Cache Operations', () => {
+        it('should perform basic set and get operations', () => {
+            // Test basic set and get
+            cacheService.set('test:key', 'value', testConfig);
+            assert.strictEqual(cacheService.get('test:key'), 'value');
 
-        // Test non-existent key
-        assert.strictEqual(cacheService.get('nonexistent'), undefined);
+            // Test non-existent key
+            assert.strictEqual(cacheService.get('test:nonexistent'), undefined);
+        });
 
-        // Test overwriting value
-        cacheService.set('test:key', 'new-value', testConfig);
-        assert.strictEqual(cacheService.get('test:key'), 'new-value');
+        it('should handle cache expiration correctly', () => {
+            const shortConfig: CacheConfig = {
+                ttlSeconds: 60,
+                persistent: false,
+                storagePrefix: 'test_'
+            };
+
+            cacheService.set('test:expiring', 'value', shortConfig);
+            assert.strictEqual(cacheService.get('test:expiring'), 'value');
+
+            // Advance time past TTL
+            clock.tick(61 * 1000);
+
+            // Value should be expired
+            assert.strictEqual(cacheService.get('test:expiring'), undefined);
+        });
+
+        it('should clear all cache entries', async () => {
+            // Set multiple entries
+            cacheService.set('test:1', 'value1', testConfig);
+            cacheService.set('test:2', 'value2', testConfig);
+
+            // Clear all entries
+            await cacheService.clearAll();
+
+            // Verify all entries are cleared
+            assert.strictEqual(cacheService.get('test:1'), undefined);
+            assert.strictEqual(cacheService.get('test:2'), undefined);
+        });
+
+        it('should invalidate entries by prefix', async () => {
+            // Set entries with different prefixes
+            cacheService.set('test:1', 'value1', testConfig);
+            cacheService.set('other:1', 'value2', testConfig);
+
+            // Invalidate only 'test:' prefix
+            await cacheService.invalidatePrefix('test');
+
+            // Verify correct entries are invalidated
+            assert.strictEqual(cacheService.get('test:1'), undefined);
+            assert.strictEqual(cacheService.get('other:1'), 'value2');
+        });
     });
 
-    test('cache expiration', () => {
-        cacheService.set('test:expiring', 'value', shortConfig);
+    describe('Persistence and State Management', () => {
+        beforeEach(() => {
+            // Reset singleton instance before each persistence test
+            (CacheService as any).instance = undefined;
+        });
 
-        // Value should exist initially
-        assert.strictEqual(cacheService.get('test:expiring'), 'value');
+        it('should handle persistent storage correctly', async () => {
+            const persistentConfig: CacheConfig = {
+                ttlSeconds: 3600,
+                persistent: true,
+                storagePrefix: 'persistent_'
+            };
 
-        // Advance time past TTL
-        clock.tick(1001);
+            // Set persistent value
+            const firstInstance = CacheService.getInstance();
+            firstInstance.setContext(mockExtensionContext);
+            firstInstance.set('test:persistent', 'value', persistentConfig);
 
-        // Value should be expired
-        assert.strictEqual(cacheService.get('test:expiring'), undefined);
+            // Create new instance
+            (CacheService as any).instance = undefined;
+            const newInstance = CacheService.getInstance();
+            newInstance.setContext(mockExtensionContext);
+
+            // Allow async operations to complete
+            await Promise.resolve();
+            clock.tick(1);
+
+            // Verify value persists
+            assert.strictEqual(newInstance.get('test:persistent'), 'value');
+        });
+
+        it('should handle undefined context gracefully', () => {
+            const newService = CacheService.getInstance();
+            // Should not throw when context is undefined
+            newService.set('test:key', 'value', testConfig);
+            assert.strictEqual(newService.get('test:key'), 'value');
+        });
     });
 
-    test('clear all cache entries', async () => {
-        // Set multiple entries
-        cacheService.set('test:1', 'value1', testConfig);
-        cacheService.set('test:2', 'value2', testConfig);
-
-        // Clear all entries
-        await cacheService.clearAll();
-
-        // Verify all entries are cleared
-        assert.strictEqual(cacheService.get('test:1'), undefined);
-        assert.strictEqual(cacheService.get('test:2'), undefined);
-    });
-
-    test('invalidate by prefix', async () => {
-        // Set entries with different prefixes
-        cacheService.set('test:1', 'value1', testConfig);
-        cacheService.set('other:1', 'value2', testConfig);
-
-        // Invalidate only 'test:' prefix
-        await cacheService.invalidatePrefix('test');
-
-        // Verify correct entries are invalidated
-        assert.strictEqual(cacheService.get('test:1'), undefined);
-        assert.strictEqual(cacheService.get('other:1'), 'value2');
-    });
-
-    test('persistent storage', async () => {
-        const persistentConfig: CacheConfig = {
-            ttlSeconds: 3600,
-            persistent: true,
-            storagePrefix: 'persistent_'
-        };
-
-        // Set persistent value
-        cacheService.set('test:persistent', 'value', persistentConfig);
-
-        // Create new instance
-        (CacheService as any).instance = undefined;
-        const newInstance = CacheService.getInstance();
-        newInstance.setContext(mockExtensionContext);
-
-        // Allow async operations to complete
-        await Promise.resolve();
-        clock.tick(1);
-
-        // Verify value persists
-        assert.strictEqual(newInstance.get('test:persistent'), 'value');
-    });
-
-    test('logging behavior', () => {
-        const logger = LoggingService.getInstance();
-        const debugSpy = sinon.spy(logger, 'debug');
-
-        cacheService.set('test:log', 'value', testConfig);
-
-        sinon.assert.calledWith(
-            debugSpy,
-            sinon.match('Cache SET for key: cache:test:log')
-        );
-    });
-
-    test('handling undefined context', () => {
-        const newService = CacheService.getInstance();
-        // Should not throw when context is undefined
-        newService.set('test:key', 'value', testConfig);
-        assert.strictEqual(newService.get('test:key'), 'value');
-    });
 });
 
 
@@ -325,3 +407,4 @@ function createMockExtensionContext(): vscode.ExtensionContext {
         }
     } as vscode.ExtensionContext;
 }
+

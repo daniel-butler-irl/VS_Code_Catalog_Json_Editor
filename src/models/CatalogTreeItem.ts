@@ -6,6 +6,7 @@ import { AuthService } from '../services/AuthService';
 import { LoggingService } from '../services/core/LoggingService';
 import { SchemaMetadata } from '../types/schema';
 import { FlavorNodeValue, ValidationMetadata, ValidationStatus } from '../types/tree';
+import { name } from 'tar/dist/commonjs/types';
 
 
 /**
@@ -23,7 +24,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
     // Queue management properties
     private static validationQueue: Set<CatalogTreeItem> = new Set();
     private static isProcessingQueue: boolean = false;
-    private static queueProcessor?: NodeJS.Timeout;
+    private static queueProcessor?: ReturnType<typeof setInterval>;
     private static readonly QUEUE_PROCESS_DELAY = 100; // ms between validations
 
     public readonly parent?: CatalogTreeItem;
@@ -60,12 +61,171 @@ export class CatalogTreeItem extends vscode.TreeItem {
         // Initialize validation metadata with provided status
         this._validationMetadata = { status: initialStatus };
 
-        this.updateDisplayProperties();
+        this.updateInitialDisplay();
 
         // Queue validation if needed
         if (this.needsValidation()) {
             void this.queueForValidation();
         }
+
+        // For dependency nodes, attempt to fetch and display the offering label
+        if (typeof value === 'object' && value !== null) {
+            const objValue = value as Record<string, unknown>;
+            if (this.isDependencyNode(jsonPath) &&
+                'name' in objValue &&
+                typeof objValue.name === 'string' &&
+                catalogId &&
+                'id' in objValue &&
+                typeof objValue.id === 'string') {
+                void this.tryUpdateDependencyDisplay(
+                    catalogId,
+                    objValue.id as string,
+                    objValue.name as string
+                );
+            }
+        }
+    }
+
+    /**
+     * Updates the initial display properties based on the type of node
+     */
+    private updateInitialDisplay(): void {
+        if (typeof this.value === 'object' && this.value !== null) {
+            const objValue = this.value as Record<string, unknown>;
+
+            // For objects with label and name properties
+            if ('label' in objValue && typeof objValue.label === 'string') {
+                if ('name' in objValue && typeof objValue.name === 'string') {
+                    this.description = objValue.name;
+                }
+            }
+        }
+
+        this.updateDisplayProperties();
+    }
+
+    /**
+     * Checks if a node is a dependency node based on its JSON path
+     */
+    private isDependencyNode(jsonPath: string): boolean {
+        return /\.dependencies\[\d+\]$/.test(jsonPath);
+    }
+
+    /**
+     * Attempts to update the display of a dependency node with the offering label from cache/API
+     */
+    private async tryUpdateDependencyDisplay(catalogId: string, offeringId: string, fallbackName: string): Promise<void> {
+        this.logger.debug('Starting dependency display update', {
+            catalogId,
+            offeringId,
+            fallbackName,
+            currentValue: this.value,
+            currentDescription: this.description,
+            currentLabel: typeof this.value === 'object' && this.value ? (this.value as Record<string, unknown>).label : undefined,
+            jsonPath: this.jsonPath
+        });
+
+        try {
+            const apiKey = await AuthService.getApiKey(this.context);
+            if (!apiKey) {
+                this.logger.debug('No API key available, falling back to name', {
+                    fallbackName,
+                    jsonPath: this.jsonPath
+                });
+                this.description = fallbackName;
+                return;
+            }
+
+            const ibmCloudService = new IBMCloudService(apiKey);
+            this.logger.debug('Fetching offerings for catalog', {
+                catalogId,
+                jsonPath: this.jsonPath
+            });
+            const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+
+            this.logger.debug('Searching for offering', {
+                offeringId,
+                totalOfferings: offerings.length,
+                availableOfferings: offerings.map(o => ({
+                    id: o.id,
+                    label: o.label,
+                    name: o.name
+                })),
+                jsonPath: this.jsonPath
+            });
+
+            const offering = offerings.find(o => o.id === offeringId);
+
+            if (offering?.label) {
+                this.logger.debug('Found offering label, updating display', {
+                    offeringId,
+                    label: offering.label,
+                    name: fallbackName,
+                    currentValue: this.value,
+                    jsonPath: this.jsonPath
+                });
+
+                // Store the offering label in the value object to ensure it persists
+                if (typeof this.value === 'object' && this.value !== null) {
+                    const valueObj = this.value as Record<string, unknown>;
+                    valueObj.label = offering.label;
+                    this.logger.debug('Stored label in value object', {
+                        updatedValue: valueObj,
+                        label: offering.label,
+                        jsonPath: this.jsonPath,
+                        hasLabel: 'label' in valueObj,
+                        labelValue: valueObj.label
+                    });
+                } else {
+                    this.logger.debug('Could not store label - value is not an object', {
+                        valueType: typeof this.value,
+                        value: this.value,
+                        jsonPath: this.jsonPath
+                    });
+                }
+
+                // Show the offering label in the description
+                this.description = offering.label;
+                this.tooltip = `${offering.label}\nID: ${offeringId}\nName: ${fallbackName}`;
+                this.updateDisplayProperties();
+
+                this.logger.debug('Updated display properties', {
+                    newDescription: this.description,
+                    newTooltip: this.tooltip,
+                    jsonPath: this.jsonPath,
+                    valueAfterUpdate: this.value
+                });
+            } else {
+                this.logger.debug('No label found for offering, using fallback name', {
+                    offeringId,
+                    fallbackName,
+                    offering: offering ? 'found' : 'not found',
+                    offeringDetails: offering,
+                    jsonPath: this.jsonPath
+                });
+                this.description = fallbackName;
+            }
+        } catch (error) {
+            this.logger.debug('Failed to get offering label, falling back to name', {
+                catalogId,
+                offeringId,
+                fallbackName,
+                error: error instanceof Error ? error.message : String(error),
+                jsonPath: this.jsonPath,
+                stack: error instanceof Error ? error.stack : undefined
+            });
+            this.description = fallbackName;
+        }
+    }
+
+    /**
+     * Determines if this item requires validation based on its type
+     */
+    private requiresValidation(): boolean {
+        return (
+            this.label === 'catalog_id' ||
+            this.isOfferingIdInDependency()
+        );
     }
 
     /**
@@ -415,8 +575,22 @@ export class CatalogTreeItem extends vscode.TreeItem {
      * Creates a tooltip for the item showing name and description
      */
     private createTooltip(): string {
-        const parts: string[] = [`Name: ${this.label}`];
+        const parts: string[] = [];
 
+        // Add name/label information
+        if (typeof this.value === 'object' && this.value !== null) {
+            const values = this.value as Record<string, unknown>;
+            if ('label' in values && typeof values.label === 'string') {
+                parts.push(`Label: ${values.label}`);
+            }
+            if ('name' in values && typeof values.name === 'string') {
+                parts.push(`Name: ${values.name}`);
+            }
+        } else {
+            parts.push(`Name: ${this.label}`);
+        }
+
+        // Add schema description if available
         if (this._schemaMetadata?.description) {
             parts.push(`Description: ${this._schemaMetadata.description}`);
         }
@@ -440,32 +614,43 @@ export class CatalogTreeItem extends vscode.TreeItem {
     private getInputMappingDetails(values: Record<string, unknown>): string[] | undefined {
         const details: string[] = [];
         const referenceVersion = values.reference_version === true;
+        const direction = referenceVersion ? '↓ Parent to Dependency' : '↑ Dependency to Parent';
 
-        // Add mapping direction
-        const direction = this.getInputMappingDescription();
-        if (direction) {
+        // Add mapping type and direction
+        if ('dependency_input' in values || 'dependency_output' in values) {
             details.push(`Direction: ${direction}`);
+            details.push('Type: Dynamic Mapping');
+        } else if ('value' in values) {
+            details.push('Type: Static Value Mapping');
         }
 
-        // Add specific values
+        // Add specific mapping details
         if ('dependency_input' in values) {
-            details.push(`Dependency Input: ${values.dependency_input}`);
-            details.push(`Version Input: ${values.version_input}`);
+            const source = referenceVersion ? values.version_input : values.dependency_input;
+            const target = referenceVersion ? values.dependency_input : values.version_input;
+            details.push(`Source: ${source}`);
+            details.push(`Target: ${target}`);
             if (referenceVersion) {
-                details.push('Reference Version: true (Parent → Dependency)');
+                details.push('(Parent architecture input mapped to dependency input)');
+            } else {
+                details.push('(Dependency input mapped to parent architecture)');
             }
         } else if ('dependency_output' in values) {
-            details.push(`Dependency Output: ${values.dependency_output}`);
-            details.push(`Version Input: ${values.version_input}`);
+            const source = referenceVersion ? values.version_input : values.dependency_output;
+            const target = referenceVersion ? values.dependency_output : values.version_input;
+            details.push(`Source: ${source}`);
+            details.push(`Target: ${target}`);
             if (referenceVersion) {
-                details.push('Reference Version: true (Parent → Dependency)');
+                details.push('(Parent architecture input mapped to dependency output)');
+            } else {
+                details.push('(Dependency output mapped to parent architecture)');
             }
         } else if ('value' in values) {
             details.push(`Static Value: ${values.value}`);
             if ('version_input' in values) {
-                details.push(`Version Input: ${values.version_input}`);
+                details.push(`Mapped to Version Input: ${values.version_input}`);
             } else if ('dependency_input' in values) {
-                details.push(`Dependency Input: ${values.dependency_input}`);
+                details.push(`Mapped to Dependency Input: ${values.dependency_input}`);
             }
         }
 
@@ -488,35 +673,26 @@ export class CatalogTreeItem extends vscode.TreeItem {
         let destination = '';
         let sourceValue = '';
         let destinationValue = '';
+        let arrow = referenceVersion ? '↓' : '↑';  // Add arrow based on direction
 
         if ('dependency_input' in values) {
             source = referenceVersion ? 'version_input' : 'dependency_input';
             destination = referenceVersion ? 'dependency_input' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
             destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         } else if ('dependency_output' in values) {
             source = referenceVersion ? 'version_input' : 'dependency_output';
             destination = referenceVersion ? 'dependency_output' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
             destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         } else if ('value' in values) {
             source = referenceVersion ? 'version_input' : 'value';
             destination = referenceVersion ? 'value' : 'version_input';
             sourceValue = String(referenceVersion ? values.version_input : values.value);
             destinationValue = String(referenceVersion ? values.value : values.version_input);
-        }
-
-        // Include the actual values in the description for collapsed view
-        if (source && destination) {
-            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
-            const cleanValue = (value: string) => {
-                const match = value.match(/\((.*?)\)/);
-                return match ? match[1] : value;
-            };
-
-            const cleanSourceValue = cleanValue(sourceValue);
-            const cleanDestValue = cleanValue(destinationValue);
-            return `${cleanSourceValue} → ${cleanDestValue}`;
+            return `${sourceValue} ${arrow} ${destinationValue}`;
         }
 
         return '';
@@ -676,86 +852,44 @@ export class CatalogTreeItem extends vscode.TreeItem {
         }
 
         if (typeof this.value === 'object' && this.value !== null) {
-            let description = '';
+            const values = this.value as Record<string, unknown>;
 
-            // Show descriptive names for various object types
-            if (this.isDependencyParent()) {
-                const values = this.value as Record<string, unknown>;
-                const name = values.name;
-                if (name) {
-                    description = String(name);
+            // For objects with label and name properties
+            if ('label' in values && typeof values.label === 'string') {
+                if ('name' in values && typeof values.name === 'string') {
+                    return values.name;
                 }
             }
-            // Check if this is an input mapping object
+            // Special handling for input mapping
             else if (this.isInputMappingParent()) {
-                const values = this.value as Record<string, unknown>;
                 const referenceVersion = values.reference_version === true;
 
-                // Determine source and destination based on the fields present
-                let sourceValue = '';
-                let destinationValue = '';
-
-                if ('dependency_input' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_input);
-                    destinationValue = String(referenceVersion ? values.dependency_input : values.version_input);
-                } else if ('dependency_output' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.dependency_output);
-                    destinationValue = String(referenceVersion ? values.dependency_output : values.version_input);
+                if ('dependency_input' in values && 'version_input' in values) {
+                    const source = referenceVersion ? values.version_input : values.dependency_input;
+                    const target = referenceVersion ? values.dependency_input : values.version_input;
+                    return `${source} → ${target}`;
+                } else if ('dependency_output' in values && 'version_input' in values) {
+                    return `${values.dependency_output} → ${values.version_input}`;
                 } else if ('value' in values) {
-                    sourceValue = String(referenceVersion ? values.version_input : values.value);
-                    destinationValue = String(referenceVersion ? values.value : values.version_input);
-                }
-
-                if (sourceValue && destinationValue) {
-                    description = `${sourceValue} → ${destinationValue}`;
-                }
-            }
-            // Check if this is an IAM permission object
-            else if (this.isIamPermissionParent()) {
-                const values = this.value as Record<string, unknown>;
-                const serviceName = values.service_name;
-                if (serviceName) {
-                    description = String(serviceName);
+                    if ('version_input' in values) {
+                        return `${values.value} → ${values.version_input}`;
+                    } else if ('dependency_input' in values) {
+                        return `${values.value} → ${values.dependency_input}`;
+                    }
                 }
             }
-            // Check if this is a configuration object
-            else if (this.isConfigurationParent()) {
-                const values = this.value as Record<string, unknown>;
-                const key = values.key;
-                if (key) {
-                    description = String(key);
-                }
+            // For input mapping fields
+            else if (this.isInputMappingField()) {
+                return String(this.value);
             }
-            // Check if this is a feature object
-            else if (this.isFeatureParent()) {
-                const values = this.value as Record<string, unknown>;
-                const title = values.title;
-                if (title) {
-                    description = String(title);
-                }
+            // For string values (like dependency flavors)
+            else if (typeof this.value === 'string') {
+                return this.value;
             }
-            // Check if this is a product object
-            else if (this.isProductParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
-            // Check if this is a flavor object
-            else if (this.isFlavorParent()) {
-                const values = this.value as Record<string, unknown>;
-                const label = values.label;
-                if (label) {
-                    description = String(label);
-                }
-            }
+            // Default object display
             else {
-                description = `Object{${Object.keys(this.value).length}}`;
+                return `Object{${Object.keys(this.value).length}}`;
             }
-
-            // Remove any array indices from the description
-            return description.replace(/\[\d+\]/g, '');
         }
 
         return '';
@@ -942,7 +1076,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
      */
     public isInputMappingField(): boolean {
         return Boolean(
-            this.jsonPath.match(/\.input_mapping\[\d+\]\.(dependency_(?:input|output)|version_input)$/)
+            this.parent?.jsonPath.match(/\.input_mapping\[\d+\]$/)
         );
     }
 

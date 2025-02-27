@@ -17,10 +17,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     //
     // Event Emitters & Core Properties
     //
-    private _onDidChangeTreeData = new vscode.EventEmitter<CatalogTreeItem | undefined | void>();
-    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private _onDidChangeTreeData: vscode.EventEmitter<CatalogTreeItem | undefined> = new vscode.EventEmitter<CatalogTreeItem | undefined>();
+    readonly onDidChangeTreeData: vscode.Event<CatalogTreeItem | undefined> = this._onDidChangeTreeData.event;
     private treeView?: vscode.TreeView<CatalogTreeItem>;
-    private readonly logger = LoggingService.getInstance();
+    private readonly logger: LoggingService;
     private readonly uiStateService: UIStateService;
 
     //
@@ -29,7 +29,8 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     private readonly expandedNodes = new Map<string, boolean>();
     private readonly memoizedPaths = new Map<string, string>();
     private readonly memoizedSchemaMetadata = new Map<string, SchemaMetadata | undefined>();
-    private batchStateUpdateTimer: NodeJS.Timeout | null = null;
+    private batchUpdateTimeout: number | null = null;
+    private isDisposed = false;
 
     /**
      * Creates a new CatalogTreeProvider instance.
@@ -40,17 +41,47 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         private readonly context: vscode.ExtensionContext,
         private readonly schemaService: SchemaService
     ) {
+        this.logger = LoggingService.getInstance();
+        this.logger.debug('Initializing CatalogTreeProvider', {
+            hasContext: !!context,
+            hasCatalogService: !!catalogService,
+            hasSchemaService: !!schemaService
+        });
         this.uiStateService = UIStateService.getInstance(context);
 
         // Initialize expanded nodes from persistent storage
-        this.uiStateService.getTreeState().expandedNodes.forEach(node => {
+        const treeState = this.uiStateService.getTreeState();
+        this.logger.debug('Loading tree state', {
+            expandedNodesCount: treeState.expandedNodes.length,
+            expandedNodes: treeState.expandedNodes
+        });
+
+        treeState.expandedNodes.forEach(node => {
             this.expandedNodes.set(node, true);
         });
 
         // Setup content change handler with cache invalidation
         this.catalogService.onDidChangeContent(() => {
+            this.logger.debug('Content changed, clearing caches');
             this.clearCaches();
             this.refresh();
+        });
+
+        // Listen for refresh context changes
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('ibmCatalog.refresh')) {
+                    this.refresh();
+                }
+            })
+        );
+
+        // Ensure cleanup on disposal
+        context.subscriptions.push({
+            dispose: () => {
+                this.logger.debug('Disposing CatalogTreeProvider');
+                this.dispose();
+            }
         });
     }
 
@@ -138,19 +169,28 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Prevents rapid consecutive saves for better performance.
      */
     private queueStateUpdate(): void {
-        if (this.batchStateUpdateTimer) {
-            clearTimeout(this.batchStateUpdateTimer);
+        if (this.isDisposed) {
+            return;
         }
 
-        this.batchStateUpdateTimer = setTimeout(async () => {
-            try {
-                await this.uiStateService.updateTreeState({
-                    expandedNodes: Array.from(this.expandedNodes.keys())
-                });
-            } catch (error) {
-                this.logger.error('Failed to save expanded state', error);
+        if (this.batchUpdateTimeout !== null) {
+            window.clearTimeout(this.batchUpdateTimeout);
+            this.batchUpdateTimeout = null;
+        }
+
+        this.batchUpdateTimeout = window.setTimeout(async () => {
+            if (this.isDisposed) {
+                return;
             }
-            this.batchStateUpdateTimer = null;
+
+            try {
+                const expandedNodes = Array.from(this.expandedNodes.keys());
+                await this.uiStateService.updateTreeState({ expandedNodes });
+            } catch (error) {
+                this.logger.error('Failed to save expanded state', { error });
+            } finally {
+                this.batchUpdateTimeout = null;
+            }
         }, 250);
     }
 
@@ -171,116 +211,122 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Creates tree items from a JSON value.
      * Handles validation state and special node types.
      */
-    private createTreeItems(
+    private async createTreeItems(
         value: unknown,
         parentPath: string,
         parentItem?: CatalogTreeItem
-    ): CatalogTreeItem[] {
+    ): Promise<CatalogTreeItem[]> {
         if (typeof value !== 'object' || value === null) {
             return [];
         }
 
         const items: CatalogTreeItem[] = [];
 
+        // Handle array items
         if (Array.isArray(value)) {
-            // Handle array items
-            value.forEach((val, index) => {
-                const path = `${parentPath}[${index}]`;
-                const schemaMetadata = this.getSchemaMetadata(path);
-
-                // Get a descriptive label for the array item if possible
-                let displayLabel = '';
-                if (typeof val === 'object' && val !== null) {
-                    // Special handling for input_mapping items
-                    if (parentPath.endsWith('input_mapping')) {
-                        const mapping = val as Record<string, unknown>;
-                        const referenceVersion = mapping.reference_version === true;
-
-                        // Determine source and destination with their values
-                        let source = '';
-                        let destination = '';
-                        let sourceValue = '';
-                        let destValue = '';
-
-                        if ('dependency_input' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'dependency_input';
-                            destination = referenceVersion ? 'dependency_input' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_input);
-                            destValue = String(referenceVersion ? mapping.dependency_input : mapping.version_input);
-                        } else if ('dependency_output' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'dependency_output';
-                            destination = referenceVersion ? 'dependency_output' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.dependency_output);
-                            destValue = String(referenceVersion ? mapping.dependency_output : mapping.version_input);
-                        } else if ('value' in mapping) {
-                            source = referenceVersion ? 'version_input' : 'value';
-                            destination = referenceVersion ? 'value' : 'version_input';
-                            sourceValue = String(referenceVersion ? mapping.version_input : mapping.value);
-                            destValue = String(referenceVersion ? mapping.value : mapping.version_input);
-                        }
-
-                        if (source && destination) {
-                            displayLabel = `${source} → ${destination}`;
-                            // Extract just the value part from the field (e.g., from "version_input(prefix)" to "prefix")
-                            const cleanValue = (value: string) => {
-                                const match = value.match(/\((.*?)\)/);
-                                return match ? match[1] : value;
-                            };
-                            // Store just the clean values for the description
-                            val._displayValues = `${cleanValue(sourceValue)} → ${cleanValue(destValue)}`;
-                        }
-                    } else {
-                        // Try to find a descriptive field for non-input_mapping items
-                        const descriptiveFields = ['name', 'label', 'title', 'key', 'id'];
-                        for (const field of descriptiveFields) {
-                            if (field in val && typeof val[field] === 'string') {
-                                displayLabel = val[field];
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // If no descriptive label found, use a generic one based on the parent's name
-                if (!displayLabel) {
-                    const parentName = parentPath.split('.').pop()?.replace(/\[\d+\]$/, '') || 'item';
-                    displayLabel = `${parentName} ${index + 1}`;
-                }
-
-                const item = new CatalogTreeItem(
+            // Create array header item if this is not a child of an array
+            if (parentItem?.contextValue !== 'array') {
+                const propertyName = parentPath.split('.').pop()?.replace(/\[\d+\]/g, '') || '';
+                const arrayLabel = `${propertyName} Array[${value.length}]`;
+                const schemaMetadata = await this.getSchemaMetadata(parentPath);
+                const arrayItem = new CatalogTreeItem(
                     this.context,
-                    displayLabel,
-                    val,
-                    path,
-                    this.getCollapsibleState(val, this.expandedNodes.has(path)),
-                    this.getContextValue(val),
+                    arrayLabel,
+                    value,
+                    parentPath,
+                    this.getCollapsibleState(value, this.expandedNodes.has(parentPath)),
+                    'array',
                     schemaMetadata,
                     parentItem
                 );
+                items.push(arrayItem);
+            }
 
-                // Set the description for input mapping items
-                if (typeof val === 'object' && val !== null && '_displayValues' in val) {
-                    item.description = val._displayValues;
-                    delete val._displayValues; // Clean up temporary property
+            // Create items for array elements
+            for (const [index, item] of value.entries()) {
+                const path = this.buildJsonPath(parentPath, index.toString());
+                const schemaMetadata = await this.getSchemaMetadata(path);
+
+                let itemLabel = '';
+                let description = '';
+
+                // Special handling for input_mapping items
+                if (parentPath.endsWith('input_mapping')) {
+                    const mapping = item as Record<string, unknown>;
+                    const referenceVersion = mapping.reference_version === true;
+
+                    if ('dependency_input' in mapping && 'version_input' in mapping) {
+                        itemLabel = referenceVersion ?
+                            'version_input → dependency_input' :
+                            'dependency_input → version_input';
+                        description = `${mapping.version_input} → ${mapping.dependency_input}`;
+                    } else if ('dependency_output' in mapping && 'version_input' in mapping) {
+                        itemLabel = 'dependency_output → version_input';
+                        description = `${mapping.dependency_output} → ${mapping.version_input}`;
+                    } else if ('value' in mapping) {
+                        if ('version_input' in mapping) {
+                            itemLabel = 'value → version_input';
+                            description = `${mapping.value} → ${mapping.version_input}`;
+                        } else if ('dependency_input' in mapping) {
+                            itemLabel = 'value → dependency_input';
+                            description = `${mapping.value} → ${mapping.dependency_input}`;
+                        }
+                    }
+                }
+                // Handle array items with label and name fields
+                else if (typeof item === 'object' && item !== null) {
+                    const objItem = item as Record<string, unknown>;
+                    if ('label' in objItem && typeof objItem.label === 'string') {
+                        itemLabel = objItem.label;
+                        if ('name' in objItem && typeof objItem.name === 'string') {
+                            description = objItem.name;
+                        }
+                    } else {
+                        itemLabel = this.getObjectLabel(objItem, index);
+                    }
+                }
+                // Handle string items (like dependency flavors)
+                else if (typeof item === 'string') {
+                    itemLabel = item;
+                    description = item;
+                }
+                else {
+                    // For non-special items, use standard label logic
+                    itemLabel = typeof item === 'string' ? item : this.getObjectLabel(item as Record<string, unknown>, index);
                 }
 
-                items.push(item);
-            });
+                const treeItem = new CatalogTreeItem(
+                    this.context,
+                    itemLabel,
+                    item,
+                    path,
+                    this.getCollapsibleState(item, this.expandedNodes.has(path)),
+                    this.getContextValue(item),
+                    schemaMetadata,
+                    parentItem?.contextValue === 'array' ? parentItem : items[0]
+                );
+
+                if (description) {
+                    treeItem.description = description;
+                }
+
+                items.push(treeItem);
+            }
             return items;
         }
 
         // Handle object properties
         for (const [key, val] of Object.entries(value)) {
             const path = this.buildJsonPath(parentPath, key);
-            const schemaMetadata = this.getSchemaMetadata(path);
+            const schemaMetadata = await this.getSchemaMetadata(path);
 
             const isIdNode = parentItem?.isOfferingIdInDependency() && key === 'id';
             const catalogId = isIdNode && parentItem?.catalogId ? parentItem.catalogId : undefined;
 
             // Set initial validation status
-            const initialStatus = (key === 'catalog_id' || isIdNode) ?
-                ValidationStatus.Pending :
-                ValidationStatus.Unknown;
+            const initialStatus = (key === 'catalog_id' || isIdNode)
+                ? ValidationStatus.Pending
+                : ValidationStatus.Unknown;
 
             const item = new CatalogTreeItem(
                 this.context,
@@ -303,6 +349,20 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
         }
 
         return this.sortTreeItems(items);
+    }
+
+    /**
+     * Gets a descriptive label for an object in an array
+     */
+    private getObjectLabel(obj: Record<string, unknown>, index: number): string {
+        // Try to find a descriptive field
+        const descriptiveFields = ['name', 'label', 'title', 'key', 'id'];
+        for (const field of descriptiveFields) {
+            if (field in obj && typeof obj[field] === 'string') {
+                return obj[field] as string;
+            }
+        }
+        return `Item ${index + 1}`;
     }
 
     /**
@@ -342,12 +402,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
     /**
      * Gets cached schema metadata for a path.
      */
-    private getSchemaMetadata(path: string): SchemaMetadata | undefined {
+    private async getSchemaMetadata(path: string): Promise<SchemaMetadata | undefined> {
         const cached = this.memoizedSchemaMetadata.get(path);
         if (cached !== undefined) { return cached; }
 
-        const metadata = this.schemaService?.getSchemaForPath(path);
-        this.memoizedSchemaMetadata.set(path, metadata);
+        const metadata = await this.schemaService?.getSchemaForPath(path);
+        if (metadata) {
+            this.memoizedSchemaMetadata.set(path, metadata);
+        }
         return metadata;
     }
 
@@ -413,8 +475,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * Disposes of resources and cleans up event handlers.
      */
     public dispose(): void {
-        if (this.batchStateUpdateTimer) {
-            clearTimeout(this.batchStateUpdateTimer);
+        this.logger.debug('Disposing CatalogTreeProvider', {
+            hasTimer: this.batchUpdateTimeout !== null,
+            expandedNodesCount: this.expandedNodes.size
+        });
+        this.isDisposed = true;
+        if (this.batchUpdateTimeout !== null) {
+            window.clearTimeout(this.batchUpdateTimeout);
+            this.batchUpdateTimeout = null;
         }
         this.clearCaches();
         this._onDidChangeTreeData.dispose();
@@ -426,11 +494,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
      * @returns The found tree item or undefined
      */
     public async findTreeItemByPath(jsonPath: string): Promise<CatalogTreeItem | undefined> {
-        this.logger.debug('Finding tree item for path:', jsonPath);
+        this.logger.debug('Finding tree item for path', { path: jsonPath });
 
         // Parse the path into segments
         const segments = jsonPath.split(/\.|\[|\]/).filter(s => s && s !== '$');
-        this.logger.debug('Path segments:', segments);
+        this.logger.debug('Path segments', { segments });
 
         // Start from root and traverse
         let currentItems = await this.getChildren();
@@ -443,7 +511,7 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             const isArrayIndex = !isNaN(Number(segment));
             const searchValue = isArrayIndex ? Number(segment) : segment;
 
-            this.logger.debug('Searching for segment:', {
+            this.logger.debug('Searching for segment', {
                 segment,
                 isArrayIndex,
                 searchValue,
@@ -464,11 +532,11 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<CatalogTreeI
             });
 
             if (!currentItem) {
-                this.logger.debug('No matching item found for segment:', segment);
+                this.logger.debug('No matching item found for segment', { segment });
                 return undefined;
             }
 
-            this.logger.debug('Found matching item:', {
+            this.logger.debug('Found matching item', {
                 label: currentItem.label,
                 path: currentItem.jsonPath,
                 type: currentItem.contextValue

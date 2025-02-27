@@ -13,8 +13,10 @@ export enum CacheKeys {
     FLAVOR_DETAILS = 'flavorDetails',
     FLAVOR_VALIDATION = 'flavorValidation',
     OFFERING_VALIDATION = 'offeringValidation',
-    OFFERING_DETAILS = 'offeringDetails',
-    API_RESPONSE = 'apiResponse'
+    OFFERING_DETAILS = 'offering_details',
+    API_RESPONSE = 'apiResponse',
+    CATALOG_OFFERINGS = 'CATALOG_OFFERINGS',
+    GITHUB_RELEASES = 'github_releases'
 }
 
 /**
@@ -88,6 +90,16 @@ export const CacheConfigurations: Record<CacheKeys, CacheConfig> = {
         ttlSeconds: 12 * 60 * 60, // 12 hours
         persistent: true,
         storagePrefix: 'catalog_validation_'
+    },
+    [CacheKeys.CATALOG_OFFERINGS]: {
+        ttlSeconds: 300,  // 5 minutes
+        persistent: true,
+        storagePrefix: 'catalog_offerings'
+    },
+    [CacheKeys.GITHUB_RELEASES]: {
+        ttlSeconds: 60,  // 1 minute
+        persistent: false,  // Don't persist GitHub releases
+        storagePrefix: 'github_releases'
     }
 };
 
@@ -102,6 +114,13 @@ export const DynamicCacheKeys = {
      * @returns The cache key for the offerings of the specified catalog.
      */
     OFFERINGS: (catalogId: string) => `offerings:${catalogId}`,
+
+    /**
+     * Generates a key for caching catalog offerings.
+     * @param catalogId - The ID of the catalog.
+     * @returns The cache key for the catalog offerings.
+     */
+    CATALOG_OFFERINGS: (catalogId: string) => `${CacheKeys.CATALOG_OFFERINGS}:${catalogId}`,
 
     /**
      * Generates a key for caching flavors of a specific offering in a catalog.
@@ -120,8 +139,8 @@ export const DynamicCacheKeys = {
     OFFERING_VALIDATION: (catalogId: string, offeringId: string) =>
         `${CacheKeys.OFFERING_VALIDATION}:${catalogId}:${offeringId}`,
 
-    OFFERING_DETAILS: (catalogId: string) =>
-        `${CacheKeys.OFFERING_DETAILS}:${catalogId}`,
+    OFFERING_DETAILS: (catalogId: string, offeringId: string) =>
+        `${CacheKeys.OFFERING_DETAILS}:${catalogId}:${offeringId}`,
 
     CATALOG_VALIDATION: (catalogId: string) =>
         `${CacheKeys.CATALOG_VALIDATION}:${catalogId}`,

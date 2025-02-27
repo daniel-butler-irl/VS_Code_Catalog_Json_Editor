@@ -1,0 +1,1455 @@
+:root {
+    --container-padding: 12px;
+    --input-padding-vertical: 6px;
+    --input-padding-horizontal: 8px;
+    --input-margin-vertical: 4px;
+    --input-margin-horizontal: 0;
+    --border-radius: 4px;
+    --transition-speed: 0.2s;
+}
+
+body {
+    padding: 0;
+    margin: 0;
+    color: var(--vscode-foreground);
+    font-size: var(--vscode-font-size);
+    font-weight: var(--vscode-font-weight);
+    font-family: var(--vscode-font-family);
+    background-color: var(--vscode-editor-background);
+    line-height: 1.4;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.container {
+    height: 100%;
+    min-width: 200px;
+    width: 100%;
+    margin: 0;
+    padding: var(--container-padding);
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+}
+
+.section {
+    min-width: 190px;
+    margin-bottom: 16px;
+    padding: 16px;
+    background-color: var(--vscode-sideBar-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: border-color var(--transition-speed) ease;
+}
+
+.section:hover {
+    border-color: var(--vscode-focusBorder);
+}
+
+.section h2 {
+    margin: 0 0 12px 0;
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.section h2::before {
+    display: none;
+}
+
+.section h2[data-icon="catalog"]::before,
+.section h2[data-icon="github"]::before,
+.section h2[data-icon="versions"]::before {
+    display: none;
+}
+
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--vscode-foreground);
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+input[type="text"], select {
+    width: 100%;
+    height: 24px;
+    padding: 0 8px;
+    margin: 2px 0;
+    font-size: 0.9em;
+    box-sizing: border-box;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: var(--border-radius);
+    font-family: var(--vscode-font-family);
+    transition: border-color var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
+}
+
+input[type="text"]:hover, select:hover {
+    border-color: var(--vscode-focusBorder);
+}
+
+input[type="text"]:focus, select:focus {
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+    outline: none;
+}
+
+select {
+    padding-right: 30px;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Ctitle%3Edown-arrow%3C%2Ftitle%3E%3Cg%20fill%3D%22%23fff%22%3E%3Cpath%20d%3D%22M10.293%2C3.293%2C6%2C7.586%2C1.707%2C3.293A1%2C1%2C0%2C0%2C0%2C.293%2C4.707l5%2C5a1%2C1%2C0%2C0%2C0%2C1.414%2C0l5-5a1%2C1%2C0%2C1%2C0-1.414-1.414Z%22%20fill%3D%22%23fff%22%3E%3C%2Fpath%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+    background-size: 12px;
+    background-position: calc(100% - 10px) center;
+    background-repeat: no-repeat;
+}
+
+input[type="checkbox"] {
+    margin-right: 8px;
+    margin-top: 2px;
+}
+
+small {
+    display: block;
+    margin-top: 4px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.85em;
+    opacity: 0.8;
+    line-height: 1.4;
+}
+
+button {
+    height: 28px;
+    min-width: 100px;
+    padding: 0 16px;
+    margin-top: 8px;
+    color: var(--vscode-button-foreground);
+    background-color: var(--vscode-button-background);
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: var(--vscode-font-size);
+    font-family: var(--vscode-font-family);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color var(--transition-speed) ease;
+    font-weight: 500;
+}
+
+button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.tag-preview, .catalog-version-preview {
+    margin-top: 12px;
+    padding: 6px 12px;
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+    opacity: 0.9;
+    transition: all var(--transition-speed) ease;
+}
+
+.catalog-version-preview {
+    margin-left: 12px;
+    border-color: var(--vscode-focusBorder);
+    background-color: var(--vscode-editor-background);
+}
+
+.tag-preview:hover, .catalog-version-preview:hover {
+    opacity: 1;
+    border-color: var(--vscode-focusBorder);
+}
+
+.releases-list {
+    margin-top: 1rem;
+}
+
+.release-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-widget-border);
+}
+
+.release-item:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.release-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.release-source {
+    font-size: 0.8em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.release-source.github {
+    background-color: var(--vscode-gitDecoration-addedResourceForeground);
+    color: var(--vscode-editor-background);
+}
+
+.release-source.catalog {
+    background-color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    color: var(--vscode-editor-background);
+}
+
+.release-date {
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+}
+
+.release-item span {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+.release-item small {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.catalog-info {
+    padding: 16px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+    margin-bottom: 16px;
+}
+
+.catalog-info.error {
+    border-color: var(--vscode-inputValidation-errorBorder);
+    background-color: var(--vscode-inputValidation-errorBackground);
+}
+
+.catalog-info .warning-message {
+    color: var(--vscode-inputValidation-errorForeground);
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.info-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.info-row:last-child {
+    margin-bottom: 0;
+}
+
+.info-label {
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    min-width: 100px;
+}
+
+.info-value {
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-editor-font-family);
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    padding: 16px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+}
+
+.versions {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
+.versions ul {
+    margin: 8px 0;
+    padding-left: 24px;
+    list-style-type: none;
+}
+
+.versions li {
+    margin-bottom: 6px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+    opacity: 0.9;
+    position: relative;
+}
+
+.versions li::before {
+    content: "•";
+    position: absolute;
+    left: -16px;
+    color: var(--vscode-focusBorder);
+}
+
+.error-container {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
+    border-radius: var(--border-radius);
+    background-color: var(--vscode-inputValidation-errorBackground);
+    display: none;
+    animation: slideDown var(--transition-speed) ease;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.error-container.show {
+    display: block;
+}
+
+.error-message {
+    color: var(--vscode-inputValidation-errorForeground);
+}
+
+.error-message h3 {
+    margin-top: 0;
+    margin-bottom: 6px;
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.primary-button {
+    background-color: var(--vscode-button-primaryBackground);
+    color: var(--vscode-button-primaryForeground);
+    font-weight: 600;
+}
+
+.primary-button:hover {
+    background-color: var(--vscode-button-primaryHoverBackground);
+}
+
+.loading {
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    opacity: 0.8;
+}
+
+.loading::after {
+    content: "...";
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0% { content: "."; }
+    33% { content: ".."; }
+    66% { content: "..."; }
+    100% { content: "."; }
+}
+
+.has-error {
+    opacity: 0.7;
+    pointer-events: none;
+    filter: grayscale(20%);
+}
+
+/* Checkbox container */
+.checkbox-container {
+    display: flex;
+    align-items: flex-start;
+    margin: 8px 0;
+    padding: 4px 0;
+}
+
+.checkbox-container input[type="checkbox"] {
+    margin-top: 2px;
+    margin-right: 10px;
+}
+
+.checkbox-container label {
+    margin-bottom: 0;
+    margin-left: 0;
+    user-select: none;
+    opacity: 0.9;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .container {
+        padding: 12px;
+    }
+
+    .section {
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    input[type="text"], select {
+        max-width: 100%;
+    }
+
+    .tag-preview, .catalog-version-preview {
+        display: block;
+        margin: 8px 0;
+    }
+
+    .catalog-version-preview {
+        margin-left: 0;
+        margin-top: 8px;
+    }
+}
+
+.warning-message {
+    color: var(--vscode-inputValidation-errorForeground);
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.warning-message::before {
+    content: "⚠️";
+    font-size: 1.1em;
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+    outline: 2px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+}
+
+/* Disabled state styles */
+button:disabled,
+input:disabled,
+select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Loading spinner */
+.loading::after {
+    content: "...";
+    animation: ellipsis 1.5s infinite;
+}
+
+@keyframes ellipsis {
+    0% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+    100% { opacity: 0.6; }
+}
+
+.versions-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.versions-table td {
+    padding: 8px;
+    vertical-align: top;
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.versions-table tr:last-child td {
+    border-bottom: none;
+}
+
+.versions-table .github-version,
+.versions-table .catalog-version {
+    width: 50%;
+}
+
+.versions-table .version-tag {
+    padding: 8px;
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    margin-bottom: 8px;
+}
+
+.versions-table .version-tag.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.versions-table .version-tag.clickable:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.versions-table .version-number {
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    font-family: var(--vscode-editor-font-family);
+    font-weight: bold;
+}
+
+.versions-table .version-flavor {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.versions-table .release-date {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.8em;
+    margin-top: 4px;
+    opacity: 0.8;
+}
+
+.versions-table .not-published {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+/* Update info-row styles for better alignment */
+.catalog-info .info-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.catalog-info .info-label {
+    min-width: 100px;
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+    font-weight: 500;
+}
+
+.catalog-info .info-value {
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-editor-font-family);
+}
+
+/* Remove old styles */
+.version-list, .versions-grid {
+    display: none;
+}
+
+/* Enhanced button styles */
+.button-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.action-button {
+    height: 32px;
+    padding: 0 16px;
+    border: none;
+    border-radius: 4px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.action-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.action-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Remove old button styles */
+button.github-button,
+button.catalog-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+button.github-button:hover:not(:disabled),
+button.catalog-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.terminal-style {
+    font-family: var(--vscode-editor-font-family);
+    line-height: 1.5;
+}
+
+.terminal-section {
+    min-width: 230px;
+    margin: 16px 0;
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+}
+
+.separator-line {
+    border: none;
+    border-top: 1px solid var(--vscode-panel-border);
+    margin: 12px 0;
+    opacity: 0.6;
+}
+
+.next-version {
+    margin: 12px 0;
+    padding: 8px 12px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+}
+
+.next-version-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 0 0 16px;
+    margin-bottom: 16px;
+}
+
+.version-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.version-label {
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.version-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 16px;
+}
+
+.version-number {
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    font-family: var(--vscode-editor-font-family);
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.release-status {
+    color: var(--vscode-gitDecoration-addedResourceForeground);
+    display: inline-block;
+    font-size: 13px;
+}
+
+.flavors-section {
+    margin-top: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
+.flavors-label {
+    color: var(--vscode-textLink-foreground);
+    font-weight: bold;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.flavor-item {
+    display: flex;
+    align-items: center;
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    font-family: var(--vscode-editor-font-family);
+    padding: 4px 0;
+    margin-left: 16px;
+    position: relative;
+    font-size: 13px;
+}
+
+.flavor-item::before {
+    content: "•";
+    position: absolute;
+    left: -8px;
+    color: var(--vscode-textLink-foreground);
+}
+
+.flavor-released {
+    color: var(--vscode-gitDecoration-addedResourceForeground);
+    margin-left: 8px;
+    font-size: 13px;
+}
+
+/* Style for the (Released) text */
+.version-value:has(+ .flavor-item)::after {
+    content: "(Released)";
+    color: var(--vscode-gitDecoration-untrackedResourceForeground);
+    margin-left: 8px;
+}
+
+.version-value.released {
+    color: var(--vscode-notificationsWarningIcon-foreground);
+}
+
+.released-flavors {
+    font-size: 0.9em;
+    color: var(--vscode-descriptionForeground);
+    font-style: normal;
+    margin-left: 0;
+    padding-left: 0;
+    white-space: pre-line;
+    text-align: left;
+}
+
+.catalog-quick-info {
+    padding: 8px 0;
+}
+
+.catalog-quick-info div {
+    margin: 4px 0;
+    opacity: 0.9;
+}
+
+.version-table {
+    min-width: 210px;
+    width: 100%;
+    table-layout: fixed;
+}
+
+.version-table th,
+.version-table td {
+    width: 50%;
+    padding: 4px 8px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.version-table th {
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+    font-weight: normal;
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.version-table td {
+    opacity: 0.9;
+}
+
+.release-options {
+    margin: 12px 0;
+}
+
+.release-options label {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 16px;
+    cursor: pointer;
+}
+
+.release-options input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+.release-button {
+    margin-top: 12px;
+    padding: 6px 16px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-family: var(--vscode-editor-font-family);
+    min-width: 120px;
+}
+
+.release-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.release-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.release-button.loading {
+    position: relative;
+    padding-right: 32px;
+    cursor: wait;
+}
+
+.release-button.loading::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--vscode-button-foreground);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: translateY(-50%) rotate(0deg); }
+    to { transform: translateY(-50%) rotate(360deg); }
+}
+
+.catalog-select {
+    width: 100%;
+    max-width: none;
+    margin-bottom: 12px;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.section.compact {
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.form-row .form-group {
+    min-width: 0;
+    width: 100%;
+}
+
+.form-group small {
+    margin-top: 2px;
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+/* Ensure long text in inputs and selects doesn't overflow */
+input[type="text"], select, option {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* Adjust spacing in the terminal section */
+.terminal-section {
+    margin-top: 0;
+}
+
+.next-version {
+    padding: 4px 0;
+}
+
+.next-version div {
+    margin: 2px 0;
+    font-size: 0.9em;
+}
+
+.catalog-quick-info div {
+    margin: 2px 0;
+    font-size: 0.9em;
+}
+
+/* Remove version date styles since we no longer use them */
+.version-date {
+    display: none;
+}
+
+.loading-state {
+    position: relative;
+    opacity: 0.7;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.loading-state::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--vscode-editor-background);
+    opacity: 0.3;
+    z-index: 1;
+    transition: opacity 0.3s ease;
+}
+
+.loading-text {
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.8;
+    font-style: italic;
+    position: relative;
+    padding-right: 24px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+    100% { opacity: 0.6; }
+}
+
+.loading-text::after {
+    content: "...";
+    position: absolute;
+    right: 8px;
+    animation: loadingDots 1.5s infinite steps(4, end);
+}
+
+@keyframes loadingDots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+    100% { content: ""; }
+}
+
+input[type="text"]:disabled::placeholder,
+select:disabled {
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.7;
+}
+
+.refresh-button {
+    position: relative;
+    margin-top: 8px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    background-color: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+    color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+    border: 1px solid var(--vscode-button-border, transparent);
+    transition: all 0.3s ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    transform: translateY(-1px);
+}
+
+.refresh-button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.refresh-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.refresh-button.refreshing {
+    position: relative;
+    padding-right: 24px;
+}
+
+.refresh-button.refreshing::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--vscode-button-foreground);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.loading-state {
+    opacity: 0.7;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.loading-state.loaded {
+    opacity: 1;
+}
+
+.loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    color: var(--vscode-foreground);
+    font-style: italic;
+}
+
+.error-container {
+    display: none;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 3px;
+    background-color: var(--vscode-inputValidation-errorBackground);
+    border: 1px solid var(--vscode-inputValidation-errorBorder);
+}
+
+.error-container.visible {
+    display: block;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Add smooth transitions for inputs and selects */
+input, select {
+    transition: opacity 0.3s ease-in-out, background-color 0.3s ease-in-out;
+}
+
+input:disabled, select:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Add loading indicator for catalog details */
+#catalogDetails .loading::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: 8px;
+    border: 2px solid var(--vscode-foreground);
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.timestamp-info {
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+    margin: 8px 0;
+    padding: 4px 0;
+    opacity: 0.8;
+    font-style: italic;
+    cursor: help;
+    transition: opacity 0.3s ease;
+}
+
+.timestamp-info:hover {
+    opacity: 1;
+}
+
+/* Update refresh button styles to work with timestamp */
+.refresh-button {
+    margin-top: 4px;
+}
+
+/* Add styles for the cache indicator */
+.timestamp-info.cached {
+    color: var(--vscode-notificationsWarningIcon-foreground);
+}
+
+/* Adjust catalog select container spacing */
+.form-group {
+    margin-bottom: 4px;
+}
+
+.branch-info {
+    margin-bottom: 16px;
+    padding: 12px;
+    background-color: var(--vscode-sideBar-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+}
+
+.branch-display {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.branch-display strong {
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+}
+
+.branch-display .warning {
+    color: var(--vscode-inputValidation-warningForeground);
+    margin-left: 8px;
+    font-style: italic;
+}
+
+.branch-info .error {
+    color: var(--vscode-inputValidation-errorForeground);
+    font-style: italic;
+}
+
+.release-details {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.github-release {
+    border-left: 3px solid var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.catalog-release {
+    border-left: 3px solid var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+/* Add hover effect for version tags */
+.versions-table .version-tag:hover .version-flavor {
+    background-color: var(--vscode-badge-background);
+    opacity: 0.9;
+}
+
+/* Add a subtle separator between multiple versions */
+.versions-table .version-tag + .version-tag {
+    padding-top: 4px;
+    border-top: 1px solid var(--vscode-panel-border);
+    opacity: 0.7;
+}
+
+.versions-table .version-url {
+    display: none;
+}
+
+/* Add hover effect for version tags with tooltips */
+.versions-table .version-tag:hover {
+    background-color: var(--vscode-badge-background);
+    opacity: 0.9;
+}
+
+/* Add a subtle separator between multiple versions */
+.versions-table .version-tag + .version-tag {
+    border-top: 1px solid var(--vscode-panel-border);
+    opacity: 0.7;
+}
+
+.versions-table .version-tag.not-published {
+    background-color: var(--vscode-inputValidation-warningBackground);
+    border: 1px solid var(--vscode-inputValidation-warningBorder);
+}
+
+.versions-table .version-tag.not-published .version-number {
+    color: var(--vscode-inputValidation-warningForeground);
+    font-style: italic;
+}
+
+.auth-status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background-color: var(--vscode-sideBar-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+}
+
+.auth-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-radius: var(--border-radius);
+    background-color: var(--vscode-editor-background);
+}
+
+.auth-text {
+    margin-right: 8px;
+}
+
+.auth-button {
+    padding: 4px 8px;
+    font-size: 12px;
+    min-width: 60px;
+    height: 24px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color var(--transition-speed) ease;
+}
+
+.auth-button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.auth-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.loading-view {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--vscode-editor-background);
+    z-index: 1000;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--vscode-button-background);
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+.loading-text {
+    color: var(--vscode-foreground);
+    font-size: 14px;
+    text-align: center;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+}
+
+@media (min-width: 300px) {
+    .container {
+        width: calc(100% - var(--container-padding) * 2);
+    }
+}
+
+.details-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    margin-top: 4px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+}
+
+.details-row {
+    display: flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+}
+
+.details-row:hover {
+    background: none;
+}
+
+.details-label {
+    min-width: 80px;
+    color: var(--vscode-descriptionForeground);
+    font-weight: 500;
+    user-select: none;
+}
+
+.details-value {
+    color: var(--vscode-textLink-foreground);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: none;
+    border: none;
+}
+
+.not-git-repo {
+    color: var(--vscode-errorForeground);
+    font-style: italic;
+}
+
+.git-repo-info {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+}
+
+.git-repo-info:hover {
+    text-decoration: underline;
+}
+
+/* Remove any specific branch styling that might add a box */
+#github-branch {
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* Add styles for GitHub URL tooltip */
+.details-info .details-value {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.details-info .git-repo-info {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 100%;
+    display: inline-block;
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+    position: relative;
+}
+
+.details-info .git-repo-info:hover {
+    text-decoration: underline;
+}
+
+/* Add tooltip styles */
+[title] {
+    position: relative;
+}
+
+[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 8px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--border-radius);
+    font-size: 0.9em;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 4px;
+}
+
+.loading-dots {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: 8px;
+    position: relative;
+}
+
+.loading-dots::after {
+    content: '...';
+    position: absolute;
+    animation: dots 1.5s steps(4, end) infinite;
+    display: inline-block;
+}
+
+@keyframes dots {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60% { content: '...'; }
+    80%, 100% { content: ''; }
+}
+
+.action-button.loading {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.versions-table .version-tag.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.versions-table .version-tag.clickable:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.versions-table .release-date {
+    font-size: 0.8em;
+    color: var(--vscode-descriptionForeground);
+    margin-top: 4px;
+    opacity: 0.8;
+}
+
+/* Make catalog version tags consistent width */
+.versions-table .catalog-version .version-tag {
+    min-width: 240px;
+    max-width: 240px;
+    box-sizing: border-box;
+}
+
+.versions-table .github-version .version-tag {
+    min-width: 180px;
+    max-width: 180px;
+    box-sizing: border-box;
+}
+
+/* Ensure table cells have consistent width */
+.versions-table td.github-version,
+.versions-table td.catalog-version {
+    width: 50%;
+    padding: 8px;
+    vertical-align: top;
+}
+
+.versions-table td.catalog-version {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+} 

@@ -1,7 +1,6 @@
 // src/services/CatalogService.ts
 import * as vscode from 'vscode';
 import { CatalogTreeItem } from '../models/CatalogTreeItem';
-import { AddElementDialog } from '../ui/AddElementDialog';
 import { IBMCloudService } from './IBMCloudService';
 import { SchemaService } from './SchemaService';
 import { AuthService } from './AuthService';
@@ -18,6 +17,9 @@ import { QuickPickItemEx } from '../types/prompt';
 import { LookupItem } from '../types/cache';
 import { CachePrefetchService } from './core/CachePrefetchService';
 import { JsonPathService } from './core/JsonPathService';
+import { validateSchema, validateValue } from '../decorators/schemaValidation';
+import { SchemaMetadata } from '../types/schema';
+import { ValidationResult } from '../types/validation';
 
 /**
  * Service responsible for managing catalog data within the extension.
@@ -36,10 +38,12 @@ export class CatalogService {
         mode: CatalogServiceMode.NoWorkspace
     };
     private initializing: boolean = false; // Add initialization lock
+    private schemaService: SchemaService;
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.logger.debug('Constructing CatalogService');
-        this.fileSystemService = FileSystemService.getInstance(context);
+        this.schemaService = new SchemaService(context);
+        this.fileSystemService = FileSystemService.getInstance(context, this.schemaService);
 
         // Only set up workspace change handler after initial initialization
         void this.initialize().then(() => {
@@ -236,119 +240,23 @@ export class CatalogService {
      * @param parentNode The parent node where the element should be added.
      * @param schemaService The schema service for validation.
      */
-    public async addElement(parentNode: CatalogTreeItem, schemaService: SchemaService): Promise<void> {
-        await this.ensureInitialized();
-
+    public async addElement(parentNode: CatalogTreeItem): Promise<void> {
         try {
-            // debug print the selected node with relevant properties only
-            this.logger.debug('Selected node', {
-                label: parentNode.label,
-                jsonPath: parentNode.jsonPath,
-                contextValue: parentNode.contextValue,
-                value: parentNode.value
-            });
+            await this.ensureInitialized();
 
-            // Check if this is a dependency object
-            if ((parentNode.contextValue === 'object' || parentNode.contextValue === 'container') &&
-                parentNode.jsonPath.match(/\.dependencies\[\d+\]$/)) {
-                const dependencyValue = parentNode.value as Required<Dependency>;
-                if (!dependencyValue.ignore_auto_referencing) {
-                    // Show prompt immediately instead of just creating the array
-                    await this.handleIgnoreAutoReferencingAddition(parentNode);
-                }
-                return;
-            }
-
-            // Handle clicking add on the ignore_auto_referencing array itself
-            if (parentNode.jsonPath.endsWith('.ignore_auto_referencing')) {
-                await this.handleIgnoreAutoReferencingAddition(parentNode.parent!);
-                return;
-            }
-
-            // Check if this is an input mapping object that needs reference_version
-            if (parentNode.jsonPath.includes('.input_mapping') && !parentNode.jsonPath.endsWith('.input_mapping')) {
-                await this.promptForMissingReferenceVersion(parentNode);
-                return;
-            }
-
-            // Check for flavor node first to add dependencies
             if (this.isFlavorNode(parentNode)) {
-                this.logger.debug('Handling dependencies addition to flavor');
                 await this.handleFlavorDependenciesAddition(parentNode);
-                return;
-            }
-
-            // Handle for dependencies array
-            if (parentNode.jsonPath.endsWith('.dependencies')) {
-                await this.handleDependencyAddition(parentNode);
-                return;
-            }
-
-            // Handle for swappable dependencies array
-            if (parentNode.jsonPath.endsWith('.swappable_dependencies')) {
-                await this.handleSwappableDependencyAddition(parentNode);
-                return;
-            }
-
-            // Handle input_mapping additions
-            if (parentNode.jsonPath.endsWith('.input_mapping')) {
-                await this.handleInputMappingAddition(parentNode);
-                return;
-            }
-
-            // Check for dependency flavors array first
-            if (this.isDependencyFlavorsArrayNode(parentNode)) {
-                this.logger.debug('Handling dependency flavors array addition');
+            } else if (this.isDependencyFlavorsArrayNode(parentNode)) {
                 await this.handleDependencyFlavorArrayAddition(parentNode);
-                return;
-            }
-
-            // Get schema validation before proceeding
-            if (!schemaService.isSchemaAvailable()) {
-                const result = await vscode.window.showErrorMessage(
-                    'Schema is not available. Would you like to retry loading the schema?',
-                    'Retry',
-                    'Cancel'
-                );
-
-                if (result === 'Retry') {
-                    await schemaService.refreshSchema();
-                } else {
-                    return;
-                }
-            }
-
-            const schema = schemaService.getSchemaForPath(parentNode.jsonPath);
-            if (!schema) {
-                this.logger.error('No schema available for path', { path: parentNode.jsonPath });
-                vscode.window.showErrorMessage('Cannot add element: No schema available for this location');
-                return;
-            }
-
-            // Show dialog and get new element data
-            const newElement = await AddElementDialog.show(parentNode, schemaService);
-            if (newElement === undefined) {
-                return; // User cancelled
-            }
-
-            // Handle array and object additions
-            if (Array.isArray(parentNode.value)) {
-                const currentArray = parentNode.value;
-                await this.updateJsonValue(parentNode.jsonPath, [...currentArray, newElement]);
-            } else if (typeof parentNode.value === 'object' && parentNode.value !== null) {
-                const currentObject = parentNode.value as Record<string, unknown>;
-                await this.updateJsonValue(parentNode.jsonPath, {
-                    ...currentObject,
-                    ...newElement
-                });
+            } else if (parentNode.label === 'input_mapping') {
+                await this.handleInputMappingAddition(parentNode);
+            } else if (parentNode.label === 'dependencies') {
+                await this.handleDependencyAddition(parentNode);
             } else {
-                throw new Error('Cannot add element to this location');
+                await this.handleRegularDependencyAddition(parentNode);
             }
-
         } catch (error) {
-            this.logger.error('Failed to add element', error);
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            vscode.window.showErrorMessage(`Failed to add element: ${message}`);
+            this.logger.error('Failed to add element', { error });
             throw error;
         }
     }
@@ -594,8 +502,14 @@ export class CatalogService {
                             label: details?.label || flavorName,
                             description: details?.description || 'No description available'
                         };
-                    } catch (error) {
-                        this.logger.warn(`Failed to fetch details for flavor ${flavorName}`, error);
+                    } catch (error: unknown) {
+                        const errorData: Record<string, unknown> = {
+                            flavorName,
+                            error: error instanceof Error ? error.message : String(error),
+                            catalogId,
+                            offeringId
+                        };
+                        this.logger.warn('Failed to fetch details for flavor', errorData);
                         return {
                             name: flavorName,
                             label: flavorName,
@@ -1049,6 +963,7 @@ export class CatalogService {
             // 7. Create the dependency object
             const newDependency: Dependency = {
                 name: offeringDetails.name,
+                label: offeringDetails.label,  // Add the label property
                 id: offeringDetails.id,
                 version: versionConstraint,
                 flavors: selectedFlavors,
@@ -1276,6 +1191,7 @@ export class CatalogService {
     private async promptForOfferingWithDetails(catalogId: string): Promise<{
         id: string;
         name: string;
+        label?: string;
     } | undefined> {
         const apiKey = await AuthService.getApiKey(this.context);
         if (!apiKey) { return undefined; }
@@ -1283,16 +1199,17 @@ export class CatalogService {
         const ibmCloudService = new IBMCloudService(apiKey);
         const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
 
-        const result = await PromptService.showQuickPick<{ id: string; name: string; }>({
+        const result = await PromptService.showQuickPick<{ id: string; name: string; label?: string; }>({
             title: 'Select Offering',
             placeholder: 'Choose an offering for this dependency',
             items: offerings.map(offering => ({
-                label: offering.name || offering.id,
-                description: offering.id,
+                label: offering.label || offering.name || offering.id,
+                description: offering.name || offering.id,
                 detail: offering.shortDescription,
                 value: {
                     id: offering.id,
-                    name: offering.name || offering.id
+                    name: offering.name || offering.id,
+                    label: offering.label
                 }
             }))
         });
@@ -1981,8 +1898,8 @@ export class CatalogService {
             const offeringItems = offerings
                 .filter(offering => offering && offering.id) // Filter out invalid offerings
                 .map(offering => ({
-                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.name || offering.id}`,
-                    description: offering.id,
+                    label: `${offering.id === currentValue ? '$(check) ' : ''}${offering.label || offering.name || offering.id}`,
+                    description: offering.name || offering.id,
                     detail: offering.shortDescription || '',
                     value: offering.id
                 }));
@@ -2331,9 +2248,9 @@ export class CatalogService {
                         value: flavorName
                     });
                 } catch (error) {
-                    logger.error('Failed to get flavor details', {
+                    this.logger.warn('Failed to fetch details for flavor', {
                         flavorName,
-                        error,
+                        error: error instanceof Error ? error.message : String(error),
                         catalogId: context.catalogId,
                         offeringId: context.offeringId
                     });
@@ -2359,7 +2276,7 @@ export class CatalogService {
 
             return result;
         } catch (error) {
-            logger.error('Failed to fetch flavors', error);
+            this.logger.error('Failed to fetch flavors', { error: error instanceof Error ? error.message : String(error) });
             return this.promptForManualFlavorInput(currentValue);
         }
     }
@@ -2771,18 +2688,12 @@ export class CatalogService {
     ): string {
         const parts: string[] = [];
 
-        if (details?.label_i18n?.['en']) {
-            parts.push(details.label_i18n['en']);
-        }
-
         if (details?.name && details.name !== details?.label) {
             parts.push(`Name: ${details.name}`);
         }
 
-        if (details?.description) {
-            parts.push(`Description: ${details.description}`);
-        } else {
-            parts.push(`Description: No description available`);
+        if (details?.install_type) {
+            parts.push(`Type: ${details.install_type}`);
         }
 
         return parts.length > 0 ? parts.join(' • ') : 'No additional details available';
@@ -2877,6 +2788,202 @@ export class CatalogService {
     public async validateItem(item: CatalogTreeItem): Promise<void> {
         if (item.needsValidation()) {
             item.requestValidation();
+        }
+    }
+
+    /**
+     * Validates a node in the catalog tree.
+     * @param node The node to validate.
+     * @returns A promise that resolves to true if the validation was successful, false otherwise.
+     */
+    @validateSchema()
+    public async validateNode(node: CatalogTreeItem): Promise<boolean> {
+        try {
+            await this.ensureInitialized();
+
+            // Get schema metadata for the node's path
+            const schemaMetadata = await this.schemaService.getSchemaForPath(node.jsonPath);
+            if (schemaMetadata) {
+                const validationResult = await validateValue(node.value, schemaMetadata);
+                if (!validationResult.isValid) {
+                    this.logger.warn('Schema validation failed', {
+                        path: node.jsonPath,
+                        errors: validationResult.errors
+                    });
+                    return false;
+                }
+            }
+
+            // Continue with existing validation logic
+            if (node.label === 'catalog_id' && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                return await ibmCloudService.validateCatalogId(node.value);
+            }
+
+            if (node.isOfferingIdInDependency() && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                const catalogId = await this.getCatalogIdForNode(node);
+                if (!catalogId) {
+                    return false;
+                }
+                return await ibmCloudService.validateOfferingId(catalogId, node.value);
+            }
+
+            if (node.isDependencyFlavor() && typeof node.value === 'string') {
+                const apiKey = await AuthService.getApiKey(this.context);
+                if (!apiKey) {
+                    return false;
+                }
+                const ibmCloudService = new IBMCloudService(apiKey);
+                const dependencyNode = node.parent?.parent;
+                if (!dependencyNode) {
+                    return false;
+                }
+                const catalogId = (dependencyNode.value as Record<string, any>)['catalog_id'];
+                const offeringId = (dependencyNode.value as Record<string, any>)['id'];
+                if (!catalogId || !offeringId) {
+                    return false;
+                }
+                return await ibmCloudService.validateFlavor(catalogId, offeringId, node.value);
+            }
+
+            return true;
+        } catch (error) {
+            this.logger.error('Error validating node', error);
+            return false;
+        }
+    }
+
+    /**
+     * Parses a JSON path into its component parts.
+     * @param jsonPath The JSON path to parse.
+     * @returns Array of path segments (strings for property names, numbers for array indices).
+     */
+    private parseJsonPath(jsonPath: string): (string | number)[] {
+        const segments: (string | number)[] = [];
+        const regex = /\[(\d+)\]|\.([^.\[\]]+)/g;
+        let match;
+        while ((match = regex.exec(jsonPath)) !== null) {
+            if (match[1] !== undefined) {
+                segments.push(parseInt(match[1], 10));
+            } else if (match[2] !== undefined) {
+                segments.push(match[2]);
+            }
+        }
+        return segments;
+    }
+
+    /**
+     * Gets a value from the catalog JSON data at the specified path.
+     * @param jsonPath The JSON path to get the value from.
+     * @returns The value at the specified path.
+     */
+    private getJsonValue(data: Record<string, unknown>, jsonPath: string): unknown {
+        const pathParts = this.parseJsonPath(jsonPath);
+        let current: any = data;
+
+        for (const part of pathParts) {
+            if (current === undefined || current === null) {
+                return undefined;
+            }
+            current = current[part];
+        }
+
+        return current;
+    }
+
+    /**
+     * Deletes an element from the catalog JSON data.
+     * @param node The catalog tree item to delete.
+     */
+    public async deleteElement(node: CatalogTreeItem): Promise<void> {
+        await this.ensureInitialized();
+
+        try {
+            this.logger.debug('Delete requested for element', {
+                label: node.label,
+                path: node.jsonPath,
+                value: node.value
+            });
+
+            // Check if the element has children
+            const hasChildren = typeof node.value === 'object' &&
+                node.value !== null &&
+                Object.keys(node.value).length > 0;
+
+            // Prepare confirmation message based on element type and children
+            let confirmMessage = `Are you sure you want to delete "${node.label}"?`;
+            let detail = '';
+
+            if (hasChildren) {
+                if (Array.isArray(node.value)) {
+                    detail = `This will delete the array and all ${node.value.length} of its elements.`;
+                } else {
+                    const childCount = Object.keys(node.value as object).length;
+                    detail = `This will delete the object and all ${childCount} of its properties.`;
+                }
+                confirmMessage = `${confirmMessage}\n\n${detail}`;
+            }
+
+            // Show confirmation dialog
+            const confirmation = await vscode.window.showWarningMessage(
+                confirmMessage,
+                { modal: true, detail },
+                'Delete',
+                'Cancel'
+            );
+
+            if (confirmation !== 'Delete') {
+                this.logger.debug('Delete operation cancelled by user');
+                return;
+            }
+
+            // Get the parent path and index for array items
+            const parentPath = node.jsonPath.replace(/\[\d+\]$/, '');
+            const arrayMatch = node.jsonPath.match(/\[(\d+)\]$/);
+            const isArrayItem = Boolean(arrayMatch);
+            const arrayIndex = isArrayItem && arrayMatch ? Number(arrayMatch[1]) : -1;
+
+            // Get current data
+            const data = await this.getCatalogData() as Record<string, unknown>;
+            const parentValue = this.getJsonValue(data, parentPath);
+
+            if (isArrayItem && Array.isArray(parentValue)) {
+                // Handle array item deletion
+                const newArray = [...parentValue];
+                newArray.splice(arrayIndex, 1);
+                await this.updateJsonValue(parentPath, newArray);
+            } else {
+                // Handle object property deletion
+                const propertyName = node.jsonPath.split('.').pop();
+                if (!propertyName) {
+                    throw new Error('Cannot determine property name for deletion');
+                }
+
+                const parentObject = this.getJsonValue(data, parentPath.replace(/\.\w+$/, '')) as Record<string, unknown>;
+                if (!parentObject || typeof parentObject !== 'object') {
+                    throw new Error('Cannot find parent object for deletion');
+                }
+
+                const updatedObject = { ...parentObject };
+                delete updatedObject[propertyName];
+                await this.updateJsonValue(parentPath.replace(/\.\w+$/, ''), updatedObject);
+            }
+
+            void vscode.window.showInformationMessage(`Successfully deleted ${node.label}`);
+        } catch (error) {
+            this.logger.error('Failed to delete element', error);
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            void vscode.window.showErrorMessage(`Failed to delete element: ${message}`);
+            throw error;
         }
     }
 }

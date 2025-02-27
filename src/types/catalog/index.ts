@@ -45,6 +45,11 @@ export interface Dependency {
     name: string;
 
     /**
+     * Display label of the dependency (from IBM Cloud)
+     */
+    label?: string;
+
+    /**
      * Version constraint for this dependency
      */
     version: string;

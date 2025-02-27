@@ -4,14 +4,22 @@
     "module": "commonjs",
     "strict": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,/* Skip type checking of declaration files to avoid lru-cache issues */
     "forceConsistentCasingInFileNames": true,
     "outDir": "out",
     "rootDir": "src",
+    "sourceMap": true,
     "types": ["node", "vscode"],
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
   },
-  "exclude": ["node_modules", ".vscode-test"],
-  "include": ["src/**/*.ts"]
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "out"
+  ],
+  "include": [
+    "src/**/*"
+  ]
 }

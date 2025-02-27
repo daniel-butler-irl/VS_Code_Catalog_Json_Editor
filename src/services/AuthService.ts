@@ -8,7 +8,7 @@ import { CacheKeys, CacheConfigurations } from '../types/cache/cacheConfig';
  * Service for handling IBM Cloud authentication.
  */
 export class AuthService {
-    private static readonly API_KEY_SECRET = 'ibmCatalogApiKey';
+    private static readonly API_KEY_SECRET = 'ibmcloud.apikey';
     private static logger = LoggingService.getInstance();
 
     /**
@@ -17,8 +17,7 @@ export class AuthService {
      * @returns The stored API key, or undefined if not set.
      */
     public static async getApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
-        const apiKey = await context.secrets.get(AuthService.API_KEY_SECRET);
-        return apiKey;
+        return context.secrets.get(this.API_KEY_SECRET);
     }
 
     /**
@@ -29,23 +28,29 @@ export class AuthService {
     public static async promptForApiKey(context: vscode.ExtensionContext): Promise<void> {
         const apiKey = await vscode.window.showInputBox({
             prompt: 'Enter your IBM Cloud API Key',
-            ignoreFocusOut: true,
             password: true,
+            ignoreFocusOut: true
         });
 
-        if (apiKey) {
-            const isValid = await AuthService.validateApiKey(apiKey);
-            if (isValid) {
-                await context.secrets.store(AuthService.API_KEY_SECRET, apiKey);
-
-                AuthService.logger.info('API Key saved and cache invalidated');
-                vscode.window.showInformationMessage('IBM Cloud API Key saved');
-            } else {
-                vscode.window.showErrorMessage('Invalid IBM Cloud API Key. Please try again.');
-            }
-        } else {
-            vscode.window.showWarningMessage('IBM Cloud API Key is required for validation features');
+        if (!apiKey) {
+            return;
         }
+
+        if (apiKey.trim() === '') {
+            const message = 'API key cannot be empty';
+            await vscode.window.showErrorMessage(message);
+            throw new Error(message);
+        }
+
+        // Validate the API key before storing it
+        const isValid = await this.validateApiKey(apiKey);
+        if (!isValid) {
+            const message = 'Invalid API key';
+            await vscode.window.showErrorMessage(message);
+            throw new Error(message);
+        }
+
+        await context.secrets.store(this.API_KEY_SECRET, apiKey);
     }
 
     /**
@@ -53,10 +58,7 @@ export class AuthService {
      * @param context - The VS Code extension context.
      */
     public static async clearApiKey(context: vscode.ExtensionContext): Promise<void> {
-        await context.secrets.delete(AuthService.API_KEY_SECRET);
-        AuthService.logger.info('API Key cleared');
-
-        vscode.window.showInformationMessage('IBM Cloud API Key cleared');
+        await context.secrets.delete(this.API_KEY_SECRET);
     }
 
     /**
@@ -65,7 +67,7 @@ export class AuthService {
      * @returns True if the API key is stored, false otherwise.
      */
     public static async isLoggedIn(context: vscode.ExtensionContext): Promise<boolean> {
-        const apiKey = await context.secrets.get(AuthService.API_KEY_SECRET);
+        const apiKey = await context.secrets.get(this.API_KEY_SECRET);
         return !!apiKey;
     }
 
@@ -74,7 +76,7 @@ export class AuthService {
      * @param apiKey - The API key to validate.
      * @returns True if the API key is valid, false otherwise.
      */
-    private static async validateApiKey(apiKey: string): Promise<boolean> {
+    public static async validateApiKey(apiKey: string): Promise<boolean> {
         try {
             const response = await axios.post(
                 'https://iam.cloud.ibm.com/identity/token',
@@ -103,6 +105,32 @@ export class AuthService {
             } else {
                 AuthService.logger.error('An unknown error occurred during API Key validation');
             }
+            return false;
+        }
+    }
+
+    public static async login(context: vscode.ExtensionContext): Promise<void> {
+        try {
+            await AuthService.promptForApiKey(context);
+            const apiKey = await AuthService.getApiKey(context);
+            if (!apiKey) {
+                return; // User cancelled or error already shown
+            }
+        } catch (error) {
+            // Re-throw the error to maintain the error message
+            throw error;
+        }
+    }
+
+    public static async logout(context: vscode.ExtensionContext): Promise<void> {
+        await this.clearApiKey(context);
+    }
+
+    public static async isGitHubLoggedIn(context: vscode.ExtensionContext): Promise<boolean> {
+        try {
+            const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: false });
+            return !!session;
+        } catch (error) {
             return false;
         }
     }
