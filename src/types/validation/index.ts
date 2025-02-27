@@ -30,11 +30,17 @@ export interface ValidationRange {
     end: { line: number; character: number };
 }
 
+/**
+ * Severity levels for validation messages
+ */
+export type ValidationSeverity = 'error' | 'warning' | 'information';
+
 export interface ValidationError {
     code: string;
     message: string;
     path: string;
     range?: ValidationRange;
+    severity?: ValidationSeverity; // Optional severity level, defaults to error if not specified
 }
 
 export interface ValidationResult<T = unknown> {

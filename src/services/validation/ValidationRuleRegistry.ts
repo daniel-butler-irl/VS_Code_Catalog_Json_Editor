@@ -5,6 +5,7 @@ import { NoDuplicateConfigKeysRule } from './NoDuplicateConfigKeysRule';
 import { DuplicateConfigurationKeysRule } from './DuplicateConfigurationKeysRule';
 import { DuplicateDependencyInputRule } from './DuplicateDependencyInputRule';
 import { InputMappingValidationRule } from './InputMappingValidationRule';
+import { DeprecatedInstallTypeRule } from './DeprecatedInstallTypeRule';
 import { ValidationConfigService } from './ValidationConfigService';
 import { LoggingService } from '../core/LoggingService';
 
@@ -27,10 +28,10 @@ export class ValidationRuleRegistry {
     this.registerRule(new DuplicateConfigurationKeysRule(), { enabled: true });
     this.registerRule(new DuplicateDependencyInputRule(), { enabled: true });
     this.registerRule(new InputMappingValidationRule(), { enabled: true });
+    this.registerRule(new DeprecatedInstallTypeRule(), { enabled: true });
 
     this.logger.debug('Validation rules registered', {
-      ruleCount: this.rules.size,
-      rules: Array.from(this.rules.keys())
+      ruleCount: this.rules.size
     }, this.logChannel);
   }
 
@@ -50,12 +51,6 @@ export class ValidationRuleRegistry {
       enabled: savedConfig.enabled !== undefined ? savedConfig.enabled : defaultConfig.enabled,
       params: { ...defaultConfig.params, ...savedConfig.params }
     });
-
-    this.logger.debug('Registered validation rule', {
-      ruleId: rule.id,
-      description: rule.description,
-      enabled: this.ruleConfigs.get(rule.id)?.enabled
-    }, this.logChannel);
   }
 
   public getRule(id: string): ValidationRule | undefined {
@@ -96,14 +91,11 @@ export class ValidationRuleRegistry {
 
   public async validateAll(value: unknown, rawText?: string): Promise<ValidationError[]> {
     const allErrors: ValidationError[] = [];
+    const enabledRuleCount = Array.from(this.rules.entries())
+      .filter(([id, _]) => this.getRuleConfig(id)?.enabled === true).length;
 
-    this.logger.debug('Starting validation with all rules', {
-      ruleCount: this.rules.size,
-      rules: Array.from(this.rules.keys()).map(id => ({
-        id,
-        enabled: this.getRuleConfig(id)?.enabled,
-        config: this.getRuleConfig(id)
-      }))
+    this.logger.debug('Starting validation', {
+      enabledRuleCount
     }, this.logChannel);
 
     for (const [id, rule] of this.rules) {
@@ -113,18 +105,7 @@ export class ValidationRuleRegistry {
       // Check if the rule is enabled
       const isEnabled = config?.enabled === true;
 
-      this.logger.debug(`Rule ${id} configuration:`, {
-        id,
-        enabled: isEnabled,
-        config
-      }, this.logChannel);
-
       if (isEnabled) {
-        this.logger.debug('Running validation rule', {
-          ruleId: id,
-          description: rule.description
-        }, this.logChannel);
-
         const errors = await rule.validate(value, config, rawText);
 
         if (errors.length > 0) {
@@ -137,44 +118,31 @@ export class ValidationRuleRegistry {
               path: e.path
             }))
           }, this.logChannel);
-        } else {
-          this.logger.debug('Validation rule completed with no errors', { ruleId: id }, this.logChannel);
-        }
 
-        allErrors.push(...errors);
-      } else {
-        this.logger.debug('Skipping disabled validation rule', {
-          ruleId: id,
-          description: rule.description,
-          config
-        }, this.logChannel);
+          allErrors.push(...errors);
+        }
       }
     }
 
-    this.logger.debug('Validation complete', {
-      totalErrorCount: allErrors.length,
-      errorsByRule: Array.from(this.rules.keys()).map(id => ({
-        id,
-        count: allErrors.filter(e => e.code?.startsWith(id.toUpperCase()) || e.path?.includes(id)).length
-      }))
-    }, this.logChannel);
+    if (allErrors.length > 0) {
+      this.logger.debug('Validation complete with errors', {
+        totalErrorCount: allErrors.length,
+        errorsByRule: Array.from(this.rules.keys())
+          .filter(id => allErrors.some(e => e.code?.startsWith(id.toUpperCase()) || e.path?.includes(id)))
+          .map(id => ({
+            id,
+            count: allErrors.filter(e => e.code?.startsWith(id.toUpperCase()) || e.path?.includes(id)).length
+          }))
+      }, this.logChannel);
+    } else {
+      this.logger.debug('Validation complete with no errors', {}, this.logChannel);
+    }
 
     return allErrors;
   }
 
   // For testing purposes
   public resetInstance(): void {
-    this.logger.debug('Resetting ValidationRuleRegistry instance for testing', {
-      beforeReset: {
-        ruleCount: this.rules.size,
-        ruleConfigs: Array.from(this.ruleConfigs.entries()).map(([id, config]) => ({
-          id,
-          enabled: config?.enabled,
-          params: config?.params
-        }))
-      }
-    }, this.logChannel);
-
     // Clear the existing rules and configurations
     this.rules.clear();
     this.ruleConfigs.clear();
@@ -184,19 +152,13 @@ export class ValidationRuleRegistry {
     this.registerRule(new DuplicateConfigurationKeysRule(), { enabled: true });
     this.registerRule(new DuplicateDependencyInputRule(), { enabled: true });
     this.registerRule(new InputMappingValidationRule(), { enabled: true });
+    this.registerRule(new DeprecatedInstallTypeRule(), { enabled: true });
 
     // Update the static instance
     ValidationRuleRegistry.instance = this;
 
     this.logger.debug('ValidationRuleRegistry instance has been reset', {
-      afterReset: {
-        ruleCount: this.rules.size,
-        ruleConfigs: Array.from(this.ruleConfigs.entries()).map(([id, config]) => ({
-          id,
-          enabled: config?.enabled,
-          params: config?.params
-        }))
-      }
+      ruleCount: this.rules.size
     }, this.logChannel);
   }
 } 

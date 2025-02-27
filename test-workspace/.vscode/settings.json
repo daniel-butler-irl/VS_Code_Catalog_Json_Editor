@@ -12,6 +12,9 @@
         "duplicate_array_items": {
             "enabled": false,
             "params": {}
+        },
+        "deprecated_install_type": {
+            "enabled": false
         }
     }
 }

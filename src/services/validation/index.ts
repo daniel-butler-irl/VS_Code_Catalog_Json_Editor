@@ -5,4 +5,6 @@ export * from './ValidationRuleRegistry';
 export * from './SchemaValidationIgnoreService';
 export * from './DuplicateConfigurationKeysRule';
 export * from './DuplicateDependencyInputRule';
+export * from './InputMappingValidationRule';
+export * from './DeprecatedInstallTypeRule';
 // export * from './InstallTypeRequiredRule'; - Removed as no longer needed 
