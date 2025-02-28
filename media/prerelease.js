@@ -59,7 +59,80 @@
         catalogSelect.addEventListener('change', handleCatalogSelect);
     }
 
-    // Initial state setup
+    // Initialize UI and start polling
+    initializeUI();
+    
+    // Initial data fetch
+    postValidatedMessage({ command: 'getBranchName' });
+    postValidatedMessage({ command: 'checkAuthentication' });
+
+    // Set up polling for branch name and auth status
+    branchCheckInterval = setInterval(() => {
+        if (!isReleaseInProgress) {
+            postValidatedMessage({ command: 'getBranchName' });
+            
+            // Only check authentication if we haven't checked recently
+            const now = Date.now();
+            if (!lastCheckedTimestamp || now - lastCheckedTimestamp > 60000) { // Check every minute
+                lastCheckedTimestamp = now;
+                postValidatedMessage({ command: 'checkAuthentication' });
+            }
+        }
+    }, 5000);
+
+    // Handle messages from the extension
+    window.addEventListener('message', event => {
+        const message = event.data;
+        
+        if (!message || !message.command) {
+            console.warn('Received invalid message:', message);
+            return;
+        }
+
+        try {
+            switch (message.command) {
+                case 'updateBranchName':
+                    updateBranchName(message.branch);
+                    break;
+                case 'updateData':
+                    handleDataUpdate(message);
+                    break;
+                case 'refreshComplete':
+                    handleRefreshComplete(message);
+                    break;
+                case 'showError':
+                    handleError(message.error);
+                    break;
+                case 'updateGitHubDetails':
+                    handleGitHubDetailsUpdate(message);
+                    break;
+                case 'updateCatalogDetails':
+                    handleCatalogDetailsUpdate(message);
+                    break;
+                case 'updateNextVersion':
+                    handleNextVersionUpdate(message);
+                    break;
+                case 'releaseComplete':
+                    handleReleaseComplete(message.success, message.error, message.cancelled);
+                    break;
+                case 'setLoadingState':
+                    handleSetLoadingState(message.message);
+                    break;
+                case 'updateAuthStatus':
+                    updateAuthStatus(message);
+                    break;
+                case 'updateUnpushedChanges':
+                    handleUnpushedChanges(message.hasUnpushedChanges);
+                    break;
+                default:
+                    console.warn('Unknown message command:', message.command);
+            }
+        } catch (error) {
+            console.error('Error handling message:', error);
+            showError('An error occurred while processing the response');
+        }
+    });
+
     function initializeUI() {
         // Show initial loading state
         if (loadingView) {
@@ -130,10 +203,6 @@
                 });
             });
         }
-
-        // Request initial data
-        vscode.postMessage({ command: 'getBranchName' });
-        vscode.postMessage({ command: 'checkAuthentication' });
     }
 
     function showLoading(message = 'Loading...') {
@@ -158,22 +227,6 @@
         }
     }
 
-    // Remove duplicate event listeners from DOMContentLoaded
-    document.addEventListener('DOMContentLoaded', () => {
-        // Initialize UI first
-        initializeUI();
-        
-        // Immediately request branch name
-        vscode.postMessage({ command: 'getBranchName' });
-        
-        // Set up polling for branch changes
-        branchCheckInterval = setInterval(() => {
-            vscode.postMessage({ command: 'getBranchName' });
-            // Also periodically check auth status
-            vscode.postMessage({ command: 'checkAuthentication' });
-        }, 2000); // Check every 2 seconds
-    });
-
     // Clean up interval when window is closed
     window.addEventListener('unload', () => {
         if (branchCheckInterval) {
@@ -181,16 +234,8 @@
         }
     });
 
-    // Remove duplicate event listeners - they are already registered above
-    // postfixInput?.addEventListener('input', updateTagPreview);
-    // versionInput?.addEventListener('input', updateTagPreview);
-    // githubBtn?.addEventListener('click', () => handleCreateClick('github'));
-    // catalogBtn?.addEventListener('click', () => handleCreateClick('catalog'));
-    // getLatestBtn?.addEventListener('click', handleGetLatestClick);
-
     catalogSelect?.addEventListener('change', () => {
         const selectedCatalogId = catalogSelect.value;
-        const refreshButton = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
         
         // Save selection in state
         vscode.setState({ ...state, selectedCatalogId: selectedCatalogId });
@@ -200,140 +245,21 @@
             if (catalogDetailsDiv) {
                 catalogDetailsDiv.innerHTML = '<p class="loading">Loading catalog details...</p>';
             }
-            if (mainContent) {
-                mainContent.classList.add('loading-state');
-            }
 
-            // Enable version and postfix inputs if not on main/master branch
-            if (!isMainOrMaster) {
-                if (versionInput) {
-                    versionInput.disabled = false;
-                    versionInput.placeholder = 'Enter version number';
-                }
-                if (postfixInput) {
-                    postfixInput.disabled = false;
-                    // Set postfix to <branch>-beta if empty or matches previous branch pattern
-                    if (currentBranch && (!postfixInput.value || postfixInput.value.endsWith('-beta'))) {
-                        postfixInput.value = `${currentBranch}-beta`;
-                    }
-                }
-            }
-
-            // Temporarily disable controls during load
-            if (catalogSelect) {catalogSelect.disabled = true;}
-            if (refreshButton) {refreshButton.disabled = true;}
-
-            // Clear any existing timeout
-            if (currentTimeoutId) {
-                clearTimeout(currentTimeoutId);
-            }
-
-            // Set a timeout to re-enable controls if no response received
-            currentTimeoutId = setTimeout(() => {
-                // Re-enable controls if not on main/master
-                if (!isMainOrMaster) {
-                    if (catalogSelect) {catalogSelect.disabled = false;}
-                    if (versionInput) {versionInput.disabled = false;}
-                    if (postfixInput) {
-                        postfixInput.disabled = false;
-                        // Ensure postfix is set even after timeout
-                        if (currentBranch && (!postfixInput.value || postfixInput.value.endsWith('-beta'))) {
-                            postfixInput.value = `${currentBranch}-beta`;
-                        }
-                    }
-                    updateButtonStates();
-                    if (refreshButton) {refreshButton.disabled = !selectedCatalogId;}
-                }
-                // Clear loading states
-                if (mainContent) {mainContent.classList.remove('loading-state');}
+            // Set a timeout to show an error if the request takes too long
+            const timeoutId = setTimeout(() => {
                 if (catalogDetailsDiv) {
-                    catalogDetailsDiv.innerHTML = '<p class="empty-state">Failed to load catalog details. Please try again.</p>';
+                    catalogDetailsDiv.innerHTML = '<p class="error">Request timed out. Please try again.</p>';
                 }
-                currentTimeoutId = null;
             }, 10000); // 10 second timeout
 
-            vscode.postMessage({ 
+            postValidatedMessage({ 
                 command: 'selectCatalog',
                 catalogId: selectedCatalogId
             });
-        } else {
-            // Reset to initial state when no catalog is selected
-            if (mainContent) {mainContent.classList.remove('loading-state');}
-            if (catalogDetailsDiv) {
-                catalogDetailsDiv.innerHTML = '<p class="empty-state">Please select a catalog above to view its details</p>';
-            }
-            // Re-enable controls if not on main/master
-            if (!isMainOrMaster) {
-                if (catalogSelect) {catalogSelect.disabled = false;}
-                if (versionInput) {
-                    versionInput.disabled = true;
-                    versionInput.placeholder = 'Select a catalog first';
-                }
-                if (postfixInput) {
-                    postfixInput.disabled = true;
-                    // Keep the postfix value but disable the input
-                    if (currentBranch && (!postfixInput.value || postfixInput.value.endsWith('-beta'))) {
-                        postfixInput.value = `${currentBranch}-beta`;
-                    }
-                }
-                updateButtonStates();
-                if (refreshButton) {refreshButton.disabled = true;} // Disable refresh when no catalog selected
-            }
-        }
-    });
 
-    // Handle messages from the extension
-    window.addEventListener('message', event => {
-        const message = event.data;
-        
-        try {
-            switch (message.command) {
-                case 'updateButtonStates':
-                    if (message.data) {
-                        const { githubAuth, catalogAuth, enableCatalogButtons, enableGithubButtons } = message.data;
-                        isGithubAuthenticated = githubAuth;
-                        isCatalogAuthenticated = catalogAuth;
-                        updateButtonStates();
-                    }
-                    break;
-                case 'updateGitHubDetails':
-                    handleGitHubDetailsUpdate(message);
-                    break;
-                case 'updateCatalogDetails':
-                    handleCatalogDetailsUpdate(message);
-                    break;
-                case 'updateData':
-                    handleDataUpdate(message);
-                    break;
-                case 'updateNextVersion':
-                    handleNextVersionUpdate(message);
-                    break;
-                case 'updateAuthStatus':
-                    updateAuthStatus(message.data);
-                    break;
-                case 'setLoadingState':
-                    handleSetLoadingState(message);
-                    break;
-                case 'showError':
-                    handleError(message.error);
-                    break;
-                case 'refreshComplete':
-                    handleRefreshComplete(message);
-                    break;
-                case 'releaseComplete':
-                    handleReleaseComplete(message.success, message.error, message.cancelled);
-                    break;
-                default:
-                    console.warn('Unknown message command:', message.command);
-            }
-        } catch (error) {
-            console.error('Error handling message:', error);
-            // Ensure UI stays responsive even after error
-            hideLoading();
-            enableAllControls();
-            if (mainContent) {
-                mainContent.classList.remove('loading-state');
-            }
+            // Store the timeout ID
+            currentTimeoutId = timeoutId;
         }
     });
 
@@ -897,152 +823,68 @@
         updateCatalogDetails(catalogDetails);
     }
 
-    function handleCreateClick(type) {
-        // Prevent multiple simultaneous release attempts
-        if (isReleaseInProgress) {
-            console.debug('Release already in progress, ignoring click');
+    // Add message validation helper
+    function postValidatedMessage(message) {
+        if (!message || typeof message !== 'object') {
+            console.error('Invalid message structure:', message);
             return;
         }
+        if (!message.command || typeof message.command !== 'string') {
+            console.error('Message missing command or invalid command type:', message);
+            return;
+        }
+        vscode.postMessage(message);
+    }
 
-        const version = versionInput?.value || '';
-        const postfix = postfixInput?.value || '';
-        const catalogId = catalogSelect?.value || '';
+    // Replace direct vscode.postMessage calls with validated version
+    function handleCreateClick(type) {
+        if (!versionInput || !postfixInput) return;
+
+        const version = versionInput.value.trim();
+        const postfix = postfixInput.value.trim();
 
         if (!version || !postfix) {
-            vscode.postMessage({
-                command: 'showError',
-                error: 'Please fill in all required fields'
-            });
+            showError('Please fill in both version and postfix fields.');
             return;
         }
 
-        // For catalog imports, verify a catalog is selected
-        if (type === 'catalog' && !catalogId) {
-            return;
-        }
+        const data = {
+            version,
+            postfix,
+            publishToCatalog: type === 'catalog',
+            releaseGithub: type === 'github',
+            catalogId: catalogSelect ? catalogSelect.value : undefined
+        };
 
-        // Set release in progress flag
-        isReleaseInProgress = true;
-
-        // Clear any existing error state
-        showError(undefined, true);
-
-        // Disable all buttons during operation
-        if (githubBtn) {
-            githubBtn.disabled = true;
-            githubBtn.innerHTML = 'Create GitHub Pre-Release <span class="loading-dots"></span>';
-            githubBtn.classList.add('loading');
-        }
-        if (catalogBtn) {
-            catalogBtn.disabled = true;
-            catalogBtn.innerHTML = 'Import to IBM Cloud Catalog <span class="loading-dots"></span>';
-            catalogBtn.classList.add('loading');
-        }
-        if (getLatestBtn) {
-            getLatestBtn.disabled = true;
-        }
-
-        vscode.postMessage({
+        postValidatedMessage({
             command: 'createPreRelease',
-            data: {
-                version,
-                postfix,
-                publishToCatalog: type === 'catalog',
-                releaseGithub: type === 'github',
-                catalogId
-            }
+            data
         });
+    }
+
+    // Update other message sending functions
+    function handleCatalogSelect() {
+        const selectedId = catalogSelect ? catalogSelect.value : '';
+        if (selectedId) {
+            postValidatedMessage({
+                command: 'selectCatalog',
+                catalogId: selectedId
+            });
+        }
     }
 
     async function handleRefreshClick() {
-        const refreshButton = /** @type {HTMLButtonElement} */ (document.getElementById('refreshCatalogBtn'));
-        const mainContent = document.getElementById('mainContent');
-        const catalogSelect = /** @type {HTMLSelectElement} */ (document.getElementById('catalogSelect'));
-        
-        if (!refreshButton || !mainContent || !catalogSelect) {
-            return;
-        }
-
-        try {
-            // Update button state
-            refreshButton.disabled = true;
-            refreshButton.textContent = 'Refreshing...';
-            refreshButton.classList.add('refreshing');
-            
-            // Reset cache status
-            isCacheUsed = false;
-            updateTimestampDisplay();
-            
-            // Add loading state to main content
-            mainContent.classList.add('loading-state');
-            
-            // Save the current catalog selection before refresh
-            const currentCatalogId = catalogSelect.value;
-            vscode.setState({ ...state, selectedCatalogId: currentCatalogId });
-
-            // Request a force refresh from the extension
-            vscode.postMessage({ 
-                command: 'forceRefresh',
-                catalogId: currentCatalogId
-            });
-
-        } catch (error) {
-            // Just reset the UI state without showing error
-            enableAllControls();
-            if (mainContent) {
-                mainContent.classList.remove('loading-state');
-            }
-        }
+        const selectedId = catalogSelect ? catalogSelect.value : '';
+        postValidatedMessage({
+            command: 'forceRefresh',
+            catalogId: selectedId
+        });
     }
 
-    function handleReleaseComplete(success, error, cancelled) {
-        // Reset release in progress flag
-        isReleaseInProgress = false;
-
-        hideLoading();
-        enableAllControls();
-
-        if (cancelled) {
-            showError('Release was cancelled', true);
-            return;
-        }
-
-        if (!success) {
-            showError(error || 'Failed to create release', true);
-            return;
-        }
-
-        // Save the current version before clearing it
-        const createdVersion = versionInput?.value || '';
-        const createdPostfix = postfixInput?.value || '';
-
-        // Clear inputs on success
-        if (versionInput) {
-            versionInput.value = '';
-        }
-        if (postfixInput && currentBranch) {
-            postfixInput.value = `${currentBranch}-beta`;
-        }
-
-        // Force a refresh to get latest versions
-        vscode.postMessage({
-            command: 'forceRefresh',
-            catalogId: catalogSelect?.value,
-            // Pass the created version to ensure it's processed correctly
-            createdVersion: createdVersion,
-            createdPostfix: createdPostfix
+    async function handleGetLatestClick() {
+        postValidatedMessage({
+            command: 'getBranchName'
         });
-
-        // Request catalog details update
-        if (catalogSelect?.value) {
-            vscode.postMessage({ 
-                command: 'selectCatalog',
-                catalogId: catalogSelect.value
-            });
-        }
-
-        // Update UI
-        updateTagPreview();
     }
 
     // Add function to update timestamp display
@@ -1203,40 +1045,6 @@
             </div>`;
     }
 
-    // Add the handler function
-    async function handleGetLatestClick() {
-        // Show loading state
-        if (mainContent) {
-            mainContent.classList.add('loading-state');
-        }
-        if (catalogDetailsDiv) {
-            catalogDetailsDiv.innerHTML = '<p class="loading">Fetching latest releases...</p>';
-        }
-
-        // Disable the button during refresh
-        const getLatestBtn = /** @type {HTMLButtonElement} */ (document.getElementById('getLatestBtn'));
-        if (getLatestBtn) {
-            getLatestBtn.disabled = true;
-        }
-
-        try {
-            // Request a force refresh from the extension
-            vscode.postMessage({
-                command: 'forceRefresh',
-                catalogId: catalogSelect?.value
-            });
-        } catch (error) {
-            if (catalogDetailsDiv) {
-                catalogDetailsDiv.innerHTML = '<p class="error">Failed to fetch latest releases. Please try again.</p>';
-            }
-        } finally {
-            // Re-enable the button
-            if (getLatestBtn) {
-                getLatestBtn.disabled = false;
-            }
-        }
-    }
-
     // Handle loading state changes
     function handleSetLoadingState(message) {
         if (!loadingView || !mainContainer) {
@@ -1321,16 +1129,6 @@
         // Update button states
         updateButtonStates();
         console.debug('GitHub details update complete');
-    }
-
-    // Remove the old handleCatalogSelect reference and add proper handler
-    function handleCatalogSelect() {
-        if (!catalogSelect) return;
-        const selectedCatalogId = catalogSelect.value;
-        vscode.postMessage({ 
-            command: 'selectCatalog',
-            catalogId: selectedCatalogId
-        });
     }
 
     // Add proper handler for data updates
@@ -1491,5 +1289,54 @@
                 }
             });
         });
+    }
+
+    function handleReleaseComplete(success, error, cancelled) {
+        // Reset release in progress flag
+        isReleaseInProgress = false;
+
+        hideLoading();
+        enableAllControls();
+
+        if (cancelled) {
+            showError('Release was cancelled', true);
+            return;
+        }
+
+        if (!success) {
+            showError(error || 'Failed to create release', true);
+            return;
+        }
+
+        // Save the current version before clearing it
+        const createdVersion = versionInput?.value || '';
+        const createdPostfix = postfixInput?.value || '';
+
+        // Clear inputs on success
+        if (versionInput) {
+            versionInput.value = '';
+        }
+        if (postfixInput && currentBranch) {
+            postfixInput.value = `${currentBranch}-beta`;
+        }
+
+        // Force a refresh to get latest versions
+        postValidatedMessage({
+            command: 'forceRefresh',
+            catalogId: catalogSelect?.value,
+            createdVersion,
+            createdPostfix
+        });
+
+        // Request catalog details update
+        if (catalogSelect?.value) {
+            postValidatedMessage({
+                command: 'selectCatalog',
+                catalogId: catalogSelect.value
+            });
+        }
+
+        // Update UI
+        updateTagPreview();
     }
 })();

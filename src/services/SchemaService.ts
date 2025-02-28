@@ -39,6 +39,14 @@ interface JsonNode {
 
 /**
  * Service for handling JSON schema operations with improved error handling and caching
+ * 
+ * NOTE: The extension includes a bundled schema.json file in resources/schema.json which is:
+ * 1. Updated automatically during builds via the npm run update-schema script
+ * 2. Used as a fallback when online schema fetching fails
+ * 3. Copied to the extension's dist folder during build
+ * 
+ * This approach ensures that there's always a usable schema even in offline scenarios,
+ * while still attempting to get the latest schema at runtime.
  */
 export class SchemaService {
   private static readonly SCHEMA_URL = 'https://raw.githubusercontent.com/IBM/customized-deployable-architecture/main/ibm_catalog-schema.json';

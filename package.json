@@ -2,7 +2,7 @@
   "name": "ibm-catalog-json-editor",
   "displayName": "IBM Catalog Tools",
   "description": "VS Code extension for managing IBM Cloud catalog offerings, JSON files and pre-releases",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "DanielButler",
   "preview": true,
   "repository": {
@@ -431,7 +431,7 @@
     "pretest": "npm run compile && npm run compile:tests",
     "lint": "eslint . --config eslint.config.mjs",
     "test": "node --force-node-api-uncaught-exceptions-policy=true --unhandled-rejections=strict ./out/test/runTest.js",
-    "vscode:prepublish": "npm run clean && node esbuild.mjs --production",
+    "vscode:prepublish": "npm run clean && npm run update-schema && node esbuild.mjs --production",
     "esbuild-base": "node esbuild.mjs",
     "esbuild": "node esbuild.mjs",
     "esbuild:test": "node esbuild.mjs --test",
@@ -441,12 +441,13 @@
     "publish": "npm run esbuild && vsce publish",
     "clean": "rimraf dist out",
     "prebuild": "npm run clean",
-    "build": "npm run esbuild",
+    "build": "npm run update-schema && npm run esbuild",
     "build:test": "npm run esbuild:test",
     "dev": "npm run esbuild:watch",
     "start:vscode": "npm run build && code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}",
     "start:vscode:watch": "concurrently \"npm run esbuild:watch\" \"code --disable-extensions --extensionDevelopmentPath=${PWD} --user-data-dir=${PWD}/.vscode-test/user-data ${PWD}\"",
-    "update-icon": "node svg-to-png.js"
+    "update-icon": "node svg-to-png.js",
+    "update-schema": "node scripts/update-schema.js"
   },
   "devDependencies": {
     "@types/chai": "^5.0.1",

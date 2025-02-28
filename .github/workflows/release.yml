@@ -99,25 +99,29 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # Step 5: Build the Extension
+      # Step 5: Update Schema
+      - name: Update Schema
+        run: npm run update-schema
+
+      # Step 6: Build the Extension
       - name: Build Extension
         run: npm run build
 
-      # Step 6: Extract Current Version from package.json
+      # Step 7: Extract Current Version from package.json
       - name: Get Current Version
         id: current_version
         run: |
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
 
-      # Step 7: Get Previous Tag Version
+      # Step 8: Get Previous Tag Version
       - name: Get Previous Tag
         id: previous_tag
         run: |
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "0.0.0")
           echo "PREVIOUS_VERSION=$PREVIOUS_TAG" >> $GITHUB_ENV
 
-      # Step 8: Validate Version Increment
+      # Step 9: Validate Version Increment
       - name: Validate Version Increment
         id: validate_version
         run: |
@@ -143,20 +147,20 @@ jobs:
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
           PREVIOUS_VERSION: ${{ env.PREVIOUS_VERSION }}
 
-      # Step 9: Install Ruby with Bundler Caching
+      # Step 10: Install Ruby with Bundler Caching
       - name: Install Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.0'
           bundler-cache: true
 
-      # Step 10: Install github-changelog-generator and faraday-retry
+      # Step 11: Install github-changelog-generator and faraday-retry
       - name: Install Gems
         run: |
           gem install github_changelog_generator
           gem install faraday-retry
 
-      # Step 11: Generate Changelog
+      # Step 12: Generate Changelog
       - name: Generate Changelog
         run: |
           set -e
@@ -209,7 +213,7 @@ jobs:
           PREVIOUS_VERSION: ${{ env.PREVIOUS_VERSION }}
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
-      # Step 12: Commit and Push CHANGELOG.md
+      # Step 13: Commit and Push CHANGELOG.md
       - name: Commit CHANGELOG.md
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
@@ -217,7 +221,7 @@ jobs:
           file_pattern: CHANGELOG.md
           branch: ${{ github.ref_name }}
 
-      # Step 13: Check and Create Git Tag
+      # Step 14: Check and Create Git Tag
       - name: Create Git Tag
         run: |
           if git rev-parse "$CURRENT_VERSION" >/dev/null 2>&1; then
@@ -230,13 +234,13 @@ jobs:
           CURRENT_VERSION: ${{ env.CURRENT_VERSION }}
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
-      # Step 14: Package the Extension
+      # Step 15: Package the Extension
       - name: Package Extension
         run: npx vsce package
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-      # Step 15: Create GitHub Release with Assets
+      # Step 16: Create GitHub Release with Assets
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v1

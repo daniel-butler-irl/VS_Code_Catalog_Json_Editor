@@ -93,6 +93,7 @@ async function copyAssets() {
         if (!test) {
             await copy('media', 'dist/media', { overwrite: true }).catch(() => {});
             await copy('schemas', 'dist/schemas', { overwrite: true }).catch(() => {});
+            await copy('resources', 'dist/resources', { overwrite: true }).catch(() => {});
             console.log('Assets copied successfully');
         }
     } catch (err) {

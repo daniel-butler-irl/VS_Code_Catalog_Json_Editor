@@ -8,3 +8,5 @@ test-results
 .cursorrules
 /.vsc
 /.cursor
+resources/schema.json
+/resources/schema.json
