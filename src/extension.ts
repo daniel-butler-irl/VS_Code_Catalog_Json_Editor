@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CatalogTreeProvider } from './providers/CatalogTreeProvider';
+import { CatalogVisualEditorProvider } from './providers/CatalogVisualEditorProvider';
 import { CatalogFileSystemWatcher } from './services/CatalogFileSystemWatcher';
 import { CatalogService } from './services/CatalogService';
 import { EditorHighlightService } from './services/EditorHighlightService';
@@ -14,6 +15,7 @@ import { LogLevel } from './services/core/LoggingService';
 import { CacheService } from './services/CacheService';
 import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
+import { JsonPathService } from './services/core/JsonPathService';
 import { PreReleaseWebview } from './webview/PreReleaseWebview';
 import { AuthenticationSession } from 'vscode';
 import { PreReleaseService } from './services/PreReleaseService';
@@ -119,6 +121,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
             );
         } catch (error) {
             logger.error('Failed to register PreReleaseWebview provider', { error }, 'main');
+        }
+
+        logger.debug('Initializing Visual Editor Provider', undefined, 'main');
+        const jsonPathService = JsonPathService.getInstance();
+        const visualEditorProvider = CatalogVisualEditorProvider.initialize(
+            context,
+            logger,
+            catalogService,
+            null, // We'll handle IBM Cloud service creation within the provider
+            schemaService,
+            jsonPathService
+        );
+
+        try {
+            logger.debug('Registering Visual Editor provider', undefined, 'main');
+            context.subscriptions.push(
+                vscode.window.registerCustomEditorProvider(
+                    'ibmCatalog.visualEditor',
+                    visualEditorProvider,
+                    {
+                        webviewOptions: {
+                            retainContextWhenHidden: true
+                        },
+                        supportsMultipleEditorsPerDocument: false
+                    }
+                )
+            );
+        } catch (error) {
+            logger.error('Failed to register Visual Editor provider', { error }, 'main');
         }
 
         logger.debug('Creating tree provider', undefined, 'main');
@@ -318,6 +349,28 @@ function registerEssentialCommands(
 ): void {
     // Register only essential commands for initial activation
     context.subscriptions.push(
+        vscode.commands.registerCommand('ibmCatalog.openVisualEditor', async () => {
+            try {
+                const activeEditor = vscode.window.activeTextEditor;
+                if (!activeEditor) {
+                    vscode.window.showErrorMessage('No active editor found. Please open an ibm_catalog.json file first.');
+                    return;
+                }
+
+                const document = activeEditor.document;
+                if (!document.uri.fsPath.toLowerCase().endsWith('ibm_catalog.json')) {
+                    vscode.window.showErrorMessage('This command can only be used with ibm_catalog.json files.');
+                    return;
+                }
+
+                // Open with the visual editor
+                await vscode.commands.executeCommand('vscode.openWith', document.uri, 'ibmCatalog.visualEditor');
+            } catch (error) {
+                const logger = LoggingService.getInstance();
+                logger.error('Failed to open visual editor', { error }, 'main');
+                vscode.window.showErrorMessage(`Failed to open visual editor: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }),
         vscode.commands.registerCommand('ibmCatalog.login', async () => {
             try {
                 await AuthService.login(context);

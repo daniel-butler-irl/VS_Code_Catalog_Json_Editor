@@ -125,6 +125,37 @@ async function buildExtension() {
                     'process.env.NODE_ENV': production ? '"production"' : '"development"'
                 }
             });
+
+            // Visual Editor Webview build
+            configs.push({
+                entryPoints: ['src/webview/visual-editor/index.tsx'],
+                outfile: 'dist/media/visual-editor-react.js',
+                bundle: true,
+                format: 'iife',
+                platform: 'browser',
+                target: ['es2020'],
+                jsx: 'automatic',
+                jsxDev: !production,
+                external: [],
+                minify: production,
+                sourcemap,
+                sourcesContent: sourcemap,
+                define: {
+                    'process.env.NODE_ENV': production ? '"production"' : '"development"',
+                    'global': 'globalThis'
+                },
+                loader: {
+                    '.tsx': 'tsx',
+                    '.ts': 'tsx',
+                    '.jsx': 'jsx',
+                    '.js': 'jsx',
+                    '.css': 'text',
+                    '.svg': 'text'
+                },
+                plugins: [esbuildProblemMatcherPlugin],
+                metafile: true,
+                treeShaking: true
+            });
         }
 
         // Test build

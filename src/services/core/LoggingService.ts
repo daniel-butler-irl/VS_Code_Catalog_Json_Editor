@@ -9,7 +9,7 @@ export enum LogLevel {
     ERROR
 }
 
-export type LogChannel = 'main' | 'preRelease' | 'schemaValidation';
+export type LogChannel = 'main' | 'preRelease' | 'schemaValidation' | 'visualEditor';
 
 /**
  * Service for handling application logging with channel output and optional console logging
@@ -19,6 +19,7 @@ export class LoggingService {
     private mainChannel: vscode.OutputChannel;
     private preReleaseChannel: vscode.OutputChannel;
     private schemaValidationChannel: vscode.OutputChannel;
+    private visualEditorChannel: vscode.OutputChannel;
     private logLevel: LogLevel = LogLevel.INFO;
     private currentChannel: LogChannel = 'main';
 
@@ -26,6 +27,7 @@ export class LoggingService {
         this.mainChannel = vscode.window.createOutputChannel('IBM Catalog');
         this.preReleaseChannel = vscode.window.createOutputChannel('IBM Catalog Pre-release');
         this.schemaValidationChannel = vscode.window.createOutputChannel('IBM Catalog Schema Validation');
+        this.visualEditorChannel = vscode.window.createOutputChannel('IBM Catalog Visual Editor');
     }
 
     /**
@@ -107,6 +109,9 @@ export class LoggingService {
                     break;
                 case 'schemaValidation':
                     this.schemaValidationChannel.appendLine(formattedMessage);
+                    break;
+                case 'visualEditor':
+                    this.visualEditorChannel.appendLine(formattedMessage);
                     break;
                 default:
                     this.mainChannel.appendLine(formattedMessage);
