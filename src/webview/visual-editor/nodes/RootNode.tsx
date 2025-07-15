@@ -36,9 +36,6 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
       style={{
         minWidth: '200px',
         minHeight: '120px',
-        border: '2px solid #4caf50',
-        borderRadius: '8px',
-        backgroundColor: '#ffffff',
         position: 'relative'
       }}
     >

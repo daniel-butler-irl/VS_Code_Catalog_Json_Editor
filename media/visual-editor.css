@@ -882,12 +882,13 @@ select:focus {
 }
 
 .rete-node.root-node {
-  border-color: var(--success-color);
-  background-color: var(--primary-bg);
+  border-color: #81c784;
+  background-color: rgba(129, 199, 132, 0.1);
 }
 
 .rete-node.dependency-node {
-  border-color: var(--border-color);
+  border-color: #4fc3f7;
+  background-color: rgba(79, 195, 247, 0.1);
 }
 
 /* Node header */
@@ -896,8 +897,8 @@ select:focus {
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
-  background-color: var(--primary-bg);
-  border-bottom: 1px solid var(--border-color);
+  background-color: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
 }
 
@@ -948,11 +949,13 @@ select:focus {
 }
 
 .rete-node .node-type-badge.root {
-  background-color: var(--success-color);
+  background-color: #81c784;
+  color: #000;
 }
 
 .rete-node .node-type-badge.dependency {
-  background-color: var(--accent-color);
+  background-color: #4fc3f7;
+  color: #000;
 }
 
 /* Node content */
@@ -1000,8 +1003,8 @@ select:focus {
 }
 
 .rete-node .node-badge.optional {
-  background-color: var(--warning-color);
-  color: var(--primary-bg);
+  background-color: #ffb74d;
+  color: #000;
 }
 
 /* Expanded content */
@@ -1093,34 +1096,35 @@ select:focus {
 }
 
 .rete-node .port-socket.input {
-  border-color: var(--success-color);
+  border-color: #81c784;
 }
 
 .rete-node .port-socket.input:hover {
-  background-color: var(--success-color);
-  border-color: var(--success-color);
+  background-color: #81c784;
+  border-color: #81c784;
 }
 
 .rete-node .port-socket.output {
-  border-color: var(--warning-color);
+  border-color: #ffb74d;
 }
 
 .rete-node .port-socket.output:hover {
-  background-color: var(--warning-color);
-  border-color: var(--warning-color);
+  background-color: #ffb74d;
+  border-color: #ffb74d;
 }
 
 .rete-node .port-label {
-  background-color: var(--secondary-bg);
+  background-color: rgba(255, 255, 255, 0.1);
   padding: 2px var(--spacing-xs);
   border-radius: var(--border-radius);
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   white-space: nowrap;
   max-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0;
   transition: opacity 0.2s;
+  color: var(--text-color);
 }
 
 .rete-node:hover .port-label {
@@ -1135,7 +1139,7 @@ select:focus {
 }
 
 .rete-connection {
-  stroke: var(--vscode-charts-blue);
+  stroke: #64b5f6;
   stroke-width: 2px;
   fill: none;
   pointer-events: stroke;
@@ -1143,19 +1147,19 @@ select:focus {
 }
 
 .rete-connection:hover {
-  stroke: var(--accent-color);
+  stroke: #42a5f5;
   stroke-width: 3px;
 }
 
 .rete-connection.selected {
-  stroke: var(--accent-color);
+  stroke: #42a5f5;
   stroke-width: 3px;
   stroke-dasharray: 5,5;
 }
 
 /* Connection creation preview */
 .rete-connection-preview {
-  stroke: var(--accent-color);
+  stroke: #42a5f5;
   stroke-width: 2px;
   stroke-dasharray: 5,5;
   fill: none;

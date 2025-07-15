@@ -44,9 +44,6 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
       style={{
         minWidth: '180px',
         minHeight: '100px',
-        border: '2px solid #2196f3',
-        borderRadius: '8px',
-        backgroundColor: '#ffffff',
         position: 'relative'
       }}
     >
