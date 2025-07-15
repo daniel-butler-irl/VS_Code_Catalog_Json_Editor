@@ -23,11 +23,16 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
   const [selectedFlavor, setSelectedFlavor] = useState(offering.flavors[0] || 'standard');
 
   const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData('application/json', JSON.stringify({
+    const dragData = {
       ...offering,
       selectedVersion,
       selectedFlavor
-    }));
+    };
+    
+    console.log('DALibrary: Drag started for offering:', dragData);
+    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+    e.dataTransfer.effectAllowed = 'copy';
+    console.log('DALibrary: Drag data set, effectAllowed:', e.dataTransfer.effectAllowed);
     onDragStart(offering);
   };
 

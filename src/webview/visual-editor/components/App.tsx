@@ -25,6 +25,19 @@ interface GraphModel {
   nodes: GraphNode[];
   connections: GraphConnection[];
   selectedFlavor: string;
+  products: Product[];
+  selectedProduct: string;
+}
+
+interface Product {
+  name: string;
+  label: string;
+  flavors: Flavor[];
+}
+
+interface Flavor {
+  name: string;
+  label: string;
 }
 
 interface OfferingData {
@@ -45,6 +58,8 @@ export const VisualEditorApp: React.FC = () => {
   const [graphModel, setGraphModel] = useState<GraphModel | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [availableOfferings, setAvailableOfferings] = useState<OfferingData[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
+  const [selectedFlavor, setSelectedFlavor] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,6 +72,12 @@ export const VisualEditorApp: React.FC = () => {
       case 'initializeGraph':
         console.log('Visual Editor App: Initializing graph with data:', message.data);
         setGraphModel(message.data);
+        // Set default product and flavor from the graph model
+        if (message.data?.products?.length > 0) {
+          const firstProduct = message.data.products[0];
+          setSelectedProduct(message.data.selectedProduct || firstProduct.name);
+          setSelectedFlavor(message.data.selectedFlavor || firstProduct.flavors?.[0]?.name || '');
+        }
         setIsLoading(false);
         setError(null);
         break;
@@ -64,6 +85,13 @@ export const VisualEditorApp: React.FC = () => {
       case 'updateGraph':
         console.log('Visual Editor App: Updating graph with data:', message.data);
         setGraphModel(message.data);
+        // Update selected product/flavor if they changed
+        if (message.data?.selectedProduct) {
+          setSelectedProduct(message.data.selectedProduct);
+        }
+        if (message.data?.selectedFlavor) {
+          setSelectedFlavor(message.data.selectedFlavor);
+        }
         setError(null);
         break;
         
@@ -151,6 +179,7 @@ export const VisualEditorApp: React.FC = () => {
 
   // Handle adding a new dependency
   const handleAddDependency = useCallback((offering: OfferingData, position: { x: number; y: number }) => {
+    console.log('Visual Editor App: Adding dependency', offering, position);
     if (window.vscode) {
       window.vscode.postMessage({
         command: 'addDependency',
@@ -204,6 +233,47 @@ export const VisualEditorApp: React.FC = () => {
     }
   }, []);
 
+  // Handle product selection change
+  const handleProductChange = useCallback((productName: string) => {
+    console.log('Visual Editor App: Product changed to:', productName);
+    setSelectedProduct(productName);
+    
+    // Find the new product and default to its first flavor
+    const newProduct = graphModel?.products?.find(p => p.name === productName);
+    if (newProduct && newProduct.flavors.length > 0) {
+      const firstFlavor = newProduct.flavors[0].name;
+      setSelectedFlavor(firstFlavor);
+      
+      // Notify VS Code about the change
+      if (window.vscode) {
+        window.vscode.postMessage({
+          command: 'changeProductFlavor',
+          data: {
+            product: productName,
+            flavor: firstFlavor
+          }
+        });
+      }
+    }
+  }, [graphModel]);
+
+  // Handle flavor selection change
+  const handleFlavorChange = useCallback((flavorName: string) => {
+    console.log('Visual Editor App: Flavor changed to:', flavorName);
+    setSelectedFlavor(flavorName);
+    
+    // Notify VS Code about the change
+    if (window.vscode) {
+      window.vscode.postMessage({
+        command: 'changeProductFlavor',
+        data: {
+          product: selectedProduct,
+          flavor: flavorName
+        }
+      });
+    }
+  }, [selectedProduct]);
+
   console.log('Visual Editor App: Render state - isLoading:', isLoading, 'error:', error, 'graphModel:', !!graphModel);
 
   if (isLoading) {
@@ -253,7 +323,13 @@ export const VisualEditorApp: React.FC = () => {
   return (
     <ErrorBoundary>
       <div className="visual-editor">
-        <Toolbar />
+        <Toolbar 
+          products={graphModel?.products || []}
+          selectedProduct={selectedProduct}
+          selectedFlavor={selectedFlavor}
+          onProductChange={handleProductChange}
+          onFlavorChange={handleFlavorChange}
+        />
         
         <div className="editor-content">
           <DALibrary 
@@ -267,6 +343,7 @@ export const VisualEditorApp: React.FC = () => {
             onNodeSelect={handleNodeSelect}
             onAddConnection={handleAddConnection}
             onRemoveConnection={handleRemoveConnection}
+            onAddDependency={handleAddDependency}
           />
           
           <PropertiesPanel

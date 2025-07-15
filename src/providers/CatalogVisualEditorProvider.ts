@@ -37,6 +37,19 @@ interface GraphModel {
   nodes: GraphNode[];
   connections: GraphConnection[];
   selectedFlavor: string;
+  products: Product[];
+  selectedProduct: string;
+}
+
+interface Product {
+  name: string;
+  label: string;
+  flavors: Flavor[];
+}
+
+interface Flavor {
+  name: string;
+  label: string;
 }
 
 export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvider {
@@ -204,11 +217,12 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     }
   }
 
-  private async buildGraphModel(catalogData: any): Promise<GraphModel> {
+  private async buildGraphModel(catalogData: any, selectedProduct?: string, selectedFlavor?: string): Promise<GraphModel> {
     this.logger.debug('Visual Editor: Building graph model from catalog data', {
       hasProducts: !!catalogData.products,
       productCount: catalogData.products?.length || 0,
-      firstProductFlavors: catalogData.products?.[0]?.flavors?.length || 0
+      selectedProduct,
+      selectedFlavor
     }, 'visualEditor');
 
     const nodes: GraphNode[] = [];
@@ -219,21 +233,35 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       throw new Error('No products found in catalog JSON');
     }
 
-    const product = catalogData.products[0]; // Use first product
-    const flavors = product.flavors || [];
-    const selectedFlavor = flavors.length > 0 ? flavors[0].name : '';
+    // Transform products to the format expected by the UI
+    const products: Product[] = catalogData.products.map((product: any) => ({
+      name: product.name,
+      label: product.label || product.name,
+      flavors: (product.flavors || []).map((flavor: any) => ({
+        name: flavor.name,
+        label: flavor.label || flavor.name
+      }))
+    }));
 
-    this.logger.debug('Visual Editor: Processing product', {
+    // Determine which product and flavor to use
+    const targetProductName = selectedProduct || products[0]?.name;
+    const targetProduct = products.find(p => p.name === targetProductName) || products[0];
+    const targetFlavorName = selectedFlavor || targetProduct?.flavors[0]?.name || '';
+    
+    // Find the actual product and flavor from the catalog data
+    const product = catalogData.products.find((p: any) => p.name === targetProductName) || catalogData.products[0];
+    const flavor = product.flavors?.find((f: any) => f.name === targetFlavorName) || product.flavors?.[0];
+
+    this.logger.debug('Visual Editor: Processing product and flavor', {
       productName: product.name,
-      flavorCount: flavors.length,
-      selectedFlavor
+      productLabel: product.label,
+      flavorName: flavor?.name,
+      flavorLabel: flavor?.label
     }, 'visualEditor');
 
-    if (flavors.length === 0) {
-      throw new Error('No flavors found in first product');
+    if (!flavor) {
+      throw new Error(`No flavor found for product ${product.name}`);
     }
-
-    const flavor = flavors[0]; // For now, use the first flavor
     
     // Create root node
     const rootNode: GraphNode = {
@@ -249,6 +277,16 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       },
       position: { x: 400, y: 200 }
     };
+    
+    this.logger.debug('Visual Editor: Created root node', {
+      rootNode,
+      flavorData: {
+        name: flavor.name,
+        label: flavor.label,
+        description: flavor.description
+      }
+    }, 'visualEditor');
+    
     nodes.push(rootNode);
 
     // Create dependency nodes
@@ -298,11 +336,23 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }
     });
 
-    return {
+    const graphModel = {
       nodes,
       connections,
-      selectedFlavor
+      selectedFlavor: targetFlavorName,
+      products,
+      selectedProduct: targetProductName
     };
+
+    this.logger.debug('Visual Editor: Built complete graph model', {
+      nodeCount: graphModel.nodes.length,
+      connectionCount: graphModel.connections.length,
+      selectedProduct: graphModel.selectedProduct,
+      selectedFlavor: graphModel.selectedFlavor,
+      nodeTypes: graphModel.nodes.map(n => ({ id: n.id, type: n.type, name: n.name }))
+    }, 'visualEditor');
+
+    return graphModel;
   }
 
   private registerMessageHandlers(
@@ -374,6 +424,9 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         // Using mock data in React app, no need to fetch from API
         this.logger.debug('Visual Editor: Ignoring requestOfferingsData - using mock data', {}, 'visualEditor');
         break;
+      case 'changeProductFlavor':
+        await this.handleChangeProductFlavor(message, webviewPanel, document);
+        break;
       case 'ready':
         // Webview is ready, send initial data
         this.logger.info('Visual Editor: Received ready message from webview, initializing...', {}, 'visualEditor');
@@ -385,9 +438,79 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   }
 
   private async handleAddDependency(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
-    // Implementation for adding a new dependency
-    // This will modify the JSON document
-    this.logger.debug('Adding dependency', { data: message.data }, 'visualEditor');
+    try {
+      this.logger.info('Visual Editor: Adding dependency to document', { 
+        offering: message.data?.offering?.name,
+        position: message.data?.position 
+      }, 'visualEditor');
+
+      const offering = message.data?.offering;
+      const position = message.data?.position;
+
+      if (!offering || !position) {
+        throw new Error('Invalid dependency data: missing offering or position');
+      }
+
+      // Parse current document
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog || !parsedCatalog.products || parsedCatalog.products.length === 0) {
+        throw new Error('Invalid catalog structure: no products found');
+      }
+
+      const product = parsedCatalog.products[0];
+      if (!product.flavors || product.flavors.length === 0) {
+        throw new Error('Invalid product structure: no flavors found');
+      }
+
+      // Get the first flavor to add the dependency to
+      const flavor = product.flavors[0];
+      if (!flavor.dependencies) {
+        flavor.dependencies = [];
+      }
+
+      // Create new dependency object
+      const newDependency: Dependency = {
+        id: offering.id,
+        name: offering.name,
+        version: offering.selectedVersion || offering.versions?.[0] || 'latest',
+        flavors: offering.selectedFlavor ? [offering.selectedFlavor] : (offering.flavors?.slice(0, 1) || ['standard']),
+        install_type: 'extension', // Default to extension for new dependencies
+        catalog_id: 'public', // Default to public catalog
+        input_mapping: [] // Will be configured later
+      };
+
+      // Add the dependency
+      flavor.dependencies.push(newDependency);
+
+      // Apply the changes to the document
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(text.length)
+      );
+
+      // Format the JSON with proper indentation
+      const updatedJson = JSON.stringify(parsedCatalog, null, 2);
+      edit.replace(document.uri, fullRange, updatedJson);
+
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      
+      if (success) {
+        this.logger.info('Visual Editor: Successfully added dependency to document', {
+          dependencyName: newDependency.name,
+          dependencyId: newDependency.id
+        }, 'visualEditor');
+      } else {
+        throw new Error('Failed to apply document changes');
+      }
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to add dependency', { error, message }, 'visualEditor');
+      throw error;
+    }
   }
 
   private async handleRemoveDependency(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
@@ -412,6 +535,48 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   private async handleRemoveConnection(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
     // Implementation for removing a connection
     this.logger.debug('Removing connection', { connectionId: message.connectionId }, 'visualEditor');
+  }
+
+  private async handleChangeProductFlavor(message: WebviewMessage, webviewPanel: vscode.WebviewPanel, document: vscode.TextDocument): Promise<void> {
+    try {
+      this.logger.info('Visual Editor: Changing product/flavor selection', {
+        product: message.data?.product,
+        flavor: message.data?.flavor
+      }, 'visualEditor');
+
+      const selectedProduct = message.data?.product;
+      const selectedFlavor = message.data?.flavor;
+
+      // Parse current document and rebuild graph model with new selection
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog) {
+        throw new Error('Invalid JSON document - unable to parse');
+      }
+
+      // Build new graph model with selected product/flavor
+      const graphModel = await this.buildGraphModel(parsedCatalog, selectedProduct, selectedFlavor);
+
+      // Send updated graph model to webview
+      await webviewPanel.webview.postMessage({
+        command: 'updateGraph',
+        data: graphModel
+      });
+
+      this.logger.info('Visual Editor: Successfully updated graph for product/flavor change', {
+        selectedProduct: graphModel.selectedProduct,
+        selectedFlavor: graphModel.selectedFlavor,
+        nodeCount: graphModel.nodes.length
+      }, 'visualEditor');
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to handle product/flavor change', { error, message }, 'visualEditor');
+      await webviewPanel.webview.postMessage({
+        command: 'showError',
+        error: error instanceof Error ? error.message : 'Failed to change product/flavor'
+      });
+    }
   }
 
   private async getIBMCloudService(): Promise<IBMCloudService | null> {
