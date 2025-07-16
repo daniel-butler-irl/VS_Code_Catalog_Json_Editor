@@ -27,12 +27,18 @@ interface GraphModel {
   selectedFlavor: string;
 }
 
+interface FlavorData {
+  name: string;
+  label?: string;
+}
+
 interface OfferingData {
   id: string;
   name: string;
+  label?: string;
   description: string;
   versions: string[];
-  flavors: string[];
+  flavors: FlavorData[];
 }
 
 interface CanvasProps {
@@ -42,6 +48,7 @@ interface CanvasProps {
   onAddConnection: (connection: Omit<GraphConnection, 'id'>) => void;
   onRemoveConnection: (connectionId: string) => void;
   onAddDependency: (offering: OfferingData, position: { x: number; y: number }) => void;
+  onValidationChange?: (errors: string[]) => void;
 }
 
 type Schemes = GetSchemes<
@@ -59,18 +66,92 @@ const createSocketSelector = (socket: ClassicPreset.Socket) => {
          socket.name === 'boolean' ? 'boolean' : 'any';
 };
 
+// Port validation utility
+const validatePortConnection = (fromSocket: ClassicPreset.Socket, toSocket: ClassicPreset.Socket): { valid: boolean; reason?: string } => {
+  // Same type connections are always allowed
+  if (fromSocket.name === toSocket.name) {
+    return { valid: true };
+  }
+  
+  // 'any' socket can connect to anything
+  if (fromSocket.name === 'any' || toSocket.name === 'any') {
+    return { valid: true };
+  }
+  
+  // Type compatibility matrix
+  const compatibilityMatrix: { [key: string]: string[] } = {
+    'string': ['string', 'any'],
+    'number': ['number', 'string', 'any'], // Numbers can be converted to strings
+    'boolean': ['boolean', 'string', 'any'], // Booleans can be converted to strings
+    'object': ['object', 'any']
+  };
+  
+  const fromType = fromSocket.name;
+  const toType = toSocket.name;
+  
+  if (compatibilityMatrix[fromType]?.includes(toType)) {
+    return { valid: true };
+  }
+  
+  return {
+    valid: false,
+    reason: `Cannot connect ${fromType} to ${toType}. Incompatible types.`
+  };
+};
+
+// Visual feedback for port connections
+const getPortHighlightClass = (socket: ClassicPreset.Socket, isHovered: boolean, isConnectable: boolean): string => {
+  let baseClass = 'port-highlight';
+  
+  if (isHovered) {
+    baseClass += isConnectable ? ' port-connectable' : ' port-incompatible';
+  }
+  
+  return baseClass;
+};
+
 export const Canvas: React.FC<CanvasProps> = ({
   graphModel,
   selectedNode,
   onNodeSelect,
   onAddConnection,
   onRemoveConnection,
-  onAddDependency
+  onAddDependency,
+  onValidationChange
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [editor, setEditor] = useState<NodeEditor<Schemes> | null>(null);
   const [area, setArea] = useState<AreaPlugin<Schemes, AreaExtra> | null>(null);
   const [nodeMap, setNodeMap] = useState<Map<string, RootNodeClass | DependencyNodeClass>>(new Map());
+  const selectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced selection handler to prevent rapid selection changes
+  const handleDebouncedSelection = useCallback((graphNode: GraphNode) => {
+    // Clear any existing timeout
+    if (selectionTimeoutRef.current) {
+      clearTimeout(selectionTimeoutRef.current);
+    }
+    
+    // Set a new timeout to debounce the selection
+    selectionTimeoutRef.current = setTimeout(() => {
+      // Validate the node data before calling onNodeSelect
+      if (graphNode && graphNode.id && graphNode.type && graphNode.data) {
+        console.log('Canvas: Debounced selection for node:', graphNode.id);
+        onNodeSelect(graphNode);
+      } else {
+        console.warn('Canvas: Invalid node data for selection:', graphNode);
+      }
+    }, 100); // 100ms debounce delay
+  }, [onNodeSelect]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (selectionTimeoutRef.current) {
+        clearTimeout(selectionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Initialize Rete.js editor
   const initializeEditor = useCallback(async () => {
@@ -123,6 +204,13 @@ export const Canvas: React.FC<CanvasProps> = ({
           
           if (data) {
             const offering = JSON.parse(data);
+            
+            // Validate offering data
+            if (!offering || typeof offering !== 'object' || !offering.id) {
+              console.error('Canvas: Invalid offering data:', offering);
+              return;
+            }
+            
             // Convert screen coordinates to area coordinates
             const rect = canvasRef.current?.getBoundingClientRect();
             const canvasPoint = rect ? {
@@ -139,25 +227,38 @@ export const Canvas: React.FC<CanvasProps> = ({
           }
         } catch (error) {
           console.error('Canvas: Error handling drop:', error);
+          // Don't crash the UI - just log the error
         }
       };
 
       const dragOverHandler = (e: DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('Canvas: Drag over event');
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Canvas: Drag over event');
+        } catch (error) {
+          console.error('Canvas: Error in drag over handler:', error);
+        }
       };
 
       const dragEnterHandler = (e: DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('Canvas: Drag enter event');
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Canvas: Drag enter event');
+        } catch (error) {
+          console.error('Canvas: Error in drag enter handler:', error);
+        }
       };
 
       const dragLeaveHandler = (e: DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('Canvas: Drag leave event');
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Canvas: Drag leave event');
+        } catch (error) {
+          console.error('Canvas: Error in drag leave handler:', error);
+        }
       };
 
       // Add event listeners to the main container element only
@@ -170,25 +271,10 @@ export const Canvas: React.FC<CanvasProps> = ({
         containerElement.addEventListener('dragleave', dragLeaveHandler);
       }
 
-      // Configure connection plugin with socket compatibility
-      connectionPlugin.addPreset(ConnectionPresets.classic.setup({
-        canMakeConnection(from, to) {
-          // Allow connections between compatible socket types
-          const fromSocket = from.socket;
-          const toSocket = to.socket;
-          
-          // Same type connections are always allowed
-          if (fromSocket.name === toSocket.name) return true;
-          
-          // 'any' socket can connect to anything
-          if (fromSocket.name === 'any' || toSocket.name === 'any') return true;
-          
-          // Prevent connecting output to output or input to input
-          return true; // For now, allow all connections
-        }
-      }));
+      // Configure connection plugin with enhanced socket compatibility
+      connectionPlugin.addPreset(ConnectionPresets.classic.setup());
 
-      // Configure React plugin with custom components
+      // Configure React plugin with custom components and enhanced socket rendering
       reactPlugin.addPreset(ReactPresets.classic.setup({
         customize: {
           node(context) {
@@ -199,12 +285,6 @@ export const Canvas: React.FC<CanvasProps> = ({
               return DependencyNode;
             }
             return ReactPresets.classic.Node;
-          },
-          socket(context) {
-            return ReactPresets.classic.Socket;
-          },
-          connection(context) {
-            return ReactPresets.classic.Connection;
           }
         }
       }));
@@ -214,19 +294,63 @@ export const Canvas: React.FC<CanvasProps> = ({
         accumulating: AreaExtensions.accumulateOnCtrl()
       });
 
-      // Listen for node selection changes
+      // Listen for node selection changes with enhanced error handling
       areaPlugin.addPipe(context => {
-        if (context.type === 'nodeselected') {
-          const reteNode = context.data.id && newEditor.getNode(context.data.id);
-          if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
-            onNodeSelect(reteNode.graphNode);
-            reteNode.selected = true;
+        try {
+          if (context.type === 'nodeselected') {
+            console.log('Canvas: Node selected event:', context.data);
+            
+            // Validate context data
+            if (!context.data || !context.data.id) {
+              console.warn('Canvas: Invalid selection event data:', context.data);
+              return context;
+            }
+            
+            const reteNode = newEditor.getNode(context.data.id);
+            console.log('Canvas: Found Rete node:', reteNode);
+            
+            if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
+              // Validate that the node has required graph data
+              if (!reteNode.graphNode) {
+                console.error('Canvas: Selected node missing graphNode data:', reteNode);
+                return context;
+              }
+              
+              console.log('Canvas: Valid node instance, graphNode data:', {
+                id: reteNode.graphNode.id,
+                type: reteNode.graphNode.type,
+                name: reteNode.graphNode.name,
+                data: reteNode.graphNode.data,
+                hasInputs: !!reteNode.graphNode.data?.inputs,
+                inputsLength: reteNode.graphNode.data?.inputs?.length || 0,
+                hasOutputs: !!reteNode.graphNode.data?.outputs,
+                outputsLength: reteNode.graphNode.data?.outputs?.length || 0
+              });
+              
+              // Update selection state
+              reteNode.selected = true;
+              handleDebouncedSelection(reteNode.graphNode);
+              
+            } else {
+              console.warn('Canvas: Selected node is not a valid RootNodeClass or DependencyNodeClass:', reteNode);
+            }
+          } else if (context.type === 'nodeunselected') {
+            console.log('Canvas: Node unselected event:', context.data);
+            
+            // Validate context data
+            if (!context.data || !context.data.id) {
+              console.warn('Canvas: Invalid unselection event data:', context.data);
+              return context;
+            }
+            
+            const reteNode = newEditor.getNode(context.data.id);
+            if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
+              reteNode.selected = false;
+              // Don't clear selection here - let the user explicitly select another node
+            }
           }
-        } else if (context.type === 'nodeunselected') {
-          const reteNode = context.data.id && newEditor.getNode(context.data.id);
-          if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
-            reteNode.selected = false;
-          }
+        } catch (error) {
+          console.error('Canvas: Error in selection event handler:', error);
         }
         return context;
       });
@@ -264,7 +388,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       setArea(null);
       throw error;
     }
-  }, [editor, onNodeSelect, onAddConnection, onRemoveConnection, onAddDependency]);
+  }, [editor, handleDebouncedSelection, onAddConnection, onRemoveConnection, onAddDependency]);
 
   // Update editor content when graph model changes
   const updateEditorContent = useCallback(async () => {
@@ -338,7 +462,6 @@ export const Canvas: React.FC<CanvasProps> = ({
           if (selectedNode?.id === graphNode.id) {
             console.log('Canvas: Setting node as selected');
             reteNode.selected = true;
-            area.selector.pick({ id: reteNode.id, label: reteNode.label }, true);
           }
 
           console.log(`Canvas: Successfully processed node ${graphNode.id}`);
@@ -450,23 +573,101 @@ export const Canvas: React.FC<CanvasProps> = ({
 
       {/* Canvas controls */}
       <div className="canvas-controls">
-        <button onClick={() => area && AreaExtensions.zoomAt(area, editor?.getNodes() || [])}>
-          Fit
-        </button>
-        <button onClick={() => area && area.area.zoom(area.area.transform.k * 1.2)}>
-          +
-        </button>
-        <span>{area ? Math.round(area.area.transform.k * 100) : 100}%</span>
-        <button onClick={() => area && area.area.zoom(area.area.transform.k / 1.2)}>
-          -
-        </button>
+        <div className="control-group">
+          <button 
+            className="canvas-control-btn"
+            onClick={() => area && AreaExtensions.zoomAt(area, editor?.getNodes() || [])}
+            title="Fit to Screen"
+          >
+            ⚏
+          </button>
+          <button 
+            className="canvas-control-btn"
+            onClick={() => area && area.area.zoom(area.area.transform.k * 1.2)}
+            title="Zoom In"
+          >
+            +
+          </button>
+          <span className="zoom-level">
+            {area ? Math.round(area.area.transform.k * 100) : 100}%
+          </span>
+          <button 
+            className="canvas-control-btn"
+            onClick={() => area && area.area.zoom(area.area.transform.k / 1.2)}
+            title="Zoom Out"
+          >
+            -
+          </button>
+        </div>
+        
+        <div className="control-group">
+          <button 
+            className="canvas-control-btn"
+            onClick={() => {
+              if (editor && area) {
+                // Auto-arrange nodes
+                const nodes = editor.getNodes();
+                nodes.forEach((node, index) => {
+                  const x = 100 + (index % 3) * 250;
+                  const y = 100 + Math.floor(index / 3) * 200;
+                  area.translate(node.id, { x, y });
+                });
+              }
+            }}
+            title="Auto Layout"
+          >
+            🎯
+          </button>
+        </div>
       </div>
 
-      {/* Info overlay */}
+      {/* Enhanced info overlay */}
       <div className="canvas-info">
-        <div>Flavor: {graphModel.selectedFlavor}</div>
-        <div>Nodes: {graphModel.nodes.length}</div>
-        <div>Connections: {graphModel.connections.length}</div>
+        <div className="info-section">
+          <div className="info-label">Flavor:</div>
+          <div className="info-value">{graphModel.selectedFlavor || 'None'}</div>
+        </div>
+        <div className="info-section">
+          <div className="info-label">Nodes:</div>
+          <div className="info-value">{graphModel.nodes.length}</div>
+        </div>
+        <div className="info-section">
+          <div className="info-label">Connections:</div>
+          <div className="info-value">{graphModel.connections.length}</div>
+        </div>
+        {selectedNode && (
+          <div className="info-section selected-node-info">
+            <div className="info-label">Selected:</div>
+            <div className="info-value">{selectedNode.name}</div>
+          </div>
+        )}
+      </div>
+      
+      {/* Port type legend */}
+      <div className="port-legend">
+        <div className="legend-title">Port Types</div>
+        <div className="legend-items">
+          <div className="legend-item">
+            <div className="legend-port string-port"></div>
+            <span>String</span>
+          </div>
+          <div className="legend-item">
+            <div className="legend-port number-port"></div>
+            <span>Number</span>
+          </div>
+          <div className="legend-item">
+            <div className="legend-port boolean-port"></div>
+            <span>Boolean</span>
+          </div>
+          <div className="legend-item">
+            <div className="legend-port object-port"></div>
+            <span>Object</span>
+          </div>
+          <div className="legend-item">
+            <div className="legend-port any-port"></div>
+            <span>Any</span>
+          </div>
+        </div>
       </div>
     </div>
   );

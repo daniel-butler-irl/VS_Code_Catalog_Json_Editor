@@ -1,16 +1,36 @@
 import React, { useState, useMemo } from 'react';
 
+interface FlavorData {
+  name: string;
+  label?: string;
+}
+
 interface OfferingData {
   id: string;
   name: string;
+  label?: string;
   description: string;
   versions: string[];
-  flavors: string[];
+  flavors: FlavorData[];
+  catalogId?: string;
+  catalogLabel?: string;
+}
+
+interface CatalogData {
+  id: string;
+  label: string;
+  shortDescription?: string;
+  isPublic: boolean;
 }
 
 interface DALibraryProps {
   offerings: OfferingData[];
+  catalogs?: CatalogData[];
+  selectedCatalogId?: string;
   onAddDependency: (offering: OfferingData, position: { x: number; y: number }) => void;
+  onCatalogChange?: (catalogId: string) => void;
+  loading?: boolean;
+  error?: string | null;
 }
 
 interface OfferingCardProps {
@@ -19,21 +39,31 @@ interface OfferingCardProps {
 }
 
 const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) => {
+  const [selectedFlavor, setSelectedFlavor] = useState(offering.flavors[0]?.name || 'standard');
   const [selectedVersion, setSelectedVersion] = useState(offering.versions[0] || '');
-  const [selectedFlavor, setSelectedFlavor] = useState(offering.flavors[0] || 'standard');
+
+  // Get versions for the selected flavor - for now, we'll show all versions
+  // In a real implementation, this would filter versions based on the selected flavor
+  const availableVersions = offering.versions;
 
   const handleDragStart = (e: React.DragEvent) => {
-    const dragData = {
-      ...offering,
-      selectedVersion,
-      selectedFlavor
-    };
-    
-    console.log('DALibrary: Drag started for offering:', dragData);
-    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-    e.dataTransfer.effectAllowed = 'copy';
-    console.log('DALibrary: Drag data set, effectAllowed:', e.dataTransfer.effectAllowed);
-    onDragStart(offering);
+    try {
+      const dragData = {
+        ...offering,
+        selectedVersion,
+        selectedFlavor
+      };
+      
+      console.log('DALibrary: Drag started for offering:', dragData);
+      e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+      e.dataTransfer.effectAllowed = 'copy';
+      console.log('DALibrary: Drag data set, effectAllowed:', e.dataTransfer.effectAllowed);
+      onDragStart(offering);
+    } catch (dragError) {
+      console.error('DALibrary: Error during drag start:', dragError);
+      // Prevent drag operation on error
+      e.preventDefault();
+    }
   };
 
   return (
@@ -44,7 +74,7 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
       title={offering.description}
     >
       <div className="offering-header">
-        <div className="offering-name">{offering.name}</div>
+        <div className="offering-name">{offering.label || offering.name}</div>
       </div>
       
       <div className="offering-description">
@@ -54,7 +84,22 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
       </div>
       
       <div className="offering-controls">
-        {offering.versions.length > 0 && (
+        {offering.flavors.length > 0 && (
+          <div className="control-group">
+            <label>Variation:</label>
+            <select 
+              value={selectedFlavor}
+              onChange={(e) => setSelectedFlavor(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {offering.flavors.map(flavor => (
+                <option key={flavor.name} value={flavor.name}>{flavor.label || flavor.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        
+        {availableVersions.length > 0 && (
           <div className="control-group">
             <label>Version:</label>
             <select 
@@ -62,23 +107,8 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
               onChange={(e) => setSelectedVersion(e.target.value)}
               onClick={(e) => e.stopPropagation()}
             >
-              {offering.versions.map(version => (
+              {availableVersions.map(version => (
                 <option key={version} value={version}>{version}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        
-        {offering.flavors.length > 0 && (
-          <div className="control-group">
-            <label>Flavor:</label>
-            <select 
-              value={selectedFlavor}
-              onChange={(e) => setSelectedFlavor(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {offering.flavors.map(flavor => (
-                <option key={flavor} value={flavor}>{flavor}</option>
               ))}
             </select>
           </div>
@@ -88,16 +118,44 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
   );
 };
 
-export const DALibrary: React.FC<DALibraryProps> = ({ offerings, onAddDependency }) => {
+export const DALibrary: React.FC<DALibraryProps> = ({ 
+  offerings, 
+  catalogs = [], 
+  selectedCatalogId, 
+  onAddDependency, 
+  onCatalogChange, 
+  loading = false, 
+  error = null 
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [catalogFilter, setCatalogFilter] = useState('public');
   const [draggedOffering, setDraggedOffering] = useState<OfferingData | null>(null);
 
   const filteredOfferings = useMemo(() => {
-    return offerings.filter(offering => 
-      offering.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      offering.description.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    try {
+      if (!Array.isArray(offerings)) {
+        console.warn('DALibrary: Invalid offerings format, expected array');
+        return [];
+      }
+      
+      return offerings.filter(offering => {
+        try {
+          const searchLower = searchTerm.toLowerCase();
+          const name = offering.name || '';
+          const label = offering.label || '';
+          const description = offering.description || '';
+          
+          return name.toLowerCase().includes(searchLower) ||
+                 label.toLowerCase().includes(searchLower) ||
+                 description.toLowerCase().includes(searchLower);
+        } catch (filterError) {
+          console.warn('DALibrary: Error filtering offering:', offering, filterError);
+          return false;
+        }
+      });
+    } catch (error) {
+      console.error('DALibrary: Error in filteredOfferings:', error);
+      return [];
+    }
   }, [offerings, searchTerm]);
 
   const handleDragStart = (offering: OfferingData) => {
@@ -108,17 +166,38 @@ export const DALibrary: React.FC<DALibraryProps> = ({ offerings, onAddDependency
     setDraggedOffering(null);
   };
 
+  const handleRetryOfferings = () => {
+    console.log('DALibrary: Retrying offerings data fetch');
+    try {
+      if (window.vscode) {
+        window.vscode.postMessage({ command: 'requestOfferingsData' });
+      } else {
+        console.error('DALibrary: VS Code API not available for retry');
+      }
+    } catch (retryError) {
+      console.error('DALibrary: Error sending retry message:', retryError);
+    }
+  };
+
   return (
     <div className="da-library" onDragEnd={handleDragEnd}>
       <div className="da-library-header">
-        <h3>DA Library</h3>
+        <h3>Catalog</h3>
         <div className="catalog-selector">
           <select 
-            value={catalogFilter}
-            onChange={(e) => setCatalogFilter(e.target.value)}
+            value={selectedCatalogId || ''}
+            onChange={(e) => onCatalogChange && onCatalogChange(e.target.value)}
+            disabled={catalogs.length === 0}
           >
-            <option value="public">IBM Cloud Public Catalog</option>
-            <option value="private">Private Catalogs</option>
+            {catalogs.length === 0 ? (
+              <option value="">No catalogs available</option>
+            ) : (
+              catalogs.map(catalog => (
+                <option key={catalog.id} value={catalog.id}>
+                  {catalog.label} {catalog.isPublic ? '(Public)' : '(Private)'}
+                </option>
+              ))
+            )}
           </select>
         </div>
       </div>
@@ -134,11 +213,33 @@ export const DALibrary: React.FC<DALibraryProps> = ({ offerings, onAddDependency
       </div>
       
       <div className="offerings-count">
-        Showing {filteredOfferings.length} of {offerings.length} offerings
+        {loading ? (
+          'Loading offerings...'
+        ) : error ? (
+          'Unable to load offerings'
+        ) : (
+          `Showing ${filteredOfferings.length} of ${offerings.length} offerings`
+        )}
       </div>
       
       <div className="offerings-list">
-        {filteredOfferings.length === 0 ? (
+        {loading ? (
+          <div className="loading-state">
+            <div className="loading-spinner"></div>
+            <div className="loading-text">Loading offerings...</div>
+          </div>
+        ) : error ? (
+          <div className="error-state">
+            <div className="error-icon">⚠️</div>
+            <div className="error-message">{error}</div>
+            <div className="error-hint">
+              Please check your IBM Cloud authentication and try again.
+            </div>
+            <button className="retry-button" onClick={handleRetryOfferings}>
+              Retry
+            </button>
+          </div>
+        ) : filteredOfferings.length === 0 ? (
           <div className="empty-state">
             {searchTerm ? `No offerings found for "${searchTerm}"` : 'No offerings available'}
           </div>
@@ -155,7 +256,12 @@ export const DALibrary: React.FC<DALibraryProps> = ({ offerings, onAddDependency
       
       {draggedOffering && (
         <div className="drag-feedback">
-          Drag to canvas to add {draggedOffering.name}
+          <div className="drag-feedback-text">
+            Drag to canvas to add <strong>{draggedOffering.label || draggedOffering.name}</strong>
+          </div>
+          <div className="drag-feedback-details">
+            Version: {draggedOffering.versions[0] || 'Latest'} | Flavor: {draggedOffering.flavors[0]?.label || draggedOffering.flavors[0]?.name || 'Standard'}
+          </div>
         </div>
       )}
     </div>

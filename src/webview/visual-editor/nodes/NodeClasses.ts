@@ -1,7 +1,36 @@
 import { ClassicPreset } from 'rete';
-import { GraphNode } from '../../../types/visual-editor';
 
-// Custom socket types for different data types
+interface GraphNode {
+  id: string;
+  type: 'root' | 'dependency';
+  name: string;
+  data: any;
+  position: { x: number; y: number };
+}
+
+interface NodeInput {
+  name: string;
+  type?: string;
+  description?: string;
+  required?: boolean;
+  defaultValue?: any;
+  connector?: boolean;
+  virtual?: boolean;
+  sensitive?: boolean;
+}
+
+interface NodeOutput {
+  name: string;
+  type?: string;
+  description?: string;
+  value?: string;
+  sensitive?: boolean;
+  connector?: boolean;
+}
+
+/**
+ * Base socket types for different data types
+ */
 export class StringSocket extends ClassicPreset.Socket {
   constructor() {
     super('string');
@@ -14,15 +43,15 @@ export class NumberSocket extends ClassicPreset.Socket {
   }
 }
 
-export class ObjectSocket extends ClassicPreset.Socket {
-  constructor() {
-    super('object');
-  }
-}
-
 export class BooleanSocket extends ClassicPreset.Socket {
   constructor() {
     super('boolean');
+  }
+}
+
+export class ObjectSocket extends ClassicPreset.Socket {
+  constructor() {
+    super('object');
   }
 }
 
@@ -32,210 +61,327 @@ export class AnySocket extends ClassicPreset.Socket {
   }
 }
 
-// Base class for our custom nodes
-export abstract class BaseNodeClass extends ClassicPreset.Node {
-  public selected = false;
-  public graphNode: GraphNode;
+/**
+ * Create socket based on type string
+ */
+export function createSocket(type?: string): ClassicPreset.Socket {
+  switch (type?.toLowerCase()) {
+    case 'string':
+      return new StringSocket();
+    case 'number':
+    case 'integer':
+      return new NumberSocket();
+    case 'boolean':
+    case 'bool':
+      return new BooleanSocket();
+    case 'object':
+    case 'map':
+      return new ObjectSocket();
+    default:
+      return new AnySocket();
+  }
+}
+
+/**
+ * Root node class representing the main deployable architecture
+ */
+export class RootNodeClass extends ClassicPreset.Node {
+  width = 180;
+  height = 120;
+  selected = false;
+  graphNode: GraphNode;
 
   constructor(graphNode: GraphNode) {
-    console.log('BaseNodeClass: Starting constructor with graphNode:', graphNode);
-    
     super(graphNode.name);
-    console.log('BaseNodeClass: Called super(), checking inputs/outputs initialization');
-    console.log('BaseNodeClass: this.inputs type:', typeof this.inputs, 'value:', this.inputs);
-    console.log('BaseNodeClass: this.outputs type:', typeof this.outputs, 'value:', this.outputs);
-    console.log('BaseNodeClass: this.inputs instanceof Map:', this.inputs instanceof Map);
-    console.log('BaseNodeClass: this.outputs instanceof Map:', this.outputs instanceof Map);
-    
     this.graphNode = graphNode;
-    
-    // Ensure inputs and outputs are properly initialized as Maps
-    if (!(this.inputs instanceof Map)) {
-      console.log('BaseNodeClass: inputs is not a Map, initializing as new Map');
-      this.inputs = new Map();
-    }
-    if (!(this.outputs instanceof Map)) {
-      console.log('BaseNodeClass: outputs is not a Map, initializing as new Map');
-      this.outputs = new Map();
-    }
-    
-    console.log('BaseNodeClass: About to call setupPorts()');
-    this.setupPorts();
-    console.log('BaseNodeClass: setupPorts() completed successfully');
-  }
-
-  abstract setupPorts(): void;
-
-  protected createSocket(type: string): ClassicPreset.Socket {
-    switch (type) {
-      case 'string':
-        return new StringSocket();
-      case 'number':
-        return new NumberSocket();
-      case 'object':
-        return new ObjectSocket();
-      case 'boolean':
-        return new BooleanSocket();
-      default:
-        return new AnySocket();
-    }
-  }
-
-  updateGraphNode(graphNode: GraphNode): void {
-    console.log('BaseNodeClass: updateGraphNode called with:', graphNode);
-    this.graphNode = graphNode;
+    this.id = graphNode.id;
     this.label = graphNode.name;
-    
-    // Ensure inputs and outputs are Maps before clearing
-    if (this.inputs instanceof Map) {
-      this.inputs.clear();
-    } else {
-      console.log('BaseNodeClass: inputs is not a Map in updateGraphNode, initializing');
-      this.inputs = new Map();
-    }
-    
-    if (this.outputs instanceof Map) {
-      this.outputs.clear();
-    } else {
-      console.log('BaseNodeClass: outputs is not a Map in updateGraphNode, initializing');
-      this.outputs = new Map();
-    }
-    
-    this.setupPorts();
-  }
-}
 
-// Root node class - represents the main flavor
-export class RootNodeClass extends BaseNodeClass {
-  constructor(graphNode: GraphNode) {
-    console.log('RootNodeClass: Creating instance with graphNode:', graphNode);
-    super(graphNode);
-    console.log('RootNodeClass: Instance created successfully with ID:', this.id);
+    // Ensure graphNode.data has proper structure
+    this.initializeGraphNodeData();
+
+    // Add inputs from Terraform variables or input mappings
+    this.setupInputs();
+    
+    // Add outputs from Terraform outputs
+    this.setupOutputs();
   }
 
-  setupPorts(): void {
-    console.log('RootNodeClass: Setting up ports for root node:', {
-      graphNodeData: this.graphNode.data,
-      inputs: this.graphNode.data.inputs,
-      outputs: this.graphNode.data.outputs
-    });
-
-    // Double-check that inputs and outputs are Maps
-    console.log('RootNodeClass: Checking inputs/outputs Maps before setup');
-    console.log('RootNodeClass: this.inputs instanceof Map:', this.inputs instanceof Map, 'type:', typeof this.inputs);
-    console.log('RootNodeClass: this.outputs instanceof Map:', this.outputs instanceof Map, 'type:', typeof this.outputs);
-    
-    // Ensure they are Maps (defensive programming)
-    if (!(this.inputs instanceof Map)) {
-      console.log('RootNodeClass: inputs is not a Map, creating new Map');
-      this.inputs = new Map();
+  /**
+   * Initialize graphNode.data with proper structure if missing
+   */
+  private initializeGraphNodeData(): void {
+    if (!this.graphNode.data) {
+      this.graphNode.data = {};
     }
-    if (!(this.outputs instanceof Map)) {
-      console.log('RootNodeClass: outputs is not a Map, creating new Map');
-      this.outputs = new Map();
-    }
-
-    // Add inputs based on the root node's inputs
-    const inputs = this.graphNode.data.inputs || [];
-    console.log('RootNodeClass: Processing', inputs.length, 'inputs');
     
-    inputs.forEach((input: any, index: number) => {
-      const inputName = input.name || input.key || `input_${index}`;
-      const inputType = input.type || 'any';
-      const socket = this.createSocket(inputType);
-      
-      console.log('RootNodeClass: Adding input:', { inputName, inputType });
-      this.addInput(inputName, new ClassicPreset.Input(socket, inputName, true));
-    });
-
-    // Add outputs based on the root node's outputs
-    const outputs = this.graphNode.data.outputs || [];
-    console.log('RootNodeClass: Processing', outputs.length, 'outputs');
-    
-    outputs.forEach((output: any, index: number) => {
-      const outputName = output.name || output.key || `output_${index}`;
-      const outputType = output.type || 'any';
-      const socket = this.createSocket(outputType);
-      
-      console.log('RootNodeClass: Adding output:', { outputName, outputType });
-      this.addOutput(outputName, new ClassicPreset.Output(socket, outputName, true));
-    });
-
-    // If no ports were added, add some default ones so the node is visible
-    if (inputs.length === 0 && outputs.length === 0) {
-      console.log('RootNodeClass: No inputs/outputs defined, adding default ports for visibility');
-      
-      // Add a default input and output
-      const anySocket = this.createSocket('any');
-      this.addInput('config', new ClassicPreset.Input(anySocket, 'Configuration', true));
-      this.addOutput('result', new ClassicPreset.Output(anySocket, 'Result', true));
+    if (!Array.isArray(this.graphNode.data.inputs)) {
+      this.graphNode.data.inputs = [];
     }
-
-    // Safe logging with existence checks
-    console.log('RootNodeClass: Ports setup completed. Final state:', {
-      inputCount: this.inputs ? this.inputs.size : 'inputs is null/undefined',
-      outputCount: this.outputs ? this.outputs.size : 'outputs is null/undefined',
-      inputKeys: (this.inputs && typeof this.inputs.keys === 'function') ? Array.from(this.inputs.keys()) : 'inputs.keys() not available',
-      outputKeys: (this.outputs && typeof this.outputs.keys === 'function') ? Array.from(this.outputs.keys()) : 'outputs.keys() not available'
+    
+    if (!Array.isArray(this.graphNode.data.outputs)) {
+      this.graphNode.data.outputs = [];
+    }
+    
+    console.log('RootNode: Initialized data structure:', {
+      nodeId: this.graphNode.id,
+      hasInputs: Array.isArray(this.graphNode.data.inputs),
+      inputsLength: this.graphNode.data.inputs.length,
+      hasOutputs: Array.isArray(this.graphNode.data.outputs), 
+      outputsLength: this.graphNode.data.outputs.length
     });
   }
-}
 
-// Dependency node class - represents external dependencies
-export class DependencyNodeClass extends BaseNodeClass {
-  constructor(graphNode: GraphNode) {
-    super(graphNode);
-  }
-
-  setupPorts(): void {
-    // Add inputs based on the dependency's expected inputs
-    const inputs = this.graphNode.data.inputs || [];
-    inputs.forEach((input: any, index: number) => {
-      const inputName = input.name || input.key || `input_${index}`;
-      const inputType = input.type || 'any';
-      const socket = this.createSocket(inputType);
-      
-      this.addInput(inputName, new ClassicPreset.Input(socket, inputName, true));
-    });
-
-    // Add outputs based on the dependency's outputs
-    const outputs = this.graphNode.data.outputs || [];
-    outputs.forEach((output: any, index: number) => {
-      const outputName = output.name || output.key || `output_${index}`;
-      const outputType = output.type || 'any';
-      const socket = this.createSocket(outputType);
-      
-      this.addOutput(outputName, new ClassicPreset.Output(socket, outputName, true));
-    });
-
-    // Default ports based on dependency type
-    if (inputs.length === 0) {
-      // Common dependency inputs
-      this.addInput('region', new ClassicPreset.Input(new StringSocket(), 'Region', false));
-      this.addInput('resource_group_id', new ClassicPreset.Input(new StringSocket(), 'Resource Group ID', false));
-    }
-
-    if (outputs.length === 0) {
-      // Common dependency outputs based on the dependency type/name
-      const depName = this.graphNode.name.toLowerCase();
-      
-      if (depName.includes('vpc')) {
-        this.addOutput('vpc_id', new ClassicPreset.Output(new StringSocket(), 'VPC ID', true));
-        this.addOutput('subnet_ids', new ClassicPreset.Output(new ObjectSocket(), 'Subnet IDs', true));
-      } else if (depName.includes('iks') || depName.includes('kubernetes')) {
-        this.addOutput('cluster_id', new ClassicPreset.Output(new StringSocket(), 'Cluster ID', true));
-        this.addOutput('cluster_endpoint', new ClassicPreset.Output(new StringSocket(), 'Cluster Endpoint', true));
-      } else if (depName.includes('cos') || depName.includes('storage')) {
-        this.addOutput('bucket_name', new ClassicPreset.Output(new StringSocket(), 'Bucket Name', true));
-        this.addOutput('bucket_endpoint', new ClassicPreset.Output(new StringSocket(), 'Bucket Endpoint', true));
-      } else if (depName.includes('iam')) {
-        this.addOutput('service_id', new ClassicPreset.Output(new StringSocket(), 'Service ID', true));
-        this.addOutput('api_key', new ClassicPreset.Output(new StringSocket(), 'API Key', true));
-      } else {
-        // Generic outputs
-        this.addOutput('id', new ClassicPreset.Output(new StringSocket(), 'ID', true));
-        this.addOutput('endpoint', new ClassicPreset.Output(new StringSocket(), 'Endpoint', true));
+  private setupInputs(): void {
+    const inputs = this.graphNode.data?.inputs || [];
+    
+    inputs.forEach((input: NodeInput) => {
+      // Only create sockets and controls for connector inputs
+      if (input.connector) {
+        const socket = createSocket(input.type);
+        const inputControl = new ClassicPreset.InputControl('text', {
+          initial: input.defaultValue || '',
+          readonly: false // Connector inputs can be edited via connections or direct input
+        });
+        
+        this.addInput(input.name, new ClassicPreset.Input(socket, input.name, true));
+        this.addControl(input.name, inputControl);
       }
+    });
+
+    // No hardcoded defaults - inputs are determined by actual data and input mappings
+    console.log('RootNode: Setup inputs complete', {
+      nodeId: this.graphNode.id,
+      totalInputs: inputs.length,
+      connectorInputs: inputs.filter(input => input.connector).length
+    });
+  }
+
+  private setupOutputs(): void {
+    const outputs = this.graphNode.data?.outputs || [];
+    
+    outputs.forEach((output: NodeOutput) => {
+      // Only create sockets for connector outputs
+      if (output.connector) {
+        const socket = createSocket(output.type);
+        this.addOutput(output.name, new ClassicPreset.Output(socket, output.name));
+      }
+    });
+
+    // No hardcoded defaults - outputs are determined by actual data and input mappings
+    console.log('RootNode: Setup outputs complete', {
+      nodeId: this.graphNode.id,
+      totalOutputs: outputs.length,
+      connectorOutputs: outputs.filter(output => output.connector).length
+    });
+  }
+
+
+  /**
+   * Update the node's data and refresh inputs/outputs
+   */
+  updateNodeData(newData: any): void {
+    this.graphNode.data = { ...this.graphNode.data, ...newData };
+    this.refreshInputsOutputs();
+  }
+
+  /**
+   * Refresh inputs and outputs based on current data
+   */
+  private refreshInputsOutputs(): void {
+    // Clear existing inputs and outputs
+    Array.from(this.inputs.keys()).forEach(key => {
+      this.removeInput(key);
+    });
+    Array.from(this.outputs.keys()).forEach(key => {
+      this.removeOutput(key);
+    });
+    Array.from(this.controls.keys()).forEach(key => {
+      this.removeControl(key);
+    });
+
+    // Recreate inputs and outputs
+    this.setupInputs();
+    this.setupOutputs();
+  }
+
+  /**
+   * Add a new input to the node
+   */
+  addNewInput(name: string, type: string = 'string', config: Partial<NodeInput> = {}): void {
+    const socket = createSocket(type);
+    const inputControl = new ClassicPreset.InputControl('text', {
+      initial: config.defaultValue || '',
+      readonly: config.connector || false
+    });
+    
+    this.addInput(name, new ClassicPreset.Input(socket, name, true));
+    this.addControl(name, inputControl);
+
+    // Update the graph node data
+    if (!this.graphNode.data.inputs) {
+      this.graphNode.data.inputs = [];
     }
+    this.graphNode.data.inputs.push({
+      name,
+      type,
+      ...config
+    });
+  }
+
+  /**
+   * Add a new output to the node
+   */
+  addNewOutput(name: string, type: string = 'string', config: Partial<NodeOutput> = {}): void {
+    const socket = createSocket(type);
+    this.addOutput(name, new ClassicPreset.Output(socket, name));
+
+    // Update the graph node data
+    if (!this.graphNode.data.outputs) {
+      this.graphNode.data.outputs = [];
+    }
+    this.graphNode.data.outputs.push({
+      name,
+      type,
+      ...config
+    });
+  }
+}
+
+/**
+ * Dependency node class representing external modules/dependencies
+ */
+export class DependencyNodeClass extends ClassicPreset.Node {
+  width = 160;
+  height = 100;
+  selected = false;
+  graphNode: GraphNode;
+
+  constructor(graphNode: GraphNode) {
+    super(graphNode.name);
+    this.graphNode = graphNode;
+    this.id = graphNode.id;
+    this.label = graphNode.name;
+
+    // Ensure graphNode.data has proper structure
+    this.initializeGraphNodeData();
+
+    // Add inputs that can be configured
+    this.setupInputs();
+    
+    // Add outputs that this dependency provides
+    this.setupOutputs();
+  }
+
+  /**
+   * Initialize graphNode.data with proper structure if missing
+   */
+  private initializeGraphNodeData(): void {
+    if (!this.graphNode.data) {
+      this.graphNode.data = {};
+    }
+    
+    if (!Array.isArray(this.graphNode.data.inputs)) {
+      this.graphNode.data.inputs = [];
+    }
+    
+    if (!Array.isArray(this.graphNode.data.outputs)) {
+      this.graphNode.data.outputs = [];
+    }
+    
+    console.log('DependencyNode: Initialized data structure:', {
+      nodeId: this.graphNode.id,
+      hasInputs: Array.isArray(this.graphNode.data.inputs),
+      inputsLength: this.graphNode.data.inputs.length,
+      hasOutputs: Array.isArray(this.graphNode.data.outputs), 
+      outputsLength: this.graphNode.data.outputs.length
+    });
+  }
+
+  private setupInputs(): void {
+    const inputs = this.graphNode.data?.inputs || [];
+    
+    inputs.forEach((input: NodeInput) => {
+      // Only create sockets and controls for connector inputs
+      if (input.connector) {
+        const socket = createSocket(input.type);
+        const inputControl = new ClassicPreset.InputControl('text', {
+          initial: input.defaultValue || '',
+          readonly: false // Connector inputs can be edited via connections or direct input
+        });
+        
+        this.addInput(input.name, new ClassicPreset.Input(socket, input.name, !input.required));
+        this.addControl(input.name, inputControl);
+      }
+    });
+
+    // No hardcoded defaults - inputs are determined by actual data and input mappings
+    console.log('DependencyNode: Setup inputs complete', {
+      nodeId: this.graphNode.id,
+      totalInputs: inputs.length,
+      connectorInputs: inputs.filter(input => input.connector).length
+    });
+  }
+
+  private setupOutputs(): void {
+    const outputs = this.graphNode.data?.outputs || [];
+    
+    outputs.forEach((output: NodeOutput) => {
+      // Only create sockets for connector outputs
+      if (output.connector) {
+        const socket = createSocket(output.type);
+        this.addOutput(output.name, new ClassicPreset.Output(socket, output.name));
+      }
+    });
+
+    // No hardcoded defaults - outputs are determined by actual data and input mappings
+    console.log('DependencyNode: Setup outputs complete', {
+      nodeId: this.graphNode.id,
+      totalOutputs: outputs.length,
+      connectorOutputs: outputs.filter(output => output.connector).length
+    });
+  }
+
+
+  /**
+   * Update dependency-specific properties
+   */
+  updateDependencyProperties(properties: any): void {
+    this.graphNode.data = { ...this.graphNode.data, ...properties };
+    
+    // Update label if name changed
+    if (properties.name) {
+      this.label = properties.name;
+    }
+  }
+
+  /**
+   * Get dependency metadata for display
+   */
+  getDependencyInfo(): any {
+    const data = this.graphNode.data;
+    return {
+      id: data.id,
+      name: data.name,
+      version: data.version,
+      flavors: data.flavors,
+      optional: data.optional,
+      catalog_id: data.catalog_id,
+      install_type: data.install_type
+    };
+  }
+
+  /**
+   * Check if this dependency is optional
+   */
+  isOptional(): boolean {
+    return this.graphNode.data?.optional === true;
+  }
+
+  /**
+   * Get the dependency's input mappings
+   */
+  getInputMappings(): any[] {
+    return this.graphNode.data?.input_mapping || [];
   }
 }

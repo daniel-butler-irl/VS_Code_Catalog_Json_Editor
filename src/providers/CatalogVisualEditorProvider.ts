@@ -6,6 +6,7 @@ import { SchemaService } from '../services/SchemaService';
 import { LoggingService } from '../services/core/LoggingService';
 import { Dependency } from '../types/catalog';
 import { JsonPathService } from '../services/core/JsonPathService';
+import { TerraformParsingService } from '../services/TerraformParsingService';
 import * as jsonc from 'jsonc-parser';
 
 interface WebviewMessage {
@@ -59,8 +60,10 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   private readonly ibmCloudService: IBMCloudService;
   private readonly schemaService: SchemaService;
   private readonly jsonPathService: JsonPathService;
+  private readonly terraformParsingService: TerraformParsingService;
   private readonly context: vscode.ExtensionContext;
   private disposables: vscode.Disposable[] = [];
+  private currentOfferings: any[] = []; // Store current offerings data for node label lookup
 
   private constructor(
     context: vscode.ExtensionContext,
@@ -73,9 +76,10 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     this.context = context;
     this.logger = logger;
     this.catalogService = catalogService;
-    this.ibmCloudService = ibmCloudService;
+    this.ibmCloudService = ibmCloudService as IBMCloudService;
     this.schemaService = schemaService;
     this.jsonPathService = jsonPathService;
+    this.terraformParsingService = TerraformParsingService.getInstance();
   }
 
   public static initialize(
@@ -101,6 +105,11 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
   public static getInstance(): CatalogVisualEditorProvider | undefined {
     return CatalogVisualEditorProvider.instance;
+  }
+
+  private getOfferingLabel(offeringName: string): string {
+    const offering = this.currentOfferings.find(o => o.name === offeringName);
+    return offering?.label || offeringName;
   }
 
   public async resolveCustomTextEditor(
@@ -228,8 +237,16 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     const nodes: GraphNode[] = [];
     const connections: GraphConnection[] = [];
 
-    // Check if we have products array
-    if (!catalogData.products || catalogData.products.length === 0) {
+    // Check if we have products array - provide better error handling
+    if (!catalogData || typeof catalogData !== 'object') {
+      throw new Error('Invalid catalog data: not an object');
+    }
+    
+    if (!catalogData.products || !Array.isArray(catalogData.products)) {
+      throw new Error('Invalid catalog structure: products must be an array');
+    }
+    
+    if (catalogData.products.length === 0) {
       throw new Error('No products found in catalog JSON');
     }
 
@@ -252,6 +269,24 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     const product = catalogData.products.find((p: any) => p.name === targetProductName) || catalogData.products[0];
     const flavor = product.flavors?.find((f: any) => f.name === targetFlavorName) || product.flavors?.[0];
 
+    // Analyze input mappings to determine which ports should be exposed
+    const portAnalysis = this.analyzeInputMappings(flavor.dependencies || []);
+    
+    this.logger.debug('Visual Editor: Port analysis results', {
+      rootInputPortsCount: portAnalysis.rootInputPorts.size,
+      rootInputPorts: Array.from(portAnalysis.rootInputPorts),
+      rootOutputPortsCount: portAnalysis.rootOutputPorts.size,
+      rootOutputPorts: Array.from(portAnalysis.rootOutputPorts),
+      dependencyPortsCount: portAnalysis.dependencyPorts.size,
+      dependencyPortsDetails: Array.from(portAnalysis.dependencyPorts.entries()).map(([id, ports]) => ({
+        id,
+        inputCount: ports.inputs.size,
+        inputs: Array.from(ports.inputs),
+        outputCount: ports.outputs.size,
+        outputs: Array.from(ports.outputs)
+      }))
+    }, 'visualEditor');
+
     this.logger.debug('Visual Editor: Processing product and flavor', {
       productName: product.name,
       productLabel: product.label,
@@ -263,6 +298,122 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       throw new Error(`No flavor found for product ${product.name}`);
     }
     
+    // Parse root module Terraform files to get inputs/outputs
+    let rootInputs: any[] = [];
+    let rootOutputs: any[] = [];
+    
+    try {
+      this.logger.debug('Visual Editor: Parsing root module Terraform files', {}, 'visualEditor');
+      const rootModule = await this.terraformParsingService.parseWorkspaceRootModule();
+      
+      if (rootModule) {
+        this.logger.debug('Visual Editor: Found root module', {
+          variableCount: rootModule.variables.length,
+          outputCount: rootModule.outputs.length
+        }, 'visualEditor');
+        
+        // Transform Terraform variables to our input format, marking connectors based on input mappings
+        rootInputs = rootModule.variables.map(variable => ({
+          name: variable.name,
+          type: variable.type || 'string',
+          description: variable.description,
+          required: variable.required,
+          defaultValue: variable.default,
+          sensitive: variable.sensitive,
+          connector: portAnalysis.rootInputPorts.has(variable.name), // Set connector based on actual mappings
+          virtual: false
+        }));
+        
+        // Also add any input mapping ports that weren't found in Terraform variables
+        portAnalysis.rootInputPorts.forEach(portName => {
+          if (!rootInputs.find(input => input.name === portName)) {
+            this.logger.debug('Visual Editor: Adding missing input port from mapping analysis', {
+              portName
+            }, 'visualEditor');
+            
+            rootInputs.push({
+              name: portName,
+              type: 'string', // Default to string type
+              description: `Input port for ${portName} (from input mapping)`,
+              required: false,
+              defaultValue: null,
+              sensitive: false,
+              connector: true, // All ports from input mapping analysis are connectors
+              virtual: false
+            });
+          }
+        });
+        
+        // Transform Terraform outputs to our output format, marking connectors based on input mappings
+        rootOutputs = rootModule.outputs.map(output => ({
+          name: output.name,
+          type: output.type || 'string',
+          description: output.description,
+          value: output.value,
+          sensitive: output.sensitive,
+          connector: portAnalysis.rootOutputPorts.has(output.name) // Set connector based on actual mappings
+        }));
+        
+        // Also add any output mapping ports that weren't found in Terraform outputs
+        portAnalysis.rootOutputPorts.forEach(portName => {
+          if (!rootOutputs.find(output => output.name === portName)) {
+            this.logger.debug('Visual Editor: Adding missing output port from mapping analysis', {
+              portName
+            }, 'visualEditor');
+            
+            rootOutputs.push({
+              name: portName,
+              type: 'string', // Default to string type
+              description: `Output port for ${portName} (from input mapping)`,
+              value: null,
+              sensitive: false,
+              connector: true // All ports from input mapping analysis are connectors
+            });
+          }
+        });
+      } else {
+        this.logger.debug('Visual Editor: No root module found, using defaults', {}, 'visualEditor');
+      }
+    } catch (error) {
+      this.logger.warn('Visual Editor: Failed to parse root module, using defaults', { error }, 'visualEditor');
+    }
+
+    // If no root inputs found from Terraform parsing, create them from input mapping analysis
+    if (rootInputs.length === 0 && portAnalysis.rootInputPorts.size > 0) {
+      this.logger.debug('Visual Editor: Creating root inputs from input mapping analysis', {
+        portCount: portAnalysis.rootInputPorts.size,
+        ports: Array.from(portAnalysis.rootInputPorts)
+      }, 'visualEditor');
+      
+      rootInputs = Array.from(portAnalysis.rootInputPorts).map(portName => ({
+        name: portName,
+        type: 'string', // Default to string type
+        description: `Input port for ${portName}`,
+        required: false,
+        defaultValue: null,
+        sensitive: false,
+        connector: true, // All ports from input mapping analysis are connectors
+        virtual: false
+      }));
+    }
+
+    // If no root outputs found from Terraform parsing, create them from input mapping analysis
+    if (rootOutputs.length === 0 && portAnalysis.rootOutputPorts.size > 0) {
+      this.logger.debug('Visual Editor: Creating root outputs from input mapping analysis', {
+        portCount: portAnalysis.rootOutputPorts.size,
+        ports: Array.from(portAnalysis.rootOutputPorts)
+      }, 'visualEditor');
+      
+      rootOutputs = Array.from(portAnalysis.rootOutputPorts).map(portName => ({
+        name: portName,
+        type: 'string', // Default to string type
+        description: `Output port for ${portName}`,
+        value: null,
+        sensitive: false,
+        connector: true // All ports from input mapping analysis are connectors
+      }));
+    }
+
     // Create root node
     const rootNode: GraphNode = {
       id: 'root',
@@ -272,14 +423,23 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         flavor: flavor.name,
         label: flavor.label,
         description: flavor.description,
-        inputs: [], // Will be populated from Terraform parsing
-        outputs: [] // Will be populated from Terraform parsing
+        inputs: rootInputs,
+        outputs: rootOutputs
       },
       position: { x: 400, y: 200 }
     };
     
     this.logger.debug('Visual Editor: Created root node', {
-      rootNode,
+      rootNode: {
+        id: rootNode.id,
+        name: rootNode.name,
+        inputCount: rootInputs.length,
+        outputCount: rootOutputs.length,
+        connectorInputs: rootInputs.filter(input => input.connector).map(input => input.name),
+        connectorOutputs: rootOutputs.filter(output => output.connector).map(output => output.name),
+        allInputs: rootInputs.map(input => ({ name: input.name, connector: input.connector })),
+        allOutputs: rootOutputs.map(output => ({ name: output.name, connector: output.connector }))
+      },
       flavorData: {
         name: flavor.name,
         label: flavor.label,
@@ -291,15 +451,151 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
     // Create dependency nodes
     const dependencies = flavor.dependencies || [];
-    dependencies.forEach((dep: Dependency, index: number) => {
+    for (const [index, dep] of dependencies.entries()) {
+      // Try to parse dependency module if it's local
+      let depInputs: any[] = [];
+      let depOutputs: any[] = [];
+      
+      try {
+        this.logger.debug('Visual Editor: Parsing dependency module', {
+          dependencyName: dep.name,
+          dependencyId: dep.id
+        }, 'visualEditor');
+        
+        // Try to parse dependency module (could be local or external)
+        const depModule = await this.terraformParsingService.parseDependencyModule(
+          dep.id || dep.name || '',
+          undefined // localPath - for now we don't have this info
+        );
+        
+        if (depModule && depModule.variables.length > 0) {
+          this.logger.debug('Visual Editor: Found dependency module', {
+            dependencyName: dep.name,
+            variableCount: depModule.variables.length,
+            outputCount: depModule.outputs.length
+          }, 'visualEditor');
+          
+          const depId = `dep-${index}`;
+          const depPorts = portAnalysis.dependencyPorts.get(depId);
+          
+          // Transform Terraform variables to our input format, marking connectors based on input mappings
+          depInputs = depModule.variables.map(variable => ({
+            name: variable.name,
+            type: variable.type || 'string',
+            description: variable.description,
+            required: variable.required,
+            defaultValue: variable.default,
+            sensitive: variable.sensitive,
+            connector: depPorts?.inputs.has(variable.name) || false, // Set connector based on actual mappings
+            virtual: false
+          }));
+          
+          // Transform Terraform outputs to our output format, marking connectors based on input mappings
+          depOutputs = depModule.outputs.map(output => ({
+            name: output.name,
+            type: output.type || 'string',
+            description: output.description,
+            value: output.value,
+            sensitive: output.sensitive,
+            connector: depPorts?.outputs.has(output.name) || false // Set connector based on actual mappings
+          }));
+          
+          // Also add any input mapping ports that weren't found in Terraform
+          if (depPorts) {
+            depPorts.inputs.forEach(portName => {
+              if (!depInputs.find(input => input.name === portName)) {
+                this.logger.debug('Visual Editor: Adding missing dependency input port from mapping analysis', {
+                  dependencyName: dep.name,
+                  portName
+                }, 'visualEditor');
+                
+                depInputs.push({
+                  name: portName,
+                  type: 'string', // Default to string type
+                  description: `Input port for ${portName} (from input mapping)`,
+                  required: false,
+                  defaultValue: null,
+                  sensitive: false,
+                  connector: true, // All ports from input mapping analysis are connectors
+                  virtual: false
+                });
+              }
+            });
+            
+            depPorts.outputs.forEach(portName => {
+              if (!depOutputs.find(output => output.name === portName)) {
+                this.logger.debug('Visual Editor: Adding missing dependency output port from mapping analysis', {
+                  dependencyName: dep.name,
+                  portName
+                }, 'visualEditor');
+                
+                depOutputs.push({
+                  name: portName,
+                  type: 'string', // Default to string type
+                  description: `Output port for ${portName} (from input mapping)`,
+                  value: null,
+                  sensitive: false,
+                  connector: true // All ports from input mapping analysis are connectors
+                });
+              }
+            });
+          }
+        }
+      } catch (error) {
+        this.logger.debug('Visual Editor: Failed to parse dependency module, using defaults', {
+          dependencyName: dep.name,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, 'visualEditor');
+      }
+      
+      // If no inputs/outputs found from Terraform parsing, create them from input mapping analysis
+      const depId = `dep-${index}`;
+      const depPorts = portAnalysis.dependencyPorts.get(depId);
+      
+      if (depInputs.length === 0 && depPorts?.inputs.size > 0) {
+        this.logger.debug('Visual Editor: Creating dependency inputs from input mapping analysis', {
+          dependencyName: dep.name,
+          portCount: depPorts.inputs.size,
+          ports: Array.from(depPorts.inputs)
+        }, 'visualEditor');
+        
+        depInputs = Array.from(depPorts.inputs).map(portName => ({
+          name: portName,
+          type: 'string', // Default to string type
+          description: `Input port for ${portName}`,
+          required: false,
+          defaultValue: null,
+          sensitive: false,
+          connector: true, // All ports from input mapping analysis are connectors
+          virtual: false
+        }));
+      }
+
+      if (depOutputs.length === 0 && depPorts?.outputs.size > 0) {
+        this.logger.debug('Visual Editor: Creating dependency outputs from input mapping analysis', {
+          dependencyName: dep.name,
+          portCount: depPorts.outputs.size,
+          ports: Array.from(depPorts.outputs)
+        }, 'visualEditor');
+        
+        depOutputs = Array.from(depPorts.outputs).map(portName => ({
+          name: portName,
+          type: 'string', // Default to string type
+          description: `Output port for ${portName}`,
+          value: null,
+          sensitive: false,
+          connector: true // All ports from input mapping analysis are connectors
+        }));
+      }
+
       const depNode: GraphNode = {
         id: `dep-${index}`,
         type: 'dependency',
-        name: dep.name || dep.id || `Dependency ${index + 1}`,
+        name: this.getOfferingLabel(dep.name) || dep.id || `Dependency ${index + 1}`,
         data: {
           ...dep,
-          inputs: [], // Will be populated from module analysis
-          outputs: [] // Will be populated from module analysis
+          inputs: depInputs,
+          outputs: depOutputs
         },
         position: { 
           x: 100, 
@@ -334,7 +630,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           }
         });
       }
-    });
+    }
 
     const graphModel = {
       nodes,
@@ -404,36 +700,53 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     webviewPanel: vscode.WebviewPanel,
     document: vscode.TextDocument
   ): Promise<void> {
-    switch (message.command) {
-      case 'addDependency':
-        await this.handleAddDependency(message, document);
-        break;
-      case 'removeDependency':
-        await this.handleRemoveDependency(message, document);
-        break;
-      case 'updateNodeProperty':
-        await this.handleUpdateNodeProperty(message, document);
-        break;
-      case 'addConnection':
-        await this.handleAddConnection(message, document);
-        break;
-      case 'removeConnection':
-        await this.handleRemoveConnection(message, document);
-        break;
-      case 'requestOfferingsData':
-        // Using mock data in React app, no need to fetch from API
-        this.logger.debug('Visual Editor: Ignoring requestOfferingsData - using mock data', {}, 'visualEditor');
-        break;
-      case 'changeProductFlavor':
-        await this.handleChangeProductFlavor(message, webviewPanel, document);
-        break;
-      case 'ready':
-        // Webview is ready, send initial data
-        this.logger.info('Visual Editor: Received ready message from webview, initializing...', {}, 'visualEditor');
-        await this.initializeEditor(webviewPanel, document);
-        break;
-      default:
-        this.logger.warn('Unknown message command', { command: message.command }, 'visualEditor');
+    try {
+      switch (message.command) {
+        case 'addDependency':
+          await this.handleAddDependency(message, document);
+          break;
+        case 'removeDependency':
+          await this.handleRemoveDependency(message, document);
+          break;
+        case 'updateNodeProperty':
+          await this.handleUpdateNodeProperty(message, document);
+          break;
+        case 'addConnection':
+          await this.handleAddConnection(message, document);
+          break;
+        case 'removeConnection':
+          await this.handleRemoveConnection(message, document);
+          break;
+        case 'requestOfferingsData':
+          await this.handleRequestOfferingsData(webviewPanel);
+          break;
+        case 'requestOfferingsForCatalog':
+          await this.handleRequestOfferingsForCatalog(webviewPanel, message.data?.catalogId);
+          break;
+        case 'changeProductFlavor':
+          await this.handleChangeProductFlavor(message, webviewPanel, document);
+          break;
+        case 'ready':
+          // Webview is ready, send initial data
+          this.logger.info('Visual Editor: Received ready message from webview, initializing...', {}, 'visualEditor');
+          await this.initializeEditor(webviewPanel, document);
+          // Also send offerings data immediately after initialization
+          await this.loadAndSendOfferingsData(webviewPanel);
+          break;
+        default:
+          this.logger.warn('Unknown message command', { command: message.command }, 'visualEditor');
+      }
+    } catch (error) {
+      this.logger.error('Visual Editor: Error handling message', { 
+        error, 
+        command: message.command 
+      }, 'visualEditor');
+      
+      // Send error message to UI instead of crashing
+      await webviewPanel.webview.postMessage({
+        command: 'showError',
+        error: `Failed to handle ${message.command}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
     }
   }
 
@@ -475,10 +788,10 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         id: offering.id,
         name: offering.name,
         version: offering.selectedVersion || offering.versions?.[0] || 'latest',
-        flavors: offering.selectedFlavor ? [offering.selectedFlavor] : (offering.flavors?.slice(0, 1) || ['standard']),
-        install_type: 'extension', // Default to extension for new dependencies
+        flavors: offering.selectedFlavor ? [offering.selectedFlavor] : (offering.flavors?.slice(0, 1).map(f => f.name) || ['standard']),
         catalog_id: 'public', // Default to public catalog
-        input_mapping: [] // Will be configured later
+        input_mapping: [], // Will be configured later
+        optional: false // Default to required
       };
 
       // Add the dependency
@@ -514,27 +827,396 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   }
 
   private async handleRemoveDependency(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
-    // Implementation for removing a dependency
-    this.logger.debug('Removing dependency', { nodeId: message.nodeId }, 'visualEditor');
+    try {
+      this.logger.info('Visual Editor: Removing dependency from document', { 
+        nodeId: message.nodeId
+      }, 'visualEditor');
+
+      const nodeId = message.nodeId;
+      if (!nodeId) {
+        throw new Error('Invalid nodeId: missing node identifier');
+      }
+
+      // Parse current document
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog || !parsedCatalog.products || parsedCatalog.products.length === 0) {
+        throw new Error('Invalid catalog structure: no products found');
+      }
+
+      const product = parsedCatalog.products[0];
+      if (!product.flavors || product.flavors.length === 0) {
+        throw new Error('Invalid product structure: no flavors found');
+      }
+
+      // Get the first flavor to remove the dependency from
+      const flavor = product.flavors[0];
+      if (!flavor.dependencies || flavor.dependencies.length === 0) {
+        throw new Error('No dependencies found to remove');
+      }
+
+      // Extract dependency index from nodeId (format: "dep-{index}")
+      const match = nodeId.match(/^dep-(\d+)$/);
+      if (!match) {
+        throw new Error(`Invalid dependency node ID format: ${nodeId}`);
+      }
+
+      const dependencyIndex = parseInt(match[1], 10);
+      if (dependencyIndex < 0 || dependencyIndex >= flavor.dependencies.length) {
+        throw new Error(`Dependency index out of bounds: ${dependencyIndex}`);
+      }
+
+      // Remove the dependency
+      const removedDependency = flavor.dependencies.splice(dependencyIndex, 1)[0];
+
+      // Apply the changes to the document
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(text.length)
+      );
+
+      // Format the JSON with proper indentation
+      const updatedJson = JSON.stringify(parsedCatalog, null, 2);
+      edit.replace(document.uri, fullRange, updatedJson);
+
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      
+      if (success) {
+        this.logger.info('Visual Editor: Successfully removed dependency from document', {
+          dependencyName: removedDependency.name,
+          dependencyId: removedDependency.id
+        }, 'visualEditor');
+      } else {
+        throw new Error('Failed to apply document changes');
+      }
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to remove dependency', { error, message }, 'visualEditor');
+      throw error;
+    }
   }
 
   private async handleUpdateNodeProperty(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
-    // Implementation for updating node properties
-    this.logger.debug('Updating node property', { 
-      nodeId: message.nodeId, 
-      property: message.property, 
-      value: message.value 
-    }, 'visualEditor');
+    try {
+      this.logger.info('Visual Editor: Updating node property in document', { 
+        nodeId: message.nodeId, 
+        property: message.property, 
+        value: message.value 
+      }, 'visualEditor');
+
+      const nodeId = message.nodeId;
+      const property = message.property;
+      const value = message.value;
+
+      if (!nodeId || !property) {
+        throw new Error('Invalid data: missing nodeId or property');
+      }
+
+      // Parse current document
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog || !parsedCatalog.products || parsedCatalog.products.length === 0) {
+        throw new Error('Invalid catalog structure: no products found');
+      }
+
+      const product = parsedCatalog.products[0];
+      if (!product.flavors || product.flavors.length === 0) {
+        throw new Error('Invalid product structure: no flavors found');
+      }
+
+      const flavor = product.flavors[0];
+
+      // Handle root node updates
+      if (nodeId === 'root') {
+        // Update flavor properties
+        if (property === 'name') {
+          flavor.name = value;
+        } else if (property === 'label') {
+          flavor.label = value;
+        } else if (property === 'description') {
+          flavor.description = value;
+        } else {
+          throw new Error(`Unsupported root property: ${property}`);
+        }
+      } else {
+        // Handle dependency node updates
+        if (!flavor.dependencies || flavor.dependencies.length === 0) {
+          throw new Error('No dependencies found to update');
+        }
+
+        // Extract dependency index from nodeId (format: "dep-{index}")
+        const match = nodeId.match(/^dep-(\d+)$/);
+        if (!match) {
+          throw new Error(`Invalid dependency node ID format: ${nodeId}`);
+        }
+
+        const dependencyIndex = parseInt(match[1], 10);
+        if (dependencyIndex < 0 || dependencyIndex >= flavor.dependencies.length) {
+          throw new Error(`Dependency index out of bounds: ${dependencyIndex}`);
+        }
+
+        const dependency = flavor.dependencies[dependencyIndex];
+
+        // Update dependency properties
+        if (property === 'name') {
+          dependency.name = value;
+        } else if (property === 'version') {
+          dependency.version = value;
+        } else if (property === 'flavors') {
+          dependency.flavors = Array.isArray(value) ? value : [value];
+        } else if (property === 'optional') {
+          dependency.optional = Boolean(value);
+        } else if (property === 'install_type') {
+          dependency.install_type = value;
+        } else if (property === 'catalog_id') {
+          dependency.catalog_id = value;
+        } else {
+          throw new Error(`Unsupported dependency property: ${property}`);
+        }
+      }
+
+      // Apply the changes to the document
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(text.length)
+      );
+
+      // Format the JSON with proper indentation
+      const updatedJson = JSON.stringify(parsedCatalog, null, 2);
+      edit.replace(document.uri, fullRange, updatedJson);
+
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      
+      if (success) {
+        this.logger.info('Visual Editor: Successfully updated node property in document', {
+          nodeId,
+          property,
+          value
+        }, 'visualEditor');
+      } else {
+        throw new Error('Failed to apply document changes');
+      }
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to update node property', { error, message }, 'visualEditor');
+      throw error;
+    }
   }
 
   private async handleAddConnection(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
-    // Implementation for adding a connection (input mapping)
-    this.logger.debug('Adding connection', { data: message.data }, 'visualEditor');
+    try {
+      this.logger.info('Visual Editor: Adding connection to document', { 
+        data: message.data 
+      }, 'visualEditor');
+
+      const connection = message.data;
+      if (!connection || !connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
+        throw new Error('Invalid connection data: missing required fields');
+      }
+
+      // Parse current document
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog || !parsedCatalog.products || parsedCatalog.products.length === 0) {
+        throw new Error('Invalid catalog structure: no products found');
+      }
+
+      const product = parsedCatalog.products[0];
+      if (!product.flavors || product.flavors.length === 0) {
+        throw new Error('Invalid product structure: no flavors found');
+      }
+
+      const flavor = product.flavors[0];
+      if (!flavor.dependencies) {
+        flavor.dependencies = [];
+      }
+
+      // Determine mapping type based on source and target
+      let targetDependencyIndex: number;
+      let mapping: any;
+
+      if (connection.source === 'root' && connection.target.startsWith('dep-')) {
+        // Root to dependency connection (parent input to dependency input)
+        const match = connection.target.match(/^dep-(\d+)$/);
+        if (!match) {
+          throw new Error(`Invalid target node ID format: ${connection.target}`);
+        }
+        
+        targetDependencyIndex = parseInt(match[1], 10);
+        if (targetDependencyIndex < 0 || targetDependencyIndex >= flavor.dependencies.length) {
+          throw new Error(`Target dependency index out of bounds: ${targetDependencyIndex}`);
+        }
+
+        mapping = {
+          dependency_input: connection.targetHandle,
+          version_input: connection.sourceHandle,
+          // reference_version: true
+        };
+
+      } else if (connection.source.startsWith('dep-') && connection.target === 'root') {
+        // Dependency to root connection (dependency output to parent input)
+        const match = connection.source.match(/^dep-(\d+)$/);
+        if (!match) {
+          throw new Error(`Invalid source node ID format: ${connection.source}`);
+        }
+        
+        targetDependencyIndex = parseInt(match[1], 10);
+        if (targetDependencyIndex < 0 || targetDependencyIndex >= flavor.dependencies.length) {
+          throw new Error(`Source dependency index out of bounds: ${targetDependencyIndex}`);
+        }
+
+        mapping = {
+          dependency_output: connection.sourceHandle,
+          version_input: connection.targetHandle
+        };
+
+      } else {
+        throw new Error('Unsupported connection type: only root-to-dependency and dependency-to-root connections are supported');
+      }
+
+      // Add the mapping to the target dependency
+      const targetDependency = flavor.dependencies[targetDependencyIndex];
+      if (!targetDependency.input_mapping) {
+        targetDependency.input_mapping = [];
+      }
+
+      // Check if mapping already exists
+      const existingMapping = targetDependency.input_mapping.find((m: any) => {
+        if (mapping.dependency_output) {
+          return m.dependency_output === mapping.dependency_output && m.version_input === mapping.version_input;
+        } else {
+          return m.dependency_input === mapping.dependency_input && m.version_input === mapping.version_input;
+        }
+      });
+
+      if (existingMapping) {
+        throw new Error('Connection already exists between these nodes');
+      }
+
+      targetDependency.input_mapping.push(mapping);
+
+      // Apply the changes to the document
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(text.length)
+      );
+
+      // Format the JSON with proper indentation
+      const updatedJson = JSON.stringify(parsedCatalog, null, 2);
+      edit.replace(document.uri, fullRange, updatedJson);
+
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      
+      if (success) {
+        this.logger.info('Visual Editor: Successfully added connection to document', {
+          source: connection.source,
+          target: connection.target,
+          sourceHandle: connection.sourceHandle,
+          targetHandle: connection.targetHandle,
+          mapping
+        }, 'visualEditor');
+      } else {
+        throw new Error('Failed to apply document changes');
+      }
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to add connection', { error, message }, 'visualEditor');
+      throw error;
+    }
   }
 
   private async handleRemoveConnection(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
-    // Implementation for removing a connection
-    this.logger.debug('Removing connection', { connectionId: message.connectionId }, 'visualEditor');
+    try {
+      this.logger.info('Visual Editor: Removing connection from document', { 
+        connectionId: message.connectionId 
+      }, 'visualEditor');
+
+      const connectionId = message.connectionId;
+      if (!connectionId) {
+        throw new Error('Invalid connectionId: missing connection identifier');
+      }
+
+      // Parse current document
+      const text = document.getText();
+      const parsedCatalog = jsonc.parse(text);
+
+      if (!parsedCatalog || !parsedCatalog.products || parsedCatalog.products.length === 0) {
+        throw new Error('Invalid catalog structure: no products found');
+      }
+
+      const product = parsedCatalog.products[0];
+      if (!product.flavors || product.flavors.length === 0) {
+        throw new Error('Invalid product structure: no flavors found');
+      }
+
+      const flavor = product.flavors[0];
+      if (!flavor.dependencies) {
+        throw new Error('No dependencies found');
+      }
+
+      // Parse connection ID format: "connection-{depIndex}-{mappingIndex}"
+      const match = connectionId.match(/^connection-(\d+)-(\d+)$/);
+      if (!match) {
+        throw new Error(`Invalid connection ID format: ${connectionId}`);
+      }
+
+      const dependencyIndex = parseInt(match[1], 10);
+      const mappingIndex = parseInt(match[2], 10);
+
+      if (dependencyIndex < 0 || dependencyIndex >= flavor.dependencies.length) {
+        throw new Error(`Dependency index out of bounds: ${dependencyIndex}`);
+      }
+
+      const dependency = flavor.dependencies[dependencyIndex];
+      if (!dependency.input_mapping || dependency.input_mapping.length === 0) {
+        throw new Error('No input mappings found on dependency');
+      }
+
+      if (mappingIndex < 0 || mappingIndex >= dependency.input_mapping.length) {
+        throw new Error(`Mapping index out of bounds: ${mappingIndex}`);
+      }
+
+      // Remove the mapping
+      const removedMapping = dependency.input_mapping.splice(mappingIndex, 1)[0];
+
+      // Apply the changes to the document
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(text.length)
+      );
+
+      // Format the JSON with proper indentation
+      const updatedJson = JSON.stringify(parsedCatalog, null, 2);
+      edit.replace(document.uri, fullRange, updatedJson);
+
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      
+      if (success) {
+        this.logger.info('Visual Editor: Successfully removed connection from document', {
+          connectionId,
+          dependencyIndex,
+          mappingIndex,
+          removedMapping
+        }, 'visualEditor');
+      } else {
+        throw new Error('Failed to apply document changes');
+      }
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to remove connection', { error, message }, 'visualEditor');
+      throw error;
+    }
   }
 
   private async handleChangeProductFlavor(message: WebviewMessage, webviewPanel: vscode.WebviewPanel, document: vscode.TextDocument): Promise<void> {
@@ -589,7 +1271,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       if (!apiKey) {
         return null;
       }
-      this.ibmCloudService = new IBMCloudService(apiKey);
+      (this as any).ibmCloudService = new IBMCloudService(apiKey);
       return this.ibmCloudService;
     } catch (error) {
       this.logger.error('Failed to create IBM Cloud service', { error }, 'visualEditor');
@@ -597,11 +1279,27 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     }
   }
 
-  private async handleRequestOfferingsData(webviewPanel: vscode.WebviewPanel): Promise<void> {
+  private async loadAndSendOfferingsData(webviewPanel: vscode.WebviewPanel): Promise<void> {
+    await this.handleRequestOfferingsData(webviewPanel);
+  }
+
+  private async handleRequestOfferingsForCatalog(webviewPanel: vscode.WebviewPanel, catalogId?: string): Promise<void> {
+    if (!catalogId) {
+      this.logger.error('Visual Editor: No catalog ID provided for requestOfferingsForCatalog', {}, 'visualEditor');
+      await webviewPanel.webview.postMessage({
+        command: 'updateOfferingsData',
+        data: {
+          offerings: [],
+          error: 'No catalog ID provided'
+        }
+      });
+      return;
+    }
+
     try {
-      // Try to get IBM Cloud service - it may not be available if no API key is set
       const ibmCloudService = await this.getIBMCloudService();
       if (!ibmCloudService) {
+        this.logger.warn('Visual Editor: IBM Cloud service not available - no API key', {}, 'visualEditor');
         await webviewPanel.webview.postMessage({
           command: 'updateOfferingsData',
           data: {
@@ -612,27 +1310,281 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         return;
       }
 
-      // Fetch available offerings for the DA Library
-      const catalogId = 'public'; // Default to public catalog
-      const offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+      // Get the catalog info to include in the response
+      const allCatalogs = await ibmCloudService.getAvailableCatalogs();
+      const selectedCatalog = allCatalogs.find(catalog => catalog.id === catalogId);
+      
+      if (!selectedCatalog) {
+        this.logger.error('Visual Editor: Catalog not found', { catalogId }, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: `Catalog ${catalogId} not found`
+          }
+        });
+        return;
+      }
+
+      // Fetch offerings for the specific catalog
+      let offerings;
+      try {
+        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+      } catch (offeringsError) {
+        this.logger.error('Visual Editor: Failed to retrieve offerings for catalog', { 
+          error: offeringsError, 
+          catalogId 
+        }, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: `Failed to retrieve offerings for ${selectedCatalog.label}`
+          }
+        });
+        return;
+      }
+
+      this.logger.debug('Visual Editor: Retrieved offerings for catalog', {
+        catalogId,
+        catalogLabel: selectedCatalog.label,
+        count: offerings.length
+      }, 'visualEditor');
+
+      // Transform offerings with error handling for malformed data
+      const transformedOfferings = offerings.map(offering => {
+        try {
+          const versions = offering.kinds?.[0]?.versions?.map(v => v.version) || [];
+          // Extract unique flavors with both name and label
+          const flavorMap = new Map();
+          offering.kinds?.[0]?.versions?.forEach(v => {
+            if (v.flavor?.name) {
+              flavorMap.set(v.flavor.name, {
+                name: v.flavor.name,
+                label: v.flavor.label || v.flavor.name
+              });
+            }
+          });
+          const flavors = Array.from(flavorMap.values());
+          
+          return {
+            id: offering.id || `unknown-${Date.now()}`,
+            name: offering.name || offering.id || 'Unknown Offering',
+            label: offering.label || offering.name || 'Unknown Offering',
+            description: offering.shortDescription || offering.label || 'No description available',
+            versions: versions,
+            flavors: flavors.length > 0 ? flavors : [{ name: 'standard', label: 'Standard' }],
+            catalogId: catalogId,
+            catalogLabel: selectedCatalog.label
+          };
+        } catch (transformError) {
+          this.logger.warn('Visual Editor: Failed to transform offering', { 
+            error: transformError, 
+            offeringId: offering.id 
+          }, 'visualEditor');
+          
+          return {
+            id: offering.id || `fallback-${Date.now()}`,
+            name: offering.name || 'Unknown Offering',
+            label: offering.label || offering.name || 'Unknown Offering',
+            description: 'Error loading offering details',
+            versions: [],
+            flavors: [{ name: 'standard', label: 'Standard' }],
+            catalogId: catalogId,
+            catalogLabel: selectedCatalog.label
+          };
+        }
+      }).filter(offering => offering.id);
+      
+      // Store offerings for node label lookup
+      this.currentOfferings = transformedOfferings;
       
       await webviewPanel.webview.postMessage({
         command: 'updateOfferingsData',
         data: {
-          offerings: offerings.map(offering => ({
-            id: offering.id,
-            name: offering.name,
-            description: offering.short_description,
-            versions: offering.kinds?.[0]?.versions || [],
-            flavors: offering.kinds?.[0]?.versions?.[0]?.flavor || []
-          }))
+          offerings: transformedOfferings
         }
       });
     } catch (error) {
-      this.logger.error('Failed to fetch offerings data', { error }, 'visualEditor');
+      this.logger.error('Visual Editor: Critical error in handleRequestOfferingsForCatalog', { error, catalogId }, 'visualEditor');
+      
       await webviewPanel.webview.postMessage({
-        command: 'showError',
-        error: 'Failed to load available offerings'
+        command: 'updateOfferingsData',
+        data: {
+          offerings: [],
+          error: 'Unable to load offerings for selected catalog. Please try again later.'
+        }
+      });
+    }
+  }
+
+  private async handleRequestOfferingsData(webviewPanel: vscode.WebviewPanel): Promise<void> {
+    try {
+      // Try to get IBM Cloud service - it may not be available if no API key is set
+      const ibmCloudService = await this.getIBMCloudService();
+      if (!ibmCloudService) {
+        this.logger.warn('Visual Editor: IBM Cloud service not available - no API key', {}, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: 'IBM Cloud authentication required to load offerings'
+          }
+        });
+        return;
+      }
+
+      // Fetch available offerings for the DA Library with proper error handling
+      let allCatalogs;
+      try {
+        allCatalogs = await ibmCloudService.getAvailableCatalogs();
+      } catch (catalogError) {
+        this.logger.error('Visual Editor: Failed to retrieve catalogs', { error: catalogError }, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: 'Failed to retrieve catalogs. Please check your IBM Cloud permissions.'
+          }
+        });
+        return;
+      }
+
+      if (!allCatalogs || allCatalogs.length === 0) {
+        this.logger.warn('Visual Editor: No catalogs available', {}, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: 'No catalogs available'
+          }
+        });
+        return;
+      }
+
+      // Send all available catalogs to the UI for user selection
+      await webviewPanel.webview.postMessage({
+        command: 'updateAvailableCatalogs',
+        data: {
+          catalogs: allCatalogs.map(catalog => ({
+            id: catalog.id,
+            label: catalog.label,
+            shortDescription: catalog.shortDescription,
+            isPublic: catalog.isPublic
+          }))
+        }
+      });
+
+      // Default to IBM Cloud Catalog if available, otherwise use first public catalog
+      const ibmCloudCatalog = allCatalogs.find(catalog => catalog.label === 'IBM Cloud Catalog');
+      const defaultCatalog = ibmCloudCatalog || allCatalogs.find(catalog => catalog.isPublic) || allCatalogs[0];
+      
+      if (!defaultCatalog) {
+        this.logger.error('Visual Editor: No default catalog found', {
+          availableCatalogs: allCatalogs.map(c => ({ id: c.id, label: c.label }))
+        }, 'visualEditor');
+        
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: 'No catalogs available in your account'
+          }
+        });
+        return;
+      }
+      
+      const catalogId = defaultCatalog.id;
+      let offerings;
+      try {
+        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+      } catch (offeringsError) {
+        this.logger.error('Visual Editor: Failed to retrieve offerings for catalog', { 
+          error: offeringsError, 
+          catalogId 
+        }, 'visualEditor');
+        await webviewPanel.webview.postMessage({
+          command: 'updateOfferingsData',
+          data: {
+            offerings: [],
+            error: 'Failed to retrieve offerings. Please check your IBM Cloud permissions.'
+          }
+        });
+        return;
+      }
+      
+      this.logger.debug('Visual Editor: Retrieved offerings from IBM Cloud', {
+        count: offerings.length,
+        firstFew: offerings.slice(0, 3).map(o => ({ id: o.id, name: o.name }))
+      }, 'visualEditor');
+      
+      // Transform offerings with error handling for malformed data
+      const transformedOfferings = offerings.map(offering => {
+        try {
+          // Extract versions from the first kind (typically terraform)
+          const versions = offering.kinds?.[0]?.versions?.map(v => v.version) || [];
+          
+          // Extract unique flavors with both name and label
+          const flavorMap = new Map();
+          offering.kinds?.[0]?.versions?.forEach(v => {
+            if (v.flavor?.name) {
+              flavorMap.set(v.flavor.name, {
+                name: v.flavor.name,
+                label: v.flavor.label || v.flavor.name
+              });
+            }
+          });
+          const flavors = Array.from(flavorMap.values());
+          
+          return {
+            id: offering.id || `unknown-${Date.now()}`,
+            name: offering.name || offering.id || 'Unknown Offering',
+            label: offering.label || offering.name || 'Unknown Offering',
+            description: offering.shortDescription || offering.label || 'No description available',
+            versions: versions,
+            flavors: flavors.length > 0 ? flavors : [{ name: 'standard', label: 'Standard' }],
+            catalogId: catalogId,
+            catalogLabel: defaultCatalog.label
+          };
+        } catch (transformError) {
+          this.logger.warn('Visual Editor: Failed to transform offering', { 
+            error: transformError, 
+            offeringId: offering.id 
+          }, 'visualEditor');
+          
+          // Return a fallback offering object to prevent UI crashes
+          return {
+            id: offering.id || `fallback-${Date.now()}`,
+            name: offering.name || 'Unknown Offering',
+            label: offering.label || offering.name || 'Unknown Offering',
+            description: 'Error loading offering details',
+            versions: [],
+            flavors: [{ name: 'standard', label: 'Standard' }],
+            catalogId: catalogId,
+            catalogLabel: defaultCatalog.label
+          };
+        }
+      }).filter(offering => offering.id); // Remove any null/undefined offerings
+      
+      // Store offerings for node label lookup
+      this.currentOfferings = transformedOfferings;
+      
+      await webviewPanel.webview.postMessage({
+        command: 'updateOfferingsData',
+        data: {
+          offerings: transformedOfferings
+        }
+      });
+    } catch (error) {
+      this.logger.error('Visual Editor: Critical error in handleRequestOfferingsData', { error }, 'visualEditor');
+      
+      // Send a user-friendly error message that doesn't crash the UI
+      await webviewPanel.webview.postMessage({
+        command: 'updateOfferingsData',
+        data: {
+          offerings: [],
+          error: 'Unable to load offerings. Please try again later.'
+        }
       });
     }
   }
@@ -730,6 +1682,61 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         </script>
     </body>
     </html>`;
+  }
+
+
+  /**
+   * Analyze input mappings to determine which ports should be exposed as connectors
+   */
+  private analyzeInputMappings(dependencies: any[]): {
+    rootInputPorts: Set<string>;
+    rootOutputPorts: Set<string>;
+    dependencyPorts: Map<string, { inputs: Set<string>; outputs: Set<string> }>;
+  } {
+    const rootInputPorts = new Set<string>();
+    const rootOutputPorts = new Set<string>();
+    const dependencyPorts = new Map<string, { inputs: Set<string>; outputs: Set<string> }>();
+
+    this.logger.debug('Visual Editor: Analyzing input mappings', {
+      dependencyCount: dependencies.length
+    }, 'visualEditor');
+
+    dependencies.forEach((dep, index) => {
+      const depId = `dep-${index}`;
+      
+      if (!dependencyPorts.has(depId)) {
+        dependencyPorts.set(depId, {
+          inputs: new Set<string>(),
+          outputs: new Set<string>()
+        });
+      }
+      
+      const depPorts = dependencyPorts.get(depId)!;
+
+      if (dep.input_mapping && Array.isArray(dep.input_mapping)) {
+        dep.input_mapping.forEach((mapping: any) => {
+          // Root input connected to dependency input
+          if (mapping.version_input && mapping.dependency_input) {
+            rootInputPorts.add(mapping.version_input);
+            depPorts.inputs.add(mapping.dependency_input);
+          }
+          
+          // Dependency output connected to root input  
+          if (mapping.dependency_output && mapping.version_input) {
+            depPorts.outputs.add(mapping.dependency_output);
+            rootInputPorts.add(mapping.version_input);
+          }
+        });
+      }
+    });
+
+    this.logger.debug('Visual Editor: Input mapping analysis complete', {
+      rootInputPorts: Array.from(rootInputPorts),
+      rootOutputPorts: Array.from(rootOutputPorts),
+      dependencyPortsCount: dependencyPorts.size
+    }, 'visualEditor');
+
+    return { rootInputPorts, rootOutputPorts, dependencyPorts };
   }
 
   private getNonce(): string {
