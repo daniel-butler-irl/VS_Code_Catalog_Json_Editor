@@ -8,20 +8,42 @@ import {
   addEdge,
   Connection,
   ReactFlowProvider,
+  NodeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-// Simple test data - basic React Flow example
+// Import our custom node components
+import { RootNodeReactFlow } from '../nodes/RootNodeReactFlow';
+import { DependencyNodeReactFlow } from '../nodes/DependencyNodeReactFlow';
+
+// Node types registration
+const nodeTypes: NodeTypes = {
+  rootNode: RootNodeReactFlow,
+  dependencyNode: DependencyNodeReactFlow,
+};
+
+// Enhanced test data - using our custom node types with more fields
 const initialNodes: Node[] = [
   {
     id: '1',
+    type: 'rootNode',
     position: { x: 0, y: 0 },
-    data: { label: 'Node 1' },
+    data: { 
+      label: 'Cloud Platform',
+      description: 'Main infrastructure deployment',
+      version: '1.2.0'
+    },
   },
   {
     id: '2',
+    type: 'dependencyNode', 
     position: { x: 200, y: 100 },
-    data: { label: 'Node 2' },
+    data: { 
+      label: 'Security Module',
+      description: 'IAM and security configurations',
+      version: '2.1.3',
+      installType: 'extension'
+    },
   },
 ];
 
@@ -63,6 +85,7 @@ const CanvasContent: React.FC<CanvasProps> = () => {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        nodeTypes={nodeTypes}
         fitView
       />
     </div>
