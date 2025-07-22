@@ -6,10 +6,13 @@ interface GraphNode {
   name: string;
   data: any;
   position: { x: number; y: number };
+  // Single expand/collapse state
+  expanded?: boolean;
 }
 
 interface NodeInput {
   name: string;
+  display_name?: string;
   type?: string;
   description?: string;
   required?: boolean;
@@ -21,6 +24,7 @@ interface NodeInput {
 
 interface NodeOutput {
   name: string;
+  display_name?: string;
   type?: string;
   description?: string;
   value?: string;
@@ -315,7 +319,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             {inputs.map((input: NodeInput, index: number) => (
               <div key={index} className="input-item">
                 <div className="input-header">
-                  <span className="input-name">{input.name}</span>
+                  <span 
+                    className="input-name"
+                    title={input.description || input.name}
+                  >
+                    {input.display_name || input.name}
+                  </span>
                   {input.type && <span className="input-type">({input.type})</span>}
                   {input.required && <span className="required-indicator">*</span>}
                 </div>
@@ -407,7 +416,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             {outputs.map((output: NodeOutput, index: number) => (
               <div key={index} className="output-item">
                 <div className="output-header">
-                  <span className="output-name">{output.name}</span>
+                  <span 
+                    className="output-name"
+                    title={output.description || output.name}
+                  >
+                    {output.display_name || output.name}
+                  </span>
                   {output.type && <span className="output-type">({output.type})</span>}
                 </div>
                 
@@ -543,6 +557,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     {(selectedNode.data.outputs || []).filter((output: NodeOutput) => output.connector).length} outputs
                   </span>
                 </span>
+              </div>
+              
+              {/* Single Expand/Collapse Control */}
+              <div className="expansion-controls">
+                <div className="expansion-row">
+                  <span className="expansion-label">🔧 Node View:</span>
+                  <div className="expansion-buttons">
+                    <button
+                      className={`expansion-button ${selectedNode.data?.expanded ? 'active' : ''}`}
+                      onClick={() => {
+                        if (selectedNode.data?.onToggleExpand) {
+                          selectedNode.data.onToggleExpand(selectedNode.id);
+                        }
+                      }}
+                      title={`${selectedNode.data?.expanded ? 'Collapse' : 'Expand'} all ports on visual node`}
+                    >
+                      {selectedNode.data?.expanded ? '🔽' : '▶️'} Show All Ports ({(selectedNode.data.inputs || []).length + (selectedNode.data.outputs || []).length})
+                    </button>
+                  </div>
+                </div>
+                <div className="expansion-hint">
+                  By default, only connected ports are visible. Use this control to show all available ports on the visual node.
+                </div>
               </div>
               <div className="summary-hint">
                 Only connector ports appear on the visual node. Use the toggles below to enable/disable connector ports.

@@ -12,27 +12,107 @@ interface DependencyNodeProps {
 interface SocketProps {
   data: ClassicPreset.Socket;
   isInput: boolean;
+  portMetadata?: {
+    mappingTypes?: string[];
+    isConnector?: boolean;
+    description?: string;
+    required?: boolean;
+    type?: string;
+    isFromTerraform?: boolean;
+  };
 }
 
-const Socket: React.FC<SocketProps> = ({ data, isInput }) => {
-  const getSocketColor = (isInput: boolean) => {
-    // Standardize to match legend: green for inputs, amber for outputs
+const Socket: React.FC<SocketProps> = ({ data, isInput, portMetadata }) => {
+  const getSocketColor = (isInput: boolean, mappingTypes?: string[]) => {
+    // Enhanced colors based on mapping types for better input_mapping visibility
+    if (mappingTypes && mappingTypes.length > 0) {
+      // Different colors for different mapping types
+      if (mappingTypes.includes('dependency_output')) return '#8b5cf6'; // Purple for dependency outputs
+      if (mappingTypes.includes('dependency_input')) return '#3b82f6'; // Blue for dependency inputs  
+      if (mappingTypes.includes('static_value')) return '#6b7280'; // Gray for static values
+      if (mappingTypes.includes('pass_through')) return '#f59e0b'; // Amber for pass-through
+    }
+    // Default colors: green for inputs, amber for outputs
     return isInput ? '#10b981' : '#f59e0b';
+  };
+
+  const getSocketGlow = (isInput: boolean, mappingTypes?: string[]) => {
+    const color = getSocketColor(isInput, mappingTypes);
+    const hex = color.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.4)`;
+  };
+
+  const getTooltip = () => {
+    const type = isInput ? 'Input' : 'Output';
+    let tooltip = `${type} socket - Click to connect`;
+    
+    if (portMetadata?.description) {
+      tooltip += `\n${portMetadata.description}`;
+    }
+    
+    if (portMetadata?.type) {
+      tooltip += `\nType: ${portMetadata.type}`;
+    }
+    
+    if (portMetadata?.mappingTypes && portMetadata.mappingTypes.length > 0) {
+      tooltip += `\nMapping: ${portMetadata.mappingTypes.join(', ')}`;
+    }
+    
+    if (portMetadata?.required) {
+      tooltip += '\n⚠️ Required';
+    }
+    
+    if (portMetadata?.isFromTerraform === false) {
+      tooltip += '\n📋 From input mapping';
+    } else if (portMetadata?.isFromTerraform === true) {
+      tooltip += '\n🔧 From Terraform';
+    }
+    
+    return tooltip;
   };
 
   return (
     <div
       className="socket"
       style={{
-        width: SOCKET_SIZE,
-        height: SOCKET_SIZE,
-        backgroundColor: getSocketColor(isInput),
+        width: SOCKET_SIZE + 2, // Slightly larger for better visibility
+        height: SOCKET_SIZE + 2,
+        backgroundColor: getSocketColor(isInput, portMetadata?.mappingTypes),
         borderRadius: '50%',
-        border: '2px solid #fff',
-        cursor: 'crosshair'
+        border: portMetadata?.isConnector ? '2px solid #fff' : '2px solid rgba(255, 255, 255, 0.5)', // Different border for non-connectors
+        cursor: 'crosshair',
+        boxShadow: `0 0 6px ${getSocketGlow(isInput, portMetadata?.mappingTypes)}, 0 2px 4px rgba(0, 0, 0, 0.1)`,
+        transition: 'all 0.2s ease',
+        position: 'relative',
+        opacity: portMetadata?.isConnector ? 1.0 : 0.7 // Slightly faded for non-connectors
       }}
-      title={`${isInput ? 'Input' : 'Output'} socket`}
-    />
+      title={getTooltip()}
+    >
+      {/* Type indicator */}
+      {portMetadata?.mappingTypes && portMetadata.mappingTypes.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '-2px',
+            right: '-2px',
+            width: '6px',
+            height: '6px',
+            backgroundColor: '#fff',
+            borderRadius: '50%',
+            fontSize: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 'bold',
+            color: getSocketColor(isInput, portMetadata.mappingTypes),
+            border: '1px solid #ccc'
+          }}
+        />
+      )}
+    </div>
   );
 };
 
@@ -117,8 +197,8 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
         color: '#fff',
         fontSize: '12px',
         fontFamily: 'var(--vscode-font-family)',
-        minWidth: '160px',
-        minHeight: '100px',
+        minWidth: '180px', // Increased for better port spacing
+        minHeight: '120px', // Increased for better content layout
         position: 'relative',
         boxShadow: isSelected ? '0 4px 12px rgba(251, 191, 36, 0.3)' : '0 2px 8px rgba(0, 0, 0, 0.15)'
       }}
@@ -193,40 +273,87 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
       </div>
 
       {/* Content Area */}
-      <div style={{ padding: '8px' }}>
+      <div style={{ padding: '10px' }}> {/* Increased padding for better spacing */}
         {/* Connector Inputs Only */}
         {connectorInputs.length > 0 && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: '10px' }}> {/* Increased section spacing */}
             <div style={{ 
               fontSize: '9px', 
               fontWeight: '600', 
-              marginBottom: '4px', 
+              marginBottom: '6px', // Increased label spacing 
               opacity: 0.8,
               textTransform: 'uppercase',
-              letterSpacing: '0.5px'
+              letterSpacing: '0.5px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
             }}>
-              Inputs
+              <div style={{ 
+                width: '6px', 
+                height: '6px', 
+                backgroundColor: '#10b981', 
+                borderRadius: '50%',
+                opacity: 0.6
+              }} />
+              Inputs ({connectorInputs.length})
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-              {connectorInputs.map(([key, input]) => (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <div style={{ flex: '0 0 auto' }}>
-                    {input?.socket && <Socket data={input.socket} isInput={true} />}
-                  </div>
-                  <div style={{ flex: '1', minWidth: 0 }}>
-                    <div style={{ 
-                      fontSize: '10px', 
-                      fontWeight: '400',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      opacity: 0.9
-                    }}>
-                      {input?.label || key}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}> {/* Increased port spacing */}
+              {connectorInputs.map(([key, input]) => {
+                // Get enhanced metadata from graphNode data
+                const inputMetadata = data.graphNode.data?.inputs?.find((inp: any) => inp.name === key);
+                
+                return (
+                  <div key={key} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px', // Increased gap for better port accessibility
+                    padding: '2px',
+                    borderRadius: '3px',
+                    transition: 'background-color 0.2s ease'
+                  }}>
+                    <div style={{ flex: '0 0 auto' }}>
+                      {input?.socket && (
+                        <Socket 
+                          data={input.socket} 
+                          isInput={true} 
+                          portMetadata={{
+                            mappingTypes: inputMetadata?.mappingTypes,
+                            isConnector: inputMetadata?.connector,
+                            description: inputMetadata?.description,
+                            required: inputMetadata?.required,
+                            type: inputMetadata?.type,
+                            isFromTerraform: inputMetadata?.isFromTerraform
+                          }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ flex: '1', minWidth: 0 }}>
+                      <div style={{ 
+                        fontSize: '10px', 
+                        fontWeight: '400',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        opacity: 0.9,
+                        lineHeight: '1.2'
+                      }}>
+                        {input?.label || key}
+                        {/* Type indicator next to label */}
+                        {inputMetadata?.type && (
+                          <span style={{ 
+                            fontSize: '8px', 
+                            opacity: 0.6, 
+                            marginLeft: '4px',
+                            fontStyle: 'italic' 
+                          }}>
+                            {inputMetadata.type}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -237,33 +364,82 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
             <div style={{ 
               fontSize: '9px', 
               fontWeight: '600', 
-              marginBottom: '4px', 
+              marginBottom: '6px', // Increased label spacing
               opacity: 0.8,
               textTransform: 'uppercase',
-              letterSpacing: '0.5px'
+              letterSpacing: '0.5px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end', // Right-align for outputs
+              gap: '4px'
             }}>
-              Outputs
+              Outputs ({connectorOutputs.length})
+              <div style={{ 
+                width: '6px', 
+                height: '6px', 
+                backgroundColor: '#f59e0b', 
+                borderRadius: '50%',
+                opacity: 0.6
+              }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-              {connectorOutputs.map(([key, output]) => (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-end' }}>
-                  <div style={{ flex: '1', textAlign: 'right' }}>
-                    <div style={{ 
-                      fontSize: '10px', 
-                      fontWeight: '400',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      opacity: 0.9
-                    }}>
-                      {output?.label || key}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}> {/* Increased port spacing */}
+              {connectorOutputs.map(([key, output]) => {
+                // Get enhanced metadata from graphNode data
+                const outputMetadata = data.graphNode.data?.outputs?.find((out: any) => out.name === key);
+                
+                return (
+                  <div key={key} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px', // Increased gap for better port accessibility
+                    justifyContent: 'flex-end',
+                    padding: '2px',
+                    borderRadius: '3px',
+                    transition: 'background-color 0.2s ease'
+                  }}>
+                    <div style={{ flex: '1', textAlign: 'right' }}>
+                      <div style={{ 
+                        fontSize: '10px', 
+                        fontWeight: '400',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        opacity: 0.9,
+                        lineHeight: '1.2'
+                      }}>
+                        {output?.label || key}
+                        {/* Type indicator next to label */}
+                        {outputMetadata?.type && (
+                          <span style={{ 
+                            fontSize: '8px', 
+                            opacity: 0.6, 
+                            marginLeft: '4px',
+                            fontStyle: 'italic' 
+                          }}>
+                            {outputMetadata.type}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ flex: '0 0 auto' }}>
+                      {output?.socket && (
+                        <Socket 
+                          data={output.socket} 
+                          isInput={false} 
+                          portMetadata={{
+                            mappingTypes: outputMetadata?.mappingTypes,
+                            isConnector: outputMetadata?.connector,
+                            description: outputMetadata?.description,
+                            required: outputMetadata?.required,
+                            type: outputMetadata?.type,
+                            isFromTerraform: outputMetadata?.isFromTerraform
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
-                  <div style={{ flex: '0 0 auto' }}>
-                    {output?.socket && <Socket data={output.socket} isInput={false} />}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

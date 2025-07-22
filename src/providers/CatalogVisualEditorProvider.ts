@@ -334,62 +334,80 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           outputCount: rootModule.outputs.length
         }, 'visualEditor');
         
-        // Transform Terraform variables to our input format, marking connectors based on input mappings
-        rootInputs = rootModule.variables.map(variable => ({
-          name: variable.name,
-          type: variable.type || 'string',
-          description: variable.description,
-          required: variable.required,
-          defaultValue: variable.default,
-          sensitive: variable.sensitive,
-          connector: portAnalysis.rootInputPorts.has(variable.name), // Set connector based on actual mappings
-          virtual: false
-        }));
+        // Transform Terraform variables to our input format, enhancing with port metadata
+        rootInputs = rootModule.variables.map(variable => {
+          const metadata = portAnalysis.portMetadata.get(variable.name);
+          return {
+            name: variable.name,
+            type: variable.type || metadata?.type || 'string',
+            description: variable.description || metadata?.description,
+            required: variable.required ?? metadata?.required ?? false,
+            defaultValue: variable.default,
+            sensitive: variable.sensitive,
+            connector: metadata?.isConnector ?? portAnalysis.rootInputPorts.has(variable.name),
+            virtual: false,
+            mappingTypes: metadata?.mappingTypes || [], // Enhanced: track mapping types
+            isFromTerraform: true // Enhanced: mark as Terraform-sourced
+          };
+        });
         
         // Also add any input mapping ports that weren't found in Terraform variables
         portAnalysis.rootInputPorts.forEach(portName => {
           if (!rootInputs.find(input => input.name === portName)) {
+            const metadata = portAnalysis.portMetadata.get(portName);
             this.logger.debug('Visual Editor: Adding missing input port from mapping analysis', {
-              portName
+              portName,
+              metadata: metadata
             }, 'visualEditor');
             
             rootInputs.push({
               name: portName,
-              type: 'string', // Default to string type
-              description: `Input port for ${portName} (from input mapping)`,
-              required: false,
+              type: metadata?.type || 'string',
+              description: metadata?.description || `Input port for ${portName} (from input mapping)`,
+              required: metadata?.required ?? false,
               defaultValue: null,
               sensitive: false,
-              connector: true, // All ports from input mapping analysis are connectors
-              virtual: false
+              connector: metadata?.isConnector ?? true,
+              virtual: false,
+              mappingTypes: metadata?.mappingTypes || [],
+              isFromTerraform: false // Enhanced: mark as mapping-sourced
             });
           }
         });
         
-        // Transform Terraform outputs to our output format, marking connectors based on input mappings
-        rootOutputs = rootModule.outputs.map(output => ({
-          name: output.name,
-          type: output.type || 'string',
-          description: output.description,
-          value: output.value,
-          sensitive: output.sensitive,
-          connector: portAnalysis.rootOutputPorts.has(output.name) // Set connector based on actual mappings
-        }));
+        // Transform Terraform outputs to our output format, enhancing with port metadata
+        rootOutputs = rootModule.outputs.map(output => {
+          const metadata = portAnalysis.portMetadata.get(output.name);
+          return {
+            name: output.name,
+            type: output.type || metadata?.type || 'string',
+            description: output.description || metadata?.description,
+            value: output.value,
+            sensitive: output.sensitive,
+            connector: metadata?.isConnector ?? portAnalysis.rootOutputPorts.has(output.name),
+            mappingTypes: metadata?.mappingTypes || [], // Enhanced: track mapping types
+            isFromTerraform: true // Enhanced: mark as Terraform-sourced
+          };
+        });
         
         // Also add any output mapping ports that weren't found in Terraform outputs
         portAnalysis.rootOutputPorts.forEach(portName => {
           if (!rootOutputs.find(output => output.name === portName)) {
+            const metadata = portAnalysis.portMetadata.get(portName);
             this.logger.debug('Visual Editor: Adding missing output port from mapping analysis', {
-              portName
+              portName,
+              metadata: metadata
             }, 'visualEditor');
             
             rootOutputs.push({
               name: portName,
-              type: 'string', // Default to string type
-              description: `Output port for ${portName} (from input mapping)`,
+              type: metadata?.type || 'string',
+              description: metadata?.description || `Output port for ${portName} (from input mapping)`,
               value: null,
               sensitive: false,
-              connector: true // All ports from input mapping analysis are connectors
+              connector: metadata?.isConnector ?? true,
+              mappingTypes: metadata?.mappingTypes || [],
+              isFromTerraform: false // Enhanced: mark as mapping-sourced
             });
           }
         });
@@ -456,7 +474,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         inputs: finalInputs,
         outputs: finalOutputs
       },
-      position: { x: 300, y: 100 }  // Center position for tree layout with 2-column dependencies
+      position: { x: 200, y: 50 }  // Compact center position
     };
     
     this.logger.debug('Visual Editor: Created root node', {
@@ -481,7 +499,38 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
     // Create dependency nodes
     const dependencies = flavor.dependencies || [];
+    
+    console.log('BUILD_GRAPH_MODEL: Starting dependency node creation', {
+      flavor: {
+        name: flavor.name,
+        label: flavor.label,
+        hasDependencies: !!flavor.dependencies,
+        dependencyCount: dependencies.length
+      },
+      dependencies: dependencies.map((dep, index) => ({
+        index,
+        id: dep.id,
+        name: dep.name,
+        version: dep.version,
+        flavors: dep.flavors,
+        hasInputMapping: !!dep.input_mapping,
+        inputMappingCount: dep.input_mapping?.length || 0,
+        optional: dep.optional,
+        onByDefault: dep.on_by_default
+      }))
+    });
+    
     for (const [index, dep] of dependencies.entries()) {
+      console.log(`BUILD_GRAPH_MODEL: Processing dependency ${index}:`, {
+        depId: dep.id,
+        depName: dep.name,
+        depVersion: dep.version,
+        depFlavors: dep.flavors,
+        hasInputMapping: !!dep.input_mapping,
+        inputMappingLength: dep.input_mapping?.length || 0,
+        optional: dep.optional,
+        onByDefault: dep.on_by_default
+      });
       // Try to parse dependency module if it's local
       let depInputs: any[] = [];
       let depOutputs: any[] = [];
@@ -628,10 +677,22 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           outputs: depOutputs
         },
         position: { 
-          x: 100 + (index % 2) * 450,  // 2 columns with wider spacing
-          y: 450 + Math.floor(index / 2) * 350  // Much more vertical spacing
+          x: 50 + (index % 2) * 300,  // 2 columns with compact spacing
+          y: 200 + Math.floor(index / 2) * 160  // Compact vertical spacing
         }
       };
+      
+      console.log(`BUILD_GRAPH_MODEL: Created dependency node ${index}:`, {
+        nodeId: depNode.id,
+        nodeName: depNode.name,
+        nodeType: depNode.type,
+        position: depNode.position,
+        inputCount: depInputs.length,
+        outputCount: depOutputs.length,
+        hasInputMapping: !!dep.input_mapping,
+        inputMappingLength: dep.input_mapping?.length || 0
+      });
+      
       nodes.push(depNode);
 
       // Create connections from input mappings
@@ -645,8 +706,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
               id: connectionId,
               source: depNode.id,
               target: rootNode.id,
-              sourceHandle: mapping.dependency_output,
-              targetHandle: mapping.version_input
+              sourceHandle: `output-${mapping.dependency_output}`, // Prefix with output-
+              targetHandle: `input-${mapping.version_input}`      // Prefix with input-
             });
           } else if (mapping.dependency_input && mapping.version_input && mapping.reference_version) {
             // Input from root to dependency
@@ -654,13 +715,27 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
               id: connectionId,
               source: rootNode.id,
               target: depNode.id,
-              sourceHandle: mapping.version_input,
-              targetHandle: mapping.dependency_input
+              sourceHandle: `output-${mapping.version_input}`,   // Root output (pass-through)
+              targetHandle: `input-${mapping.dependency_input}`  // Dependency input
             });
           }
         });
       }
     }
+    
+    console.log('BUILD_GRAPH_MODEL: Dependency processing completed', {
+      totalDependencies: dependencies.length,
+      totalNodesCreated: nodes.length,
+      rootNodeCount: nodes.filter(n => n.type === 'root').length,
+      dependencyNodeCount: nodes.filter(n => n.type === 'dependency').length,
+      totalConnectionsCreated: connections.length,
+      nodeDetails: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        name: n.name,
+        position: n.position
+      }))
+    });
 
     const graphModel = {
       nodes,
@@ -1893,48 +1968,86 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
   /**
    * Analyze input mappings to determine which ports should be exposed as connectors
+   * Enhanced to support all mapping types with metadata
    */
   private analyzeInputMappings(dependencies: any[]): {
     rootInputPorts: Set<string>;
     rootOutputPorts: Set<string>;
     dependencyPorts: Map<string, { inputs: Set<string>; outputs: Set<string> }>;
+    portMetadata: Map<string, { 
+      mappingTypes: string[], 
+      isConnector: boolean, 
+      description?: string,
+      required?: boolean,
+      type?: string
+    }>;
   } {
     const rootInputPorts = new Set<string>();
     const rootOutputPorts = new Set<string>();
     const dependencyPorts = new Map<string, { inputs: Set<string>; outputs: Set<string> }>();
+    const portMetadata = new Map<string, { 
+      mappingTypes: string[], 
+      isConnector: boolean, 
+      description?: string,
+      required?: boolean,
+      type?: string
+    }>();
 
     this.logger.debug('Visual Editor: Analyzing input mappings', {
       dependencyCount: dependencies.length
     }, 'visualEditor');
     
-    // Add common root-level inputs that are typically needed
+    // Helper function to add port metadata
+    const addPortMetadata = (portName: string, mappingType: string, isConnector: boolean, description?: string, required?: boolean, type?: string) => {
+      const existing = portMetadata.get(portName);
+      if (existing) {
+        existing.mappingTypes.push(mappingType);
+        existing.isConnector = existing.isConnector || isConnector;
+      } else {
+        portMetadata.set(portName, {
+          mappingTypes: [mappingType],
+          isConnector,
+          description,
+          required,
+          type
+        });
+      }
+    };
+    
+    // Add common root-level inputs that are typically used in input_mapping
     const commonRootInputs = [
-      'region',
-      'resource_group_name',
-      'resource_group_id',
-      'prefix',
-      'tags',
-      'existing_kms_instance_crn',
-      'existing_secrets_manager_crn',
-      'vpc_id',
-      'subnet_ids',
-      'security_group_ids'
+      { name: 'region', description: 'IBM Cloud region', required: true, type: 'string' },
+      { name: 'resource_group_name', description: 'Resource group name', required: false, type: 'string' },
+      { name: 'resource_group_id', description: 'Resource group ID', required: false, type: 'string' },
+      { name: 'prefix', description: 'Prefix for resource names', required: true, type: 'string' },
+      { name: 'tags', description: 'Tags to apply to resources', required: false, type: 'list(string)' },
+      { name: 'existing_kms_instance_crn', description: 'Existing KMS instance CRN', required: false, type: 'string' },
+      { name: 'existing_secrets_manager_crn', description: 'Existing Secrets Manager CRN', required: false, type: 'string' },
+      { name: 'vpc_id', description: 'VPC ID', required: false, type: 'string' },
+      { name: 'subnet_ids', description: 'Subnet IDs', required: false, type: 'list(string)' },
+      { name: 'security_group_ids', description: 'Security group IDs', required: false, type: 'list(string)' }
     ];
     
     // Add common root-level outputs that are typically exposed
     const commonRootOutputs = [
-      'resource_group_id',
-      'vpc_id',
-      'subnet_ids',
-      'security_group_ids',
-      'kms_key_id',
-      'secrets_manager_crn',
-      'compliance_report'
+      { name: 'resource_group_id', description: 'Resource group ID output', type: 'string' },
+      { name: 'vpc_id', description: 'VPC ID output', type: 'string' },
+      { name: 'subnet_ids', description: 'Subnet IDs output', type: 'list(string)' },
+      { name: 'security_group_ids', description: 'Security group IDs output', type: 'list(string)' },
+      { name: 'kms_key_id', description: 'KMS key ID output', type: 'string' },
+      { name: 'secrets_manager_crn', description: 'Secrets Manager CRN output', type: 'string' },
+      { name: 'compliance_report', description: 'Compliance report output', type: 'object' }
     ];
     
-    // Add default root inputs and outputs
-    commonRootInputs.forEach(input => rootInputPorts.add(input));
-    commonRootOutputs.forEach(output => rootOutputPorts.add(output));
+    // Pre-populate with common inputs and outputs (these will be connectors if used in mappings)
+    commonRootInputs.forEach(input => {
+      rootInputPorts.add(input.name);
+      addPortMetadata(input.name, 'version_input', false, input.description, input.required, input.type);
+    });
+    commonRootOutputs.forEach(output => {
+      rootOutputPorts.add(output.name);
+      addPortMetadata(output.name, 'dependency_output', false, output.description, false, output.type);
+    });
 
     dependencies.forEach((dep, index) => {
       const depId = `dep-${index}`;
@@ -1963,18 +2076,36 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
       if (dep.input_mapping && Array.isArray(dep.input_mapping)) {
         dep.input_mapping.forEach((mapping: any) => {
-          // Root input connected to dependency input
+          // Root input connected to dependency input (dependency_input mapping)
           if (mapping.version_input && mapping.dependency_input) {
             rootInputPorts.add(mapping.version_input);
+            // Mark as connector and add metadata
+            addPortMetadata(mapping.version_input, 'dependency_input', true, 
+              `Input mapped to ${dep.name}.${mapping.dependency_input}`, false, 'string');
+            
             // Also add as output port so it can be used as a source handle for pass-through
             rootOutputPorts.add(mapping.version_input);
+            addPortMetadata(mapping.version_input, 'pass_through', true, 
+              `Pass-through for ${mapping.dependency_input}`, false, 'string');
+            
             depPorts.inputs.add(mapping.dependency_input);
           }
           
-          // Dependency output connected to root input  
+          // Dependency output connected to root input (dependency_output mapping)
           if (mapping.dependency_output && mapping.version_input) {
             depPorts.outputs.add(mapping.dependency_output);
             rootInputPorts.add(mapping.version_input);
+            
+            // Mark both ends as connectors with metadata
+            addPortMetadata(mapping.version_input, 'dependency_output', true, 
+              `Receives output from ${dep.name}.${mapping.dependency_output}`, false, 'string');
+          }
+          
+          // Static value mapping (no connector needed, but track metadata)
+          if (mapping.version_input && !mapping.dependency_input && !mapping.dependency_output) {
+            rootInputPorts.add(mapping.version_input);
+            addPortMetadata(mapping.version_input, 'static_value', false, 
+              `Static value input for ${dep.name}`, false, 'string');
           }
         });
       }
@@ -1983,10 +2114,14 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     this.logger.debug('Visual Editor: Input mapping analysis complete', {
       rootInputPorts: Array.from(rootInputPorts),
       rootOutputPorts: Array.from(rootOutputPorts),
-      dependencyPortsCount: dependencyPorts.size
+      dependencyPortsCount: dependencyPorts.size,
+      portMetadataCount: portMetadata.size,
+      connectorPorts: Array.from(portMetadata.entries())
+        .filter(([_, meta]) => meta.isConnector)
+        .map(([name, _]) => name)
     }, 'visualEditor');
 
-    return { rootInputPorts, rootOutputPorts, dependencyPorts };
+    return { rootInputPorts, rootOutputPorts, dependencyPorts, portMetadata };
   }
 
   private getNonce(): string {

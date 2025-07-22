@@ -1,93 +1,255 @@
-import React from 'react';
-import { NodeProps } from 'reactflow';
+import React, { useEffect } from 'react';
+import { NodeProps, Handle, Position, useUpdateNodeInternals } from 'reactflow';
 
-// Enhanced Dependency Node with basic data display  
-export const DependencyNodeReactFlow: React.FC<NodeProps> = ({ data, selected }) => {
+// Enhanced Dependency Node with dynamic height and expand/collapse functionality
+export const DependencyNodeReactFlow: React.FC<NodeProps> = ({ data, selected, id }) => {
   const isSelected = selected || data.selected;
+  const updateNodeInternals = useUpdateNodeInternals();
+  
+  // Get broken handles information from data
+  const brokenHandles = data.brokenHandles || [];
+  
+  // Get port data from node data with proper typing and display name support
+  const inputs = (data.inputs as Array<{
+    name?: string, 
+    display_name?: string, 
+    description?: string,
+    connector?: boolean
+  }>) || [];
+  const outputs = (data.outputs as Array<{
+    name?: string, 
+    display_name?: string, 
+    description?: string,
+    connector?: boolean
+  }>) || [];
+  
+  // Get expand state from data (default to collapsed)
+  const expanded = data.expanded || false;
+  
+  // Filter ports based on expand state and connections
+  const connectedInputs = inputs.filter(input => 
+    data.connectedHandles?.includes(`input-${input.name}`) || input.connector);
+  const connectedOutputs = outputs.filter(output => 
+    data.connectedHandles?.includes(`output-${output.name}`) || output.connector);
+  
+  const visibleInputs = expanded ? inputs : connectedInputs;
+  const visibleOutputs = expanded ? outputs : connectedOutputs;
+  
+  // Calculate dynamic height based on visible port count
+  const maxPorts = Math.max(visibleInputs.length, visibleOutputs.length);
+  const baseHeight = 70; // Header + content area for dependency nodes
+  const portSpacing = 10; // Consistent with RootNode spacing
+  const expandButtonHeight = 15; // Height for expand/collapse buttons
+  const dynamicHeight = Math.max(baseHeight, baseHeight + (maxPorts * portSpacing) + expandButtonHeight);
+  
+  // Update node internals when port data or expand state changes
+  useEffect(() => {
+    if (id) {
+      updateNodeInternals(id);
+    }
+  }, [inputs.length, outputs.length, expanded, id, updateNodeInternals]);
+
+  // Helper function to get display name with fallback
+  const getDisplayName = (item: {name?: string, display_name?: string}) => {
+    return item.display_name || item.name || 'Unknown';
+  };
+
+  // Helper function to handle expand/collapse toggle
+  const handleToggleExpand = () => {
+    if (data.onToggleExpand) {
+      data.onToggleExpand(id);
+    }
+  };
   
   return (
     <div style={{
-      background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+      background: 'linear-gradient(135deg, #475569 0%, #64748b 100%)',
       color: 'white',
-      border: isSelected ? '3px solid #fbbf24' : '2px solid #059669',
-      borderRadius: '8px',
-      minWidth: '160px',
-      fontSize: '12px',
+      border: isSelected ? '2px solid #fbbf24' : '1px solid #6b7280',
+      borderRadius: '6px',
+      width: '100px', // Fixed width instead of min/max
+      height: `${dynamicHeight}px`, // Dynamic height based on port count
+      fontSize: '11px',
       fontFamily: 'var(--vscode-font-family, monospace)',
-      boxShadow: isSelected ? '0 4px 12px rgba(251, 191, 36, 0.3)' : '0 2px 8px rgba(5, 150, 105, 0.2)',
+      boxShadow: isSelected ? '0 3px 8px rgba(251, 191, 36, 0.2)' : '0 2px 6px rgba(0, 0, 0, 0.15)',
+      transition: 'all 0.2s ease',
+      position: 'relative', // Ensure handles are positioned relative to this container
     }}>
       {/* Header */}
       <div style={{
-        background: 'rgba(0, 0, 0, 0.1)',
-        padding: '6px 10px',
-        borderRadius: '6px 6px 0 0',
+        background: 'rgba(0, 0, 0, 0.15)',
+        padding: '5px 6px',
+        borderRadius: '5px 5px 0 0',
         fontWeight: '600',
-        fontSize: '12px',
+        fontSize: '10px',
         textAlign: 'center',
         borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
           <div style={{
-            width: '6px',
-            height: '6px',
-            backgroundColor: '#f59e0b',
+            width: '5px',
+            height: '5px',
+            backgroundColor: '#34d399',
             borderRadius: '50%',
-            boxShadow: '0 0 4px rgba(245, 158, 11, 0.6)',
+            boxShadow: '0 0 3px rgba(52, 211, 153, 0.4)',
           }} />
-          {data.label || 'Dependency'}
+          <span style={{ 
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: '80px'
+          }}>
+            {data.label || 'Dependency'}
+          </span>
         </div>
         
         {data.version && (
-          <div style={{ fontSize: '9px', opacity: 0.7, marginTop: '1px' }}>
+          <div style={{ fontSize: '8px', opacity: 0.6, marginTop: '1px' }}>
             v{data.version}
           </div>
         )}
       </div>
 
       {/* Content Area */}
-      <div style={{ padding: '8px' }}>
+      <div style={{ padding: '5px 6px' }}>
         <div style={{ 
-          fontSize: '10px', 
-          opacity: 0.9,
+          fontSize: '9px', 
+          opacity: 0.8,
           textAlign: 'center',
-          marginBottom: '4px'
+          lineHeight: '1.3'
         }}>
-          {data.description || 'External dependency module'}
-        </div>
-        
-        {data.installType && (
           <div style={{ 
-            fontSize: '9px', 
-            opacity: 0.7,
-            textAlign: 'center',
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px'
+            marginBottom: '2px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
           }}>
-            {data.installType}
+            {data.description || 'External dependency module'}
           </div>
-        )}
+          
+          {data.installType && (
+            <div style={{ 
+              fontSize: '8px', 
+              opacity: 0.6,
+              textTransform: 'uppercase',
+              letterSpacing: '0.3px',
+              color: '#a1a1aa'
+            }}>
+              {data.installType}
+            </div>
+          )}
+        </div>
       </div>
-
-      {/* Type Badge */}
-      <div style={{
-        position: 'absolute',
-        top: '-6px',
-        right: '-6px',
-        background: '#f59e0b',
-        color: '#000',
-        borderRadius: '50%',
-        width: '14px',
-        height: '14px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: '9px',
-        fontWeight: '700',
-        border: '2px solid #fff',
-        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-      }}>
-        D
-      </div>
+      
+      {/* Single Expand/Collapse Control */}
+      {(inputs.length > 0 || outputs.length > 0) && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          padding: '2px 6px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          <button
+            onClick={handleToggleExpand}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              fontSize: '10px',
+              cursor: 'pointer',
+              padding: '1px 3px',
+              borderRadius: '2px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '2px',
+              transition: 'all 0.2s ease',
+              opacity: 0.7
+            }}
+            title={`${expanded ? 'Collapse' : 'Expand'} all ports (${inputs.length + outputs.length} total, ${visibleInputs.length + visibleOutputs.length} visible)`}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+              e.currentTarget.style.opacity = '1';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.opacity = '0.7';
+            }}
+          >
+            <span style={{ fontSize: '8px', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>▼</span>
+          </button>
+        </div>
+      )}
+      
+      {/* Input Handles - positioned on left edge within node bounds */}
+      {visibleInputs.map((input, index) => {
+        const handleId = `input-${input.name || index}`;
+        const isBroken = brokenHandles.includes(handleId);
+        
+        return (
+          <Handle
+            key={`input-${index}`}
+            type="target"
+            position={Position.Left}
+            id={handleId}
+            style={{
+              left: '0px', // Position handle at left edge to prevent width boundary extension
+              top: `${70 + (index * portSpacing)}px`, // Start after header/content area + expand control
+              width: '6px',
+              height: '6px',
+              backgroundColor: isBroken ? '#ef4444' : '#10b981',
+              border: isBroken ? '2px solid #dc2626' : '1px solid #fff',
+              borderRadius: '50%',
+              zIndex: 10,
+              boxShadow: isBroken ? '0 0 4px rgba(239, 68, 68, 0.6)' : 'none',
+              animation: isBroken ? 'pulse 2s infinite' : 'none'
+            }}
+            title={isBroken ? 
+              `BROKEN: ${getDisplayName(input)} - No valid connection found` : 
+              `${getDisplayName(input)}${input.description ? `\n${input.description}` : ''}`
+            }
+          />
+        );
+      })}
+      
+      {/* Output Handles - positioned on right edge within node bounds */}
+      {visibleOutputs.map((output, index) => {
+        const handleId = `output-${output.name || index}`;
+        const isBroken = brokenHandles.includes(handleId);
+        
+        return (
+          <Handle
+            key={`output-${index}`}
+            type="source"
+            position={Position.Right}
+            id={handleId}
+            style={{
+              right: '0px', // Position handle at right edge to prevent width boundary extension
+              top: `${70 + (index * portSpacing)}px`, // Start after header/content area + expand control
+              width: '6px',
+              height: '6px',
+              backgroundColor: isBroken ? '#ef4444' : '#f59e0b',
+              border: isBroken ? '2px solid #dc2626' : '1px solid #fff',
+              borderRadius: '50%',
+              zIndex: 10,
+              boxShadow: isBroken ? '0 0 4px rgba(239, 68, 68, 0.6)' : 'none',
+              animation: isBroken ? 'pulse 2s infinite' : 'none'
+            }}
+            title={isBroken ? 
+              `BROKEN: ${getDisplayName(output)} - No valid connection found` : 
+              `${getDisplayName(output)}${output.description ? `\n${output.description}` : ''}`
+            }
+          />
+        );
+      })}
+      
+      {/* CSS for pulse animation */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      `}</style>
     </div>
   );
 };

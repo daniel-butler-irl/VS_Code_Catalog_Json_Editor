@@ -158,14 +158,12 @@ body {
   overflow: hidden;
 }
 
-/* Editor content area - DEBUGGING */
+/* Editor content area */
 .editor-content {
   display: flex !important;
   flex: 1 !important;
   height: calc(100vh - var(--toolbar-height)) !important;
   overflow: hidden !important;
-  /* DEBUG: Add bright border to verify editor content */
-  border: 3px solid #ff0000 !important;
   box-sizing: border-box !important;
   position: relative !important;
 }
@@ -420,7 +418,7 @@ body {
   z-index: 1000;
 }
 
-/* Canvas container - DEBUGGING */
+/* Canvas container */
 .canvas-container {
   flex: 1;
   position: relative;
@@ -430,8 +428,6 @@ body {
   width: 100% !important;
   min-height: 400px !important;
   min-width: 400px !important;
-  /* DEBUG: Add bright border to verify container */
-  border: 3px solid #ff00ff !important;
   box-sizing: border-box !important;
 }
 
@@ -1001,6 +997,67 @@ body {
   margin-bottom: 0;
 }
 
+/* Expansion controls */
+.expansion-controls {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+}
+
+.expansion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xs);
+}
+
+.expansion-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.expansion-buttons {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.expansion-button {
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-color);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  transition: all 0.2s ease;
+}
+
+.expansion-button:hover {
+  background-color: var(--accent-color);
+  color: var(--accent-text);
+  border-color: var(--accent-color);
+}
+
+.expansion-button.active {
+  background-color: var(--success-color);
+  color: var(--primary-bg);
+  border-color: var(--success-color);
+}
+
+.expansion-hint {
+  font-size: 11px;
+  color: var(--debug-text);
+  margin-top: var(--spacing-xs);
+  font-style: italic;
+}
+
 /* Inputs and outputs sections */
 .inputs-list,
 .outputs-list {
@@ -1553,27 +1610,23 @@ path.rete-connection-preview {
   position: relative;
 }
 
-/* React Flow Specific Styles - AgentK Studio Theme - DEBUGGING */
+/* React Flow Specific Styles - AgentK Studio Theme */
 .reactflow-wrapper {
   height: 100% !important;
   width: 100% !important;
   min-height: 400px !important;
   min-width: 400px !important;
-  /* DEBUG: Add bright border to verify wrapper */
-  border: 3px solid #00ffff !important;
   box-sizing: border-box !important;
   position: relative !important;
 }
 
-/* React Flow Dark Theme Override - DEBUGGING */
+/* React Flow Dark Theme Override */
 .react-flow {
   background-color: #1f2937 !important;
   height: 100% !important;
   width: 100% !important;
   min-height: 400px !important;
   min-width: 400px !important;
-  /* DEBUG: Add bright border to verify React Flow container */
-  border: 3px solid #ffff00 !important;
   box-sizing: border-box !important;
   position: relative !important;
 }
@@ -1766,23 +1819,45 @@ path.rete-connection-preview {
   box-shadow: 0 4px 12px rgba(251, 191, 36, 0.3) !important;
 }
 
-/* React Flow Handles */
+/* React Flow Handles - Positioned within node bounds to prevent invisible boundary issues */
 .react-flow__handle {
-  width: 12px !important;
-  height: 12px !important;
-  border: 2px solid #fff !important;
+  /* Force handles to stay within node bounds */
+  position: absolute !important;
+  z-index: 10 !important;
+  /* Override default sizing to ensure handles don't extend beyond visible content */
+  width: 8px !important;
+  height: 8px !important;
+  border: 1px solid #fff !important;
   border-radius: 50% !important;
-  transition: all 0.2s !important;
+  transition: all 0.2s ease !important;
+  /* Ensure handles don't affect layout calculations */
+  pointer-events: auto !important;
 }
 
+/* Handle hover effects - keep compact to prevent boundary issues */
 .react-flow__handle:hover {
-  transform: scale(1.2) !important;
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.6) !important;
+  transform: scale(1.15) !important;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5) !important;
+  z-index: 20 !important;
 }
 
+/* Connecting state styles */
 .react-flow__handle-connecting {
   background: #3b82f6 !important;
   border-color: #3b82f6 !important;
+  transform: scale(1.15) !important;
+}
+
+/* Input handle styles (left side) */
+.react-flow__handle[data-handlepos="left"] {
+  background: #10b981 !important;
+  border-color: #fff !important;
+}
+
+/* Output handle styles (right side) */
+.react-flow__handle[data-handlepos="right"] {
+  background: #f59e0b !important;
+  border-color: #fff !important;
 }
 
 /* Dark theme for React Flow Attribution */
