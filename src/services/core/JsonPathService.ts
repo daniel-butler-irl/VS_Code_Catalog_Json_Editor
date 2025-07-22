@@ -110,7 +110,7 @@ export class JsonPathService {
             if (Array.isArray(result)) {
                 results.push(...result);
             } else {
-                results.push(result);
+                results.push(result as T);
             }
         }
 

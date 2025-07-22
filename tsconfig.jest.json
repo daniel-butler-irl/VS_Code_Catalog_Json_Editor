@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "jest", "vscode"],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": false,
+    "isolatedModules": false,
+    "noEmit": false,
+    "composite": true,
+    "skipLibCheck": true,
+    "outDir": "out/jest"
+  },
+  "include": [
+    "src/test/**/*",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/test/jest.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "out"
+  ]
+}

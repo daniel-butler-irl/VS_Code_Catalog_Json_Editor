@@ -10,6 +10,16 @@
     },
     // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
     "typescript.tsc.autoDetect": "off",
+    "typescript.preferences.includePackageJsonAutoImports": "on",
+    "typescript.suggest.autoImports": true,
+    "typescript.jsx": "react-jsx",
+    "emmet.includeLanguages": {
+        "typescript": "html",
+        "typescriptreact": "html"
+    },
+    "files.associations": {
+        "*.tsx": "typescriptreact"
+    },
     "IBM Cloud Deployable Architecture Builder.disable GHE URI check": true,
     "mochaExplorer.files": "out/tests/**/*.test.js",
     "mochaExplorer.require": [
@@ -42,5 +52,7 @@
         "typescript"
     ],
     "prettier.singleQuote": true, // Use single quotes
-    "prettier.trailingComma": "all" // Add trailing commas where possible
+    "prettier.trailingComma": "all", // Add trailing commas where possible
+    "typescript.preferences.includePackageJsonAutoImports": "on",
+    "jest.jestCommandLine": "npm run test:jest"
 }

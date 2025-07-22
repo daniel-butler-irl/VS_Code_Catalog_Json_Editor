@@ -64,6 +64,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   private readonly context: vscode.ExtensionContext;
   private disposables: vscode.Disposable[] = [];
   private currentOfferings: any[] = []; // Store current offerings data for node label lookup
+  private rootNodeConfigurations: Map<string, { inputs?: any[], outputs?: any[] }> = new Map(); // Store root node input/output configurations
 
   private constructor(
     context: vscode.ExtensionContext,
@@ -201,7 +202,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }, 'visualEditor');
 
       // Convert catalog JSON to graph model
-      const graphModel = await this.buildGraphModel(parsedCatalog);
+      const graphModel = await this.buildGraphModel(parsedCatalog, document);
       
       this.logger.debug('Visual Editor: Built graph model', {
         nodeCount: graphModel.nodes.length,
@@ -226,7 +227,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     }
   }
 
-  private async buildGraphModel(catalogData: any, selectedProduct?: string, selectedFlavor?: string): Promise<GraphModel> {
+  private async buildGraphModel(catalogData: any, document?: vscode.TextDocument, selectedProduct?: string, selectedFlavor?: string): Promise<GraphModel> {
     this.logger.debug('Visual Editor: Building graph model from catalog data', {
       hasProducts: !!catalogData.products,
       productCount: catalogData.products?.length || 0,
@@ -414,6 +415,14 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }));
     }
 
+    // Get stored root node configurations if they exist
+    const documentUri = document?.uri.toString();
+    const rootConfig = documentUri ? this.rootNodeConfigurations.get(documentUri) : undefined;
+    
+    // Use stored configurations if available, otherwise use derived inputs/outputs
+    const finalInputs = rootConfig?.inputs || rootInputs;
+    const finalOutputs = rootConfig?.outputs || rootOutputs;
+    
     // Create root node
     const rootNode: GraphNode = {
       id: 'root',
@@ -423,8 +432,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         flavor: flavor.name,
         label: flavor.label,
         description: flavor.description,
-        inputs: rootInputs,
-        outputs: rootOutputs
+        inputs: finalInputs,
+        outputs: finalOutputs
       },
       position: { x: 400, y: 200 }
     };
@@ -552,14 +561,14 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       const depId = `dep-${index}`;
       const depPorts = portAnalysis.dependencyPorts.get(depId);
       
-      if (depInputs.length === 0 && depPorts?.inputs.size > 0) {
+      if (depInputs.length === 0 && depPorts && depPorts.inputs.size > 0) {
         this.logger.debug('Visual Editor: Creating dependency inputs from input mapping analysis', {
           dependencyName: dep.name,
-          portCount: depPorts.inputs.size,
-          ports: Array.from(depPorts.inputs)
+          portCount: depPorts ? depPorts.inputs.size : 0,
+          ports: depPorts ? Array.from(depPorts.inputs) : []
         }, 'visualEditor');
         
-        depInputs = Array.from(depPorts.inputs).map(portName => ({
+        depInputs = Array.from(depPorts?.inputs || []).map(portName => ({
           name: portName,
           type: 'string', // Default to string type
           description: `Input port for ${portName}`,
@@ -571,14 +580,14 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         }));
       }
 
-      if (depOutputs.length === 0 && depPorts?.outputs.size > 0) {
+      if (depOutputs.length === 0 && depPorts && depPorts.outputs.size > 0) {
         this.logger.debug('Visual Editor: Creating dependency outputs from input mapping analysis', {
           dependencyName: dep.name,
-          portCount: depPorts.outputs.size,
-          ports: Array.from(depPorts.outputs)
+          portCount: depPorts ? depPorts.outputs.size : 0,
+          ports: depPorts ? Array.from(depPorts.outputs) : []
         }, 'visualEditor');
         
-        depOutputs = Array.from(depPorts.outputs).map(portName => ({
+        depOutputs = Array.from(depPorts?.outputs || []).map(portName => ({
           name: portName,
           type: 'string', // Default to string type
           description: `Output port for ${portName}`,
@@ -606,7 +615,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
 
       // Create connections from input mappings
       if (dep.input_mapping) {
-        dep.input_mapping.forEach((mapping, mappingIndex) => {
+        dep.input_mapping.forEach((mapping: any, mappingIndex: number) => {
           const connectionId = `connection-${index}-${mappingIndex}`;
           
           if (mapping.dependency_output && mapping.version_input) {
@@ -684,7 +693,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       const parsedCatalog = jsonc.parse(text);
       
       if (parsedCatalog) {
-        const graphModel = await this.buildGraphModel(parsedCatalog);
+        const graphModel = await this.buildGraphModel(parsedCatalog, document);
         await webviewPanel.webview.postMessage({
           command: 'updateGraph',
           data: graphModel
@@ -709,7 +718,10 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           await this.handleRemoveDependency(message, document);
           break;
         case 'updateNodeProperty':
-          await this.handleUpdateNodeProperty(message, document);
+          await this.handleUpdateNodeProperty(message, webviewPanel, document);
+          break;
+        case 'updateNodePropertyIncremental':
+          await this.handleUpdateNodePropertyIncremental(message, webviewPanel, document);
           break;
         case 'addConnection':
           await this.handleAddConnection(message, document);
@@ -788,7 +800,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         id: offering.id,
         name: offering.name,
         version: offering.selectedVersion || offering.versions?.[0] || 'latest',
-        flavors: offering.selectedFlavor ? [offering.selectedFlavor] : (offering.flavors?.slice(0, 1).map(f => f.name) || ['standard']),
+        flavors: offering.selectedFlavor ? [offering.selectedFlavor] : (offering.flavors?.slice(0, 1).map((f: any) => f.name) || ['standard']),
         catalog_id: 'public', // Default to public catalog
         input_mapping: [], // Will be configured later
         optional: false // Default to required
@@ -899,7 +911,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     }
   }
 
-  private async handleUpdateNodeProperty(message: WebviewMessage, document: vscode.TextDocument): Promise<void> {
+  private async handleUpdateNodeProperty(message: WebviewMessage, webviewPanel: vscode.WebviewPanel, document: vscode.TextDocument): Promise<void> {
     try {
       this.logger.info('Visual Editor: Updating node property in document', { 
         nodeId: message.nodeId, 
@@ -939,6 +951,50 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           flavor.label = value;
         } else if (property === 'description') {
           flavor.description = value;
+        } else if (property === 'inputs') {
+          // Store inputs configuration for root node
+          const documentUri = document.uri.toString();
+          const rootConfig = this.rootNodeConfigurations.get(documentUri) || {};
+          rootConfig.inputs = value;
+          this.rootNodeConfigurations.set(documentUri, rootConfig);
+          this.logger.info('Visual Editor: Updated root node inputs configuration', { 
+            documentUri, 
+            inputsCount: value?.length || 0 
+          }, 'visualEditor');
+          
+          // Refresh the UI with updated graph model
+          const text = document.getText();
+          const parsedCatalog = jsonc.parse(text);
+          if (parsedCatalog) {
+            const graphModel = await this.buildGraphModel(parsedCatalog, document);
+            await webviewPanel.webview.postMessage({
+              command: 'updateGraph',
+              data: graphModel
+            });
+          }
+          return;
+        } else if (property === 'outputs') {
+          // Store outputs configuration for root node
+          const documentUri = document.uri.toString();
+          const rootConfig = this.rootNodeConfigurations.get(documentUri) || {};
+          rootConfig.outputs = value;
+          this.rootNodeConfigurations.set(documentUri, rootConfig);
+          this.logger.info('Visual Editor: Updated root node outputs configuration', { 
+            documentUri, 
+            outputsCount: value?.length || 0 
+          }, 'visualEditor');
+          
+          // Refresh the UI with updated graph model
+          const text = document.getText();
+          const parsedCatalog = jsonc.parse(text);
+          if (parsedCatalog) {
+            const graphModel = await this.buildGraphModel(parsedCatalog, document);
+            await webviewPanel.webview.postMessage({
+              command: 'updateGraph',
+              data: graphModel
+            });
+          }
+          return;
         } else {
           throw new Error(`Unsupported root property: ${property}`);
         }
@@ -1006,6 +1062,98 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     } catch (error) {
       this.logger.error('Visual Editor: Failed to update node property', { error, message }, 'visualEditor');
       throw error;
+    }
+  }
+
+  private async handleUpdateNodePropertyIncremental(message: WebviewMessage, webviewPanel: vscode.WebviewPanel, document: vscode.TextDocument): Promise<void> {
+    try {
+      this.logger.info('Visual Editor: Updating node property incrementally (in-memory)', { 
+        nodeId: message.nodeId, 
+        property: message.property, 
+        value: message.value 
+      }, 'visualEditor');
+
+      const nodeId = message.nodeId;
+      const property = message.property;
+      const value = message.value;
+
+      if (!nodeId || !property) {
+        throw new Error('Invalid data: missing nodeId or property');
+      }
+
+      const documentUri = document.uri.toString();
+
+      // Handle root node updates
+      if (nodeId === 'root') {
+        if (property === 'inputs' || property === 'outputs') {
+          // Update in-memory configuration for root node
+          const rootConfig = this.rootNodeConfigurations.get(documentUri) || {};
+          rootConfig[property] = value;
+          this.rootNodeConfigurations.set(documentUri, rootConfig);
+          
+          this.logger.info('Visual Editor: Updated root node configuration incrementally', { 
+            documentUri, 
+            property,
+            itemsCount: value?.length || 0 
+          }, 'visualEditor');
+          
+          // Send incremental update to UI
+          await webviewPanel.webview.postMessage({
+            command: 'updateNodeIncremental',
+            nodeId,
+            property,
+            value
+          });
+          
+          return;
+        }
+        
+        // For other root properties, we could update in-memory state here
+        // For now, fall back to structural update
+        this.logger.info('Visual Editor: Root property not supported incrementally, falling back to structural update', { 
+          property 
+        }, 'visualEditor');
+        
+        // Fallback to structural update
+        return this.handleUpdateNodeProperty(message, webviewPanel, document);
+      }
+      
+      // Handle dependency node updates
+      if (nodeId.startsWith('dep-')) {
+        // For dependency updates, we can update in-memory state and send to UI
+        // For now, send incremental update to UI
+        await webviewPanel.webview.postMessage({
+          command: 'updateNodeIncremental',
+          nodeId,
+          property,
+          value
+        });
+        
+        this.logger.info('Visual Editor: Sent incremental dependency update to UI', { 
+          nodeId, 
+          property 
+        }, 'visualEditor');
+        
+        return;
+      }
+      
+      // Unknown node type, fallback to structural update
+      this.logger.warn('Visual Editor: Unknown node type for incremental update, falling back to structural', { 
+        nodeId 
+      }, 'visualEditor');
+      
+      return this.handleUpdateNodeProperty(message, webviewPanel, document);
+
+    } catch (error) {
+      this.logger.error('Visual Editor: Failed to update node property incrementally, falling back to structural update', { error, message }, 'visualEditor');
+      
+      // Fallback to structural update on error
+      try {
+        return this.handleUpdateNodeProperty(message, webviewPanel, document);
+      } catch (fallbackError) {
+        this.logger.error('Visual Editor: Fallback to structural update also failed', { fallbackError }, 'visualEditor');
+        throw fallbackError;
+      }
     }
   }
 
@@ -1238,7 +1386,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }
 
       // Build new graph model with selected product/flavor
-      const graphModel = await this.buildGraphModel(parsedCatalog, selectedProduct, selectedFlavor);
+      const graphModel = await this.buildGraphModel(parsedCatalog, document, selectedProduct, selectedFlavor);
 
       // Send updated graph model to webview
       await webviewPanel.webview.postMessage({
@@ -1700,6 +1848,35 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     this.logger.debug('Visual Editor: Analyzing input mappings', {
       dependencyCount: dependencies.length
     }, 'visualEditor');
+    
+    // Add common root-level inputs that are typically needed
+    const commonRootInputs = [
+      'region',
+      'resource_group_name',
+      'resource_group_id',
+      'prefix',
+      'tags',
+      'existing_kms_instance_crn',
+      'existing_secrets_manager_crn',
+      'vpc_id',
+      'subnet_ids',
+      'security_group_ids'
+    ];
+    
+    // Add common root-level outputs that are typically exposed
+    const commonRootOutputs = [
+      'resource_group_id',
+      'vpc_id',
+      'subnet_ids',
+      'security_group_ids',
+      'kms_key_id',
+      'secrets_manager_crn',
+      'compliance_report'
+    ];
+    
+    // Add default root inputs and outputs
+    commonRootInputs.forEach(input => rootInputPorts.add(input));
+    commonRootOutputs.forEach(output => rootOutputPorts.add(output));
 
     dependencies.forEach((dep, index) => {
       const depId = `dep-${index}`;
@@ -1712,6 +1889,9 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }
       
       const depPorts = dependencyPorts.get(depId)!;
+
+      // Add common dependency inputs and outputs based on dependency type
+      this.addCommonDependencyPorts(dep, depPorts);
 
       if (dep.input_mapping && Array.isArray(dep.input_mapping)) {
         dep.input_mapping.forEach((mapping: any) => {
@@ -1751,5 +1931,92 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   public dispose(): void {
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
+  }
+
+  /**
+   * Add common dependency inputs and outputs based on dependency type
+   */
+  private addCommonDependencyPorts(dep: any, depPorts: { inputs: Set<string>; outputs: Set<string> }): void {
+    const depName = dep.name?.toLowerCase() || dep.id?.toLowerCase() || '';
+    
+    // Common inputs that most dependencies need
+    const commonInputs = ['region', 'resource_group_name', 'prefix', 'tags'];
+    commonInputs.forEach(input => depPorts.inputs.add(input));
+    
+    // Type-specific inputs and outputs based on dependency name patterns
+    if (depName.includes('vpc') || depName.includes('network')) {
+      // VPC-related dependencies
+      depPorts.inputs.add('vpc_name');
+      depPorts.inputs.add('subnet_count');
+      depPorts.inputs.add('enable_public_gateway');
+      depPorts.outputs.add('vpc_id');
+      depPorts.outputs.add('subnet_ids');
+      depPorts.outputs.add('security_group_ids');
+    }
+    
+    if (depName.includes('kms') || depName.includes('key')) {
+      // Key management dependencies
+      depPorts.inputs.add('kms_instance_name');
+      depPorts.inputs.add('key_name');
+      depPorts.outputs.add('kms_instance_crn');
+      depPorts.outputs.add('kms_key_id');
+      depPorts.outputs.add('kms_key_crn');
+    }
+    
+    if (depName.includes('secrets') || depName.includes('secret')) {
+      // Secrets Manager dependencies
+      depPorts.inputs.add('sm_instance_name');
+      depPorts.inputs.add('service_plan');
+      depPorts.outputs.add('secrets_manager_crn');
+      depPorts.outputs.add('secrets_manager_guid');
+    }
+    
+    if (depName.includes('observability') || depName.includes('monitoring') || depName.includes('logging')) {
+      // Observability dependencies
+      depPorts.inputs.add('log_analysis_instance_name');
+      depPorts.inputs.add('cloud_monitoring_instance_name');
+      depPorts.outputs.add('log_analysis_crn');
+      depPorts.outputs.add('cloud_monitoring_crn');
+    }
+    
+    if (depName.includes('security') || depName.includes('compliance')) {
+      // Security/Compliance dependencies
+      depPorts.inputs.add('scc_instance_name');
+      depPorts.inputs.add('compliance_profile');
+      depPorts.outputs.add('scc_instance_crn');
+      depPorts.outputs.add('compliance_report');
+    }
+    
+    if (depName.includes('app') || depName.includes('application') || depName.includes('code-engine')) {
+      // Application dependencies
+      depPorts.inputs.add('app_name');
+      depPorts.inputs.add('memory_limit');
+      depPorts.inputs.add('cpu_limit');
+      depPorts.outputs.add('app_url');
+      depPorts.outputs.add('app_id');
+    }
+    
+    if (depName.includes('database') || depName.includes('db')) {
+      // Database dependencies
+      depPorts.inputs.add('db_name');
+      depPorts.inputs.add('db_version');
+      depPorts.inputs.add('service_plan');
+      depPorts.outputs.add('db_connection_string');
+      depPorts.outputs.add('db_hostname');
+      depPorts.outputs.add('db_port');
+    }
+    
+    // Add some generic outputs for all dependencies
+    depPorts.outputs.add('resource_id');
+    depPorts.outputs.add('resource_crn');
+    depPorts.outputs.add('resource_name');
+    
+    this.logger.debug('Visual Editor: Added common ports for dependency', {
+      depName,
+      inputCount: depPorts.inputs.size,
+      outputCount: depPorts.outputs.size,
+      inputs: Array.from(depPorts.inputs),
+      outputs: Array.from(depPorts.outputs)
+    }, 'visualEditor');
   }
 }

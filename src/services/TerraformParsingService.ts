@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { LoggingService } from './core/LoggingService';
 import { CacheService } from './CacheService';
+import { CacheConfig } from '../types/cache/cacheConfig';
 
 export interface TerraformVariable {
   name: string;
@@ -82,7 +83,7 @@ export class TerraformParsingService {
   private invalidateCache(filePath: string): void {
     const cacheKey = `terraform-parse-${filePath}`;
     this.cacheService.delete(cacheKey);
-    this.logger.debug('Invalidated Terraform cache for file', { filePath }, 'terraformParsing');
+    this.logger.debug('Invalidated Terraform cache for file', { filePath }, 'main');
   }
 
   /**
@@ -98,7 +99,7 @@ export class TerraformParsingService {
       const rootPath = workspaceFolders[0].uri.fsPath;
       return await this.parseModuleAtPath(rootPath);
     } catch (error) {
-      this.logger.error('Failed to parse workspace root module', { error }, 'terraformParsing');
+      this.logger.error('Failed to parse workspace root module', { error }, 'main');
       return null;
     }
   }
@@ -112,12 +113,12 @@ export class TerraformParsingService {
     // Check cache first
     const cached = this.cacheService.get<TerraformModule>(cacheKey);
     if (cached) {
-      this.logger.debug('Using cached Terraform module data', { modulePath }, 'terraformParsing');
+      this.logger.debug('Using cached Terraform module data', { modulePath }, 'main');
       return cached;
     }
 
     try {
-      this.logger.debug('Parsing Terraform module', { modulePath }, 'terraformParsing');
+      this.logger.debug('Parsing Terraform module', { modulePath }, 'main');
       
       // Find all .tf files in the module directory
       const tfFiles = await vscode.workspace.findFiles(
@@ -157,17 +158,22 @@ export class TerraformParsingService {
       };
 
       // Cache the result
-      this.cacheService.set(cacheKey, module, 300000); // 5 minutes
+      const cacheConfig: CacheConfig = {
+        ttlSeconds: 300, // 5 minutes
+        persistent: false,
+        storagePrefix: 'terraform_'
+      };
+      this.cacheService.set(cacheKey, module, cacheConfig);
 
       this.logger.debug('Successfully parsed Terraform module', {
         modulePath,
         variableCount: module.variables.length,
         outputCount: module.outputs.length
-      }, 'terraformParsing');
+      }, 'main');
 
       return module;
     } catch (error) {
-      this.logger.error('Failed to parse Terraform module', { modulePath, error }, 'terraformParsing');
+      this.logger.error('Failed to parse Terraform module', { modulePath, error }, 'main');
       return null;
     }
   }
@@ -183,7 +189,7 @@ export class TerraformParsingService {
 
     // For external dependencies, we might not have the source code
     // In this case, we could potentially use cached metadata or provide defaults
-    this.logger.debug('External dependency module - using defaults', { offeringId }, 'terraformParsing');
+    this.logger.debug('External dependency module - using defaults', { offeringId }, 'main');
     
     return {
       path: `external:${offeringId}`,
@@ -194,7 +200,6 @@ export class TerraformParsingService {
 
   private parseBlocks(content: string): ParsedBlock[] {
     const blocks: ParsedBlock[] = [];
-    const lines = content.split('\n');
     
     let match;
     this.BLOCK_REGEX.lastIndex = 0; // Reset regex state
@@ -229,12 +234,12 @@ export class TerraformParsingService {
     return blocks;
   }
 
-  private findClosingBrace(content: string, startIndex: string | number): number {
+  private findClosingBrace(content: string, startIndex: number): number {
     let braceCount = 0;
     let inString = false;
     let escapeNext = false;
     
-    for (let i = startIndex; i < content.length; i++) {
+    for (let i = Number(startIndex); i < content.length; i++) {
       const char = content[i];
       
       if (escapeNext) {
@@ -306,7 +311,7 @@ export class TerraformParsingService {
 
       return variable;
     } catch (error) {
-      this.logger.error('Failed to parse variable block', { blockName: block.name, error }, 'terraformParsing');
+      this.logger.error('Failed to parse variable block', { blockName: block.name, error }, 'main');
       return null;
     }
   }
@@ -342,7 +347,7 @@ export class TerraformParsingService {
 
       return output;
     } catch (error) {
-      this.logger.error('Failed to parse output block', { blockName: block.name, error }, 'terraformParsing');
+      this.logger.error('Failed to parse output block', { blockName: block.name, error }, 'main');
       return null;
     }
   }
@@ -355,13 +360,21 @@ export class TerraformParsingService {
     const cleaned = this.cleanValue(valueStr);
     
     // Try to parse as JSON for simple values
-    if (cleaned === 'null') return null;
-    if (cleaned === 'true') return true;
-    if (cleaned === 'false') return false;
+    if (cleaned === 'null') {
+      return null;
+    }
+    if (cleaned === 'true') {
+      return true;
+    }
+    if (cleaned === 'false') {
+      return false;
+    }
     
     // Try to parse as number
     const num = Number(cleaned);
-    if (!isNaN(num)) return num;
+    if (!isNaN(num)) {
+      return num;
+    }
     
     // Try to parse as JSON string/array/object
     try {
@@ -373,11 +386,21 @@ export class TerraformParsingService {
   }
 
   private inferTypeFromValue(value: string): string {
-    if (value.includes('var.') || value.includes('local.')) return 'string'; // Variable reference
-    if (value.includes('[') && value.includes(']')) return 'list';
-    if (value.includes('{') && value.includes('}')) return 'object';
-    if (value.includes('true') || value.includes('false')) return 'bool';
-    if (/^\d+$/.test(value.trim())) return 'number';
+    if (value.includes('var.') || value.includes('local.')) {
+      return 'string'; // Variable reference
+    }
+    if (value.includes('[') && value.includes(']')) {
+      return 'list';
+    }
+    if (value.includes('{') && value.includes('}')) {
+      return 'object';
+    }
+    if (value.includes('true') || value.includes('false')) {
+      return 'bool';
+    }
+    if (/^\d+$/.test(value.trim())) {
+      return 'number';
+    }
     return 'string';
   }
 
@@ -410,7 +433,7 @@ export class TerraformParsingService {
     try {
       return await vscode.workspace.findFiles('**/*.tf', '**/node_modules/**');
     } catch (error) {
-      this.logger.error('Failed to find Terraform files', { error }, 'terraformParsing');
+      this.logger.error('Failed to find Terraform files', { error }, 'main');
       return [];
     }
   }
@@ -437,19 +460,28 @@ export class TerraformParsingService {
       for (const block of blocks) {
         if (block.type === 'variable') {
           const variable = this.parseVariable(block);
-          if (variable) variables.push(variable);
+          if (variable) {
+          variables.push(variable);
+        }
         } else if (block.type === 'output') {
           const output = this.parseOutput(block);
-          if (output) outputs.push(output);
+          if (output) {
+          outputs.push(output);
+        }
         }
       }
 
       const result = { variables, outputs };
-      this.cacheService.set(cacheKey, result, 300000); // 5 minutes
+      const cacheConfig: CacheConfig = {
+        ttlSeconds: 300, // 5 minutes
+        persistent: false,
+        storagePrefix: 'terraform_'
+      };
+      this.cacheService.set(cacheKey, result, cacheConfig);
       
       return result;
     } catch (error) {
-      this.logger.error('Failed to parse Terraform file', { file: uri.fsPath, error }, 'terraformParsing');
+      this.logger.error('Failed to parse Terraform file', { file: uri.fsPath, error }, 'main');
       return { variables: [], outputs: [] };
     }
   }

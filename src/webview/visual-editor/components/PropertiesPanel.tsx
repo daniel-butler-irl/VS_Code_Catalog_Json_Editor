@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface GraphNode {
   id: string;
@@ -39,6 +39,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onUpdateProperty,
   onRemoveNode
 }) => {
+  const [showDebugMode, setShowDebugMode] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(250);
+  const [isResizing, setIsResizing] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  
   console.log('PropertiesPanel: Render with selectedNode:', {
     hasNode: !!selectedNode,
     nodeId: selectedNode?.id,
@@ -52,18 +59,106 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     fullData: selectedNode?.data
   });
 
+  // Load panel state from localStorage
+  useEffect(() => {
+    const savedWidth = localStorage.getItem('propertiesPanel.width');
+    const savedCollapsed = localStorage.getItem('propertiesPanel.collapsed');
+    
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= 200 && width <= 600) {
+        setPanelWidth(width);
+      }
+    }
+    
+    if (savedCollapsed) {
+      setIsCollapsed(savedCollapsed === 'true');
+    }
+  }, []);
+
+  // Save panel state to localStorage
+  useEffect(() => {
+    localStorage.setItem('propertiesPanel.width', panelWidth.toString());
+    localStorage.setItem('propertiesPanel.collapsed', isCollapsed.toString());
+  }, [panelWidth, isCollapsed]);
+
+  // Handle resize functionality
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !panelRef.current) return;
+      
+      const rect = panelRef.current.getBoundingClientRect();
+      const newWidth = rect.right - e.clientX;
+      const clampedWidth = Math.max(200, Math.min(600, newWidth));
+      
+      setPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    if (isResizing) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  const handleCollapse = () => {
+    setIsCollapsed(!isCollapsed);
+  };
+
   if (!selectedNode) {
     console.log('PropertiesPanel: No node selected, showing empty state');
     return (
-      <div className="properties-panel">
+      <div 
+        ref={panelRef}
+        className="properties-panel"
+        style={{ width: isCollapsed ? '40px' : `${panelWidth}px` }}
+      >
+        <div 
+          className="resize-handle"
+          onMouseDown={handleResizeStart}
+          style={{ display: isCollapsed ? 'none' : 'block' }}
+        />
         <div className="properties-header">
-          <h3>Properties</h3>
+          <h3 style={{ display: isCollapsed ? 'none' : 'block' }}>Properties</h3>
+          <button 
+            className="collapse-button"
+            onClick={handleCollapse}
+            title={isCollapsed ? 'Expand Properties Panel' : 'Collapse Properties Panel'}
+          >
+            {isCollapsed ? '→' : '←'}
+          </button>
         </div>
-        <div className="properties-content">
-          <div className="empty-selection">
-            Select a node to view its properties
+        {!isCollapsed && (
+          <div className="properties-content">
+            <div className="empty-selection">
+              <div className="empty-selection-icon">🔍</div>
+              <div className="empty-selection-title">No Node Selected</div>
+              <div className="empty-selection-message">
+                Click on a node in the canvas to view and edit its properties
+              </div>
+              <div className="empty-selection-hint">
+                💡 <strong>Tip:</strong> Use the connector toggles to show/hide input and output ports on nodes
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -72,16 +167,43 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   if (!selectedNode.data) {
     console.error('PropertiesPanel: Selected node has no data:', selectedNode);
     return (
-      <div className="properties-panel">
+      <div 
+        ref={panelRef}
+        className="properties-panel"
+        style={{ width: isCollapsed ? '40px' : `${panelWidth}px` }}
+      >
+        <div 
+          className="resize-handle"
+          onMouseDown={handleResizeStart}
+          style={{ display: isCollapsed ? 'none' : 'block' }}
+        />
         <div className="properties-header">
-          <h3>Properties</h3>
+          <h3 style={{ display: isCollapsed ? 'none' : 'block' }}>Properties</h3>
+          <button 
+            className="collapse-button"
+            onClick={handleCollapse}
+            title={isCollapsed ? 'Expand Properties Panel' : 'Collapse Properties Panel'}
+          >
+            {isCollapsed ? '→' : '←'}
+          </button>
         </div>
-        <div className="properties-content">
-          <div className="error-state">
-            <p>⚠️ Node data is missing</p>
-            <p>Node ID: {selectedNode.id}</p>
+        {!isCollapsed && (
+          <div className="properties-content">
+            <div className="error-state">
+              <div className="error-state-icon">⚠️</div>
+              <div className="error-state-title">Node Data Missing</div>
+              <div className="error-state-message">
+                The selected node is missing its data structure. This might be due to a parsing error or corrupted node state.
+              </div>
+              <div className="error-state-details">
+                <strong>Node ID:</strong> {selectedNode.id}
+              </div>
+              <div className="error-state-hint">
+                💡 Try selecting a different node or refreshing the visual editor
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -174,7 +296,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <div className="property-section">
         <h4>Inputs ({inputs.length})</h4>
         {inputs.length === 0 ? (
-          <div className="empty-state">No inputs defined</div>
+          <div className="empty-state">
+            <div className="empty-state-icon">📥</div>
+            <div className="empty-state-title">No Inputs Defined</div>
+            <div className="empty-state-message">
+              This node doesn't have any input variables configured. 
+              {selectedNode.type === 'dependency' 
+                ? 'Dependencies typically have inputs like region, resource_group_name, and module-specific parameters.' 
+                : 'Root nodes typically have inputs from user configuration and dependency mappings.'
+              }
+            </div>
+            <div className="empty-state-hint">
+              💡 Inputs with <strong>connector</strong> enabled appear as ports on the visual node
+            </div>
+          </div>
         ) : (
           <div className="inputs-list">
             {inputs.map((input: NodeInput, index: number) => (
@@ -253,7 +388,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <div className="property-section">
         <h4>Outputs ({outputs.length})</h4>
         {outputs.length === 0 ? (
-          <div className="empty-state">No outputs defined</div>
+          <div className="empty-state">
+            <div className="empty-state-icon">📤</div>
+            <div className="empty-state-title">No Outputs Defined</div>
+            <div className="empty-state-message">
+              This node doesn't have any output variables configured. 
+              {selectedNode.type === 'dependency' 
+                ? 'Dependencies typically expose outputs like resource IDs, CRNs, and connection details.' 
+                : 'Root nodes typically expose outputs that can be consumed by other architectures.'
+              }
+            </div>
+            <div className="empty-state-hint">
+              💡 Outputs with <strong>connector</strong> enabled appear as ports on the visual node
+            </div>
+          </div>
         ) : (
           <div className="outputs-list">
             {outputs.map((output: NodeOutput, index: number) => (
@@ -302,50 +450,117 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     );
   };
 
-  return (
-    <div className="properties-panel">
-      <div className="properties-header">
-        <h3>Properties</h3>
-        {selectedNode.type !== 'root' && (
-          <button 
-            className="remove-button"
-            onClick={handleRemoveNode}
-            title="Remove Dependency"
-          >
-            ✕
-          </button>
-        )}
-      </div>
-      
-      <div className="properties-content">
-        <div className="node-info">
-          <div className="node-name">{selectedNode.name}</div>
-          <div className="node-type">{selectedNode.type === 'root' ? 'Root Flavor' : 'Dependency'}</div>
-          
-          {/* Connector Summary */}
-          <div className="connector-summary">
-            <div className="summary-row">
-              <span className="summary-label">🔗 Connector Ports:</span>
-              <span className="summary-counts">
-                <span className="input-count">
-                  {(selectedNode.data.inputs || []).filter((input: NodeInput) => input.connector).length} inputs
-                </span>
-                <span className="divider">•</span>
-                <span className="output-count">
-                  {(selectedNode.data.outputs || []).filter((output: NodeOutput) => output.connector).length} outputs
-                </span>
-              </span>
-            </div>
-            <div className="summary-hint">
-              Only connector ports appear on the visual node
-            </div>
+  const renderDebugMode = () => {
+    if (!showDebugMode || !selectedNode) return null;
+    
+    return (
+      <div className="debug-section">
+        <h4>🐛 Debug Data</h4>
+        <div className="debug-content">
+          <div className="debug-item">
+            <strong>Node ID:</strong> {selectedNode.id}
+          </div>
+          <div className="debug-item">
+            <strong>Node Type:</strong> {selectedNode.type}
+          </div>
+          <div className="debug-item">
+            <strong>Node Name:</strong> {selectedNode.name}
+          </div>
+          <div className="debug-item">
+            <strong>Position:</strong> x: {selectedNode.position.x}, y: {selectedNode.position.y}
+          </div>
+          <div className="debug-item">
+            <strong>Raw Data:</strong>
+            <pre className="debug-json">
+              {JSON.stringify(selectedNode.data, null, 2)}
+            </pre>
           </div>
         </div>
-
-        {renderBasicProperties()}
-        {renderInputsSection()}
-        {renderOutputsSection()}
       </div>
+    );
+  };
+
+  return (
+    <div 
+      ref={panelRef}
+      className="properties-panel"
+      style={{ width: isCollapsed ? '40px' : `${panelWidth}px` }}
+    >
+      <div 
+        className="resize-handle"
+        onMouseDown={handleResizeStart}
+        style={{ display: isCollapsed ? 'none' : 'block' }}
+      />
+      <div className="properties-header">
+        <h3 style={{ display: isCollapsed ? 'none' : 'block' }}>Properties</h3>
+        <div className="properties-header-actions">
+          <button 
+            className="collapse-button"
+            onClick={handleCollapse}
+            title={isCollapsed ? 'Expand Properties Panel' : 'Collapse Properties Panel'}
+          >
+            {isCollapsed ? '→' : '←'}
+          </button>
+          {!isCollapsed && (
+            <>
+              <button 
+                className="debug-toggle-button"
+                onClick={() => setShowDebugMode(!showDebugMode)}
+                title="Toggle Debug Mode"
+              >
+                🐛
+              </button>
+              {selectedNode && selectedNode.type !== 'root' && (
+                <button 
+                  className="remove-button"
+                  onClick={handleRemoveNode}
+                  title="Remove Dependency"
+                >
+                  ✕
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      
+      {!isCollapsed && (
+        <div className="properties-content">
+          <div className="node-info">
+            <div className="node-name">{selectedNode.name}</div>
+            <div className="node-type">{selectedNode.type === 'root' ? 'Root Flavor' : 'Dependency'}</div>
+            
+            {/* Connector Summary */}
+            <div className="connector-summary">
+              <div className="summary-row">
+                <span className="summary-label">🔗 Connector Ports:</span>
+                <span className="summary-counts">
+                  <span className="input-count">
+                    {(selectedNode.data.inputs || []).filter((input: NodeInput) => input.connector).length} inputs
+                  </span>
+                  <span className="divider">•</span>
+                  <span className="output-count">
+                    {(selectedNode.data.outputs || []).filter((output: NodeOutput) => output.connector).length} outputs
+                  </span>
+                </span>
+              </div>
+              <div className="summary-hint">
+                Only connector ports appear on the visual node. Use the toggles below to enable/disable connector ports.
+              </div>
+              <div className="summary-help">
+                <strong>Connector Ports:</strong> These appear as connection points on the visual node and can be linked to other nodes.
+                <br />
+                <strong>Property-Only:</strong> These are configuration values that don't appear as visual ports.
+              </div>
+            </div>
+          </div>
+
+          {renderBasicProperties()}
+          {renderInputsSection()}
+          {renderOutputsSection()}
+          {renderDebugMode()}
+        </div>
+      )}
     </div>
   );
 };

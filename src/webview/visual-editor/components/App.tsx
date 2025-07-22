@@ -67,6 +67,9 @@ interface WebviewMessage {
   command: string;
   data?: any;
   error?: string;
+  nodeId?: string;
+  property?: string;
+  value?: any;
 }
 
 export const VisualEditorApp: React.FC = () => {
@@ -139,6 +142,55 @@ export const VisualEditorApp: React.FC = () => {
           } catch (updateError) {
             console.error('Visual Editor App: Error updating graph:', updateError);
             setError('Failed to update graph');
+          }
+          break;
+          
+        case 'updateNodeIncremental':
+          console.log('Visual Editor App: Received incremental node update:', {
+            nodeId: message.nodeId,
+            property: message.property,
+            value: message.value
+          });
+          
+          // Update the graph model incrementally
+          if (graphModel && message.nodeId) {
+            const updatedGraphModel = { ...graphModel };
+            
+            // Find and update the specific node
+            const nodeIndex = updatedGraphModel.nodes.findIndex(node => node.id === message.nodeId);
+            if (nodeIndex !== -1) {
+              const updatedNode = { ...updatedGraphModel.nodes[nodeIndex] };
+              
+              // Update the specific property
+              if (updatedNode.data && message.property) {
+                updatedNode.data = { ...updatedNode.data };
+                updatedNode.data[message.property] = message.value;
+                
+                // Update the nodes array
+                updatedGraphModel.nodes = [...updatedGraphModel.nodes];
+                updatedGraphModel.nodes[nodeIndex] = updatedNode;
+                
+                // Update the graph model state
+                setGraphModel(updatedGraphModel);
+                
+                console.log('Visual Editor App: Successfully updated node incrementally:', {
+                  nodeId: message.nodeId,
+                  property: message.property,
+                  updated: true
+                });
+                
+                // If the updated node is currently selected, update the selected node state
+                if (selectedNode && selectedNode.id === message.nodeId) {
+                  setSelectedNode(updatedNode);
+                }
+              } else {
+                console.warn('Visual Editor App: Could not update node property - invalid node data structure');
+              }
+            } else {
+              console.warn('Visual Editor App: Could not find node to update incrementally:', message.nodeId);
+            }
+          } else {
+            console.warn('Visual Editor App: Cannot update node incrementally - no graph model or node ID');
           }
           break;
           
@@ -269,15 +321,62 @@ export const VisualEditorApp: React.FC = () => {
     }
   }, []);
 
+  // Classify update type based on property and value
+  const classifyUpdateType = (nodeId: string, property: string, value: any): 'incremental' | 'structural' => {
+    // Root node updates
+    if (nodeId === 'root') {
+      if (property === 'inputs' || property === 'outputs') {
+        // Check if this is just a connector toggle (incremental) or structural change
+        if (Array.isArray(value) && value.length > 0) {
+          // For now, treat inputs/outputs updates as incremental for connector toggles
+          // TODO: Add more sophisticated logic to detect structural changes
+          return 'incremental';
+        }
+        return 'structural';
+      }
+      // Other root properties like name, label, description are incremental
+      return 'incremental';
+    }
+    
+    // Dependency node updates
+    if (nodeId.startsWith('dep-')) {
+      // Most dependency property updates are incremental
+      if (property === 'name' || property === 'version' || property === 'flavors' || 
+          property === 'optional' || property === 'on_by_default') {
+        return 'incremental';
+      }
+      // Adding/removing dependencies is structural
+      return 'structural';
+    }
+    
+    // Default to incremental for safety
+    return 'incremental';
+  };
+
   // Handle updating node properties
   const handleUpdateNodeProperty = useCallback((nodeId: string, property: string, value: any) => {
     if (window.vscode) {
-      window.vscode.postMessage({
-        command: 'updateNodeProperty',
-        nodeId,
-        property,
-        value
-      });
+      const updateType = classifyUpdateType(nodeId, property, value);
+      
+      // Log the classification for debugging
+      console.log('App: Classified update as:', updateType, { nodeId, property, value });
+      
+      if (updateType === 'incremental') {
+        window.vscode.postMessage({
+          command: 'updateNodePropertyIncremental',
+          nodeId,
+          property,
+          value
+        });
+      } else {
+        // Use the existing structural update path
+        window.vscode.postMessage({
+          command: 'updateNodeProperty',
+          nodeId,
+          property,
+          value
+        });
+      }
     }
   }, []);
 
@@ -419,7 +518,7 @@ export const VisualEditorApp: React.FC = () => {
           <DALibrary 
             offerings={availableOfferings}
             catalogs={availableCatalogs}
-            selectedCatalogId={selectedCatalogId}
+            selectedCatalogId={selectedCatalogId || undefined}
             onAddDependency={handleAddDependency}
             onCatalogChange={handleCatalogChange}
             loading={offeringsLoading}

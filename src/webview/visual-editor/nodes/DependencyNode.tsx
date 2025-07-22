@@ -82,6 +82,13 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
   const isOptional = data.isOptional();
   const dependencyInfo = data.getDependencyInfo();
   
+  // Direct click handler for node selection
+  const handleNodeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log('DependencyNode: Direct click handler triggered for node:', data.graphNode.id);
+    emit({ type: 'nodeclick', data: data.graphNode });
+  };
+  
   // Filter to only show connector ports
   const connectorInputs = inputs.filter(([key]) => {
     const inputData = data.graphNode.data?.inputs?.find((input: any) => input.name === key);
@@ -110,6 +117,8 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
   return (
     <div
       className={`dependency-node ${isSelected ? 'selected' : ''} ${isOptional ? 'optional' : 'required'}`}
+      data-node-id={data.graphNode.id}
+      onClick={handleNodeClick}
       style={{
         background: getNodeBackground(),
         border: `2px solid ${getBorderColor()}`,
@@ -211,7 +220,7 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
               {connectorInputs.map(([key, input]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ flex: '0 0 auto' }}>
-                    <Socket data={input.socket} />
+                    {input?.socket && <Socket data={input.socket} />}
                   </div>
                   <div style={{ flex: '1', minWidth: 0 }}>
                     <div style={{ 
@@ -222,7 +231,7 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
                       textOverflow: 'ellipsis',
                       opacity: 0.9
                     }}>
-                      {input.label || key}
+                      {input?.label || key}
                     </div>
                   </div>
                 </div>
@@ -256,11 +265,11 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
                       textOverflow: 'ellipsis',
                       opacity: 0.9
                     }}>
-                      {output.label || key}
+                      {output?.label || key}
                     </div>
                   </div>
                   <div style={{ flex: '0 0 auto' }}>
-                    <Socket data={output.socket} />
+                    {output?.socket && <Socket data={output.socket} />}
                   </div>
                 </div>
               ))}

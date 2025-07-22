@@ -2,7 +2,7 @@
 
 import * as vscode from 'vscode';
 import { IamAuthenticator } from 'ibm-cloud-sdk-core';
-import CatalogManagementV1 = require('@ibm-cloud/platform-services/catalog-management/v1');
+import CatalogManagementV1 from '@ibm-cloud/platform-services/catalog-management/v1';
 import { LoggingService } from './core/LoggingService';
 import { CacheService } from './CacheService';
 import { throttle } from 'lodash';
@@ -17,9 +17,6 @@ import {
     OfferingFlavor,
 } from '../types/ibmCloud';
 import { deduplicateRequest } from '../decorators/requestDeduplication';
-import { execAsync } from '../utils/execAsync';
-import * as path from 'path';
-import * as fs from 'fs';
 
 // Type definitions for version mapping
 interface GitHubRelease {

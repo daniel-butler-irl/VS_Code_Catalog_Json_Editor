@@ -6,7 +6,6 @@ import { AuthService } from '../services/AuthService';
 import { LoggingService } from '../services/core/LoggingService';
 import { SchemaMetadata } from '../types/schema';
 import { FlavorNodeValue, ValidationMetadata, ValidationStatus } from '../types/tree';
-import { name } from 'tar/dist/commonjs/types';
 
 
 /**

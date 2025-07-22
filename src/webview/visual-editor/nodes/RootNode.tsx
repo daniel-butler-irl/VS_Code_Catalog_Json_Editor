@@ -80,6 +80,13 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
   const outputs = Object.entries(data.outputs);
   const isSelected = data.selected;
   
+  // Direct click handler for node selection
+  const handleNodeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log('RootNode: Direct click handler triggered for node:', data.graphNode.id);
+    emit({ type: 'nodeclick', data: data.graphNode });
+  };
+  
   // Filter to only show connector ports
   const connectorInputs = inputs.filter(([key]) => {
     const inputData = data.graphNode.data?.inputs?.find((input: any) => input.name === key);
@@ -94,6 +101,8 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
   return (
     <div
       className={`root-node ${isSelected ? 'selected' : ''}`}
+      data-node-id={data.graphNode.id}
+      onClick={handleNodeClick}
       style={{
         background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)',
         border: isSelected ? '2px solid #fbbf24' : '2px solid #1e40af',
@@ -155,7 +164,7 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
               {connectorInputs.map(([key, input]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ flex: '0 0 auto' }}>
-                    <Socket data={input.socket} />
+                    {input?.socket && <Socket data={input.socket} />}
                   </div>
                   <div style={{ flex: '1', minWidth: 0 }}>
                     <div style={{ 
@@ -166,7 +175,7 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
                       textOverflow: 'ellipsis',
                       opacity: 0.9
                     }}>
-                      {input.label || key}
+                      {input?.label || key}
                     </div>
                   </div>
                 </div>
@@ -200,11 +209,11 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
                       textOverflow: 'ellipsis',
                       opacity: 0.9
                     }}>
-                      {output.label || key}
+                      {output?.label || key}
                     </div>
                   </div>
                   <div style={{ flex: '0 0 auto' }}>
-                    <Socket data={output.socket} />
+                    {output?.socket && <Socket data={output.socket} />}
                   </div>
                 </div>
               ))}

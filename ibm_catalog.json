@@ -1,0 +1,67 @@
+{
+  "products": [
+    {
+      "name": "test-offering",
+      "label": "Test Offering",
+      "product_kind": "solution",
+      "tags": ["terraform", "test"],
+      "keywords": ["test", "visual", "editor"],
+      "short_description": "Test offering for visual editor",
+      "long_description": "This is a test offering used to verify the visual editor functionality.",
+      "offering_docs_url": "https://example.com/docs",
+      "offering_icon_url": "https://example.com/icon.png",
+      "flavors": [
+        {
+          "label": "Basic",
+          "name": "basic",
+          "install_type": "fullstack",
+          "working_directory": ".",
+          "usage_template": "module \"test\" { source = \"./test\" }",
+          "configuration": [
+            {
+              "key": "resource_group_name",
+              "type": "string",
+              "description": "Name of the resource group",
+              "required": true,
+              "display_name": "Resource Group Name"
+            },
+            {
+              "key": "region",
+              "type": "string", 
+              "description": "IBM Cloud region",
+              "required": true,
+              "display_name": "Region"
+            },
+            {
+              "key": "enable_logging",
+              "type": "boolean",
+              "description": "Enable logging",
+              "required": false,
+              "display_name": "Enable Logging",
+              "default_value": false
+            }
+          ],
+          "dependencies": [
+            {
+              "id": "dependency-1",
+              "name": "test-dependency",
+              "version": "1.0.0",
+              "flavors": ["basic"]
+            }
+          ],
+          "architecture": {
+            "diagrams": [
+              {
+                "diagram": {
+                  "caption": "Test Architecture",
+                  "url": "https://example.com/arch.png"
+                },
+                "description": "Test architecture diagram"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

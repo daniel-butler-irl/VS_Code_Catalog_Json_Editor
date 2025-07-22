@@ -10,3 +10,15 @@ test-results
 /.cursor
 resources/schema.json
 /resources/schema.json
+
+# TypeScript build artifacts
+*.js
+*.js.map
+*.d.ts.map
+tsconfig.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Development/temp files
+nul

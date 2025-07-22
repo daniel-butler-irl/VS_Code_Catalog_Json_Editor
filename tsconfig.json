@@ -10,20 +10,25 @@
     "outDir": "out",
     "rootDir": "src",
     "sourceMap": true,
-    "types": ["node", "vscode"],
+    "types": ["node", "vscode", "jest"],
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "jsx": "react-jsx",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "moduleResolution": "node",
     "resolveJsonModule": true,
+    "composite": true
   },
   "exclude": [
     "node_modules",
     ".vscode-test",
-    "out"
+    "out",
+    "src/test/suite/**/*"
   ],
   "include": [
     "src/**/*"
+  ],
+  "references": [
+    { "path": "./tsconfig.jest.json" }
   ]
 }

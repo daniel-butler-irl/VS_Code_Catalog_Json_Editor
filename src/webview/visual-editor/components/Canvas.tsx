@@ -52,11 +52,11 @@ interface CanvasProps {
 }
 
 type Schemes = GetSchemes<
-  RootNodeClass | DependencyNodeClass,
-  ClassicPreset.Connection<RootNodeClass | DependencyNodeClass, RootNodeClass | DependencyNodeClass>
+  ClassicPreset.Node & { graphNode?: GraphNode },
+  ClassicPreset.Connection<ClassicPreset.Node, ClassicPreset.Node>
 >;
 
-type AreaExtra = ReactPlugin<Schemes, {}>;
+type AreaExtra = ReactPlugin<Schemes, any>;
 
 // Create socket selector based on socket type
 const createSocketSelector = (socket: ClassicPreset.Socket) => {
@@ -124,6 +124,9 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [area, setArea] = useState<AreaPlugin<Schemes, AreaExtra> | null>(null);
   const [nodeMap, setNodeMap] = useState<Map<string, RootNodeClass | DependencyNodeClass>>(new Map());
   const selectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Alternative selection mechanism - direct node mapping
+  const nodeIdToGraphNodeMap = useRef<Map<string, GraphNode>>(new Map());
 
   // Debounced selection handler to prevent rapid selection changes
   const handleDebouncedSelection = useCallback((graphNode: GraphNode) => {
@@ -173,13 +176,13 @@ export const Canvas: React.FC<CanvasProps> = ({
       // Create and register ConnectionPlugin (needs AreaPlugin as parent)
       const connectionPlugin = new ConnectionPlugin<Schemes, AreaExtra>();
       console.log('Canvas: ConnectionPlugin created, registering with area plugin');
-      await areaPlugin.use(connectionPlugin);
+      await (areaPlugin as any).use(connectionPlugin);
       console.log('Canvas: ConnectionPlugin registered successfully');
 
       // Create and register ReactPlugin (needs AreaPlugin as parent)
       const reactPlugin = new ReactPlugin<Schemes, AreaExtra>();
       console.log('Canvas: ReactPlugin created, registering with area plugin');
-      await areaPlugin.use(reactPlugin);
+      await (areaPlugin as any).use(reactPlugin);
       console.log('Canvas: ReactPlugin registered successfully');
 
       // Add comprehensive drag and drop logging and handling
@@ -269,33 +272,61 @@ export const Canvas: React.FC<CanvasProps> = ({
         containerElement.addEventListener('dragover', dragOverHandler);
         containerElement.addEventListener('dragenter', dragEnterHandler);
         containerElement.addEventListener('dragleave', dragLeaveHandler);
+        
+        // Add click listener to debug all clicks
+        const debugClickHandler = (e: MouseEvent) => {
+          console.log('Canvas: Click event detected:', {
+            clientX: e.clientX,
+            clientY: e.clientY,
+            target: e.target,
+            targetTagName: (e.target as HTMLElement)?.tagName,
+            targetClass: (e.target as HTMLElement)?.className,
+            timestamp: Date.now()
+          });
+        };
+        containerElement.addEventListener('click', debugClickHandler);
       }
 
       // Configure connection plugin with enhanced socket compatibility
-      connectionPlugin.addPreset(ConnectionPresets.classic.setup());
+      connectionPlugin.addPreset(ConnectionPresets.classic.setup() as any);
 
       // Configure React plugin with custom components and enhanced socket rendering
       reactPlugin.addPreset(ReactPresets.classic.setup({
         customize: {
-          node(context) {
-            if (context.payload instanceof RootNodeClass) {
-              return RootNode;
-            }
-            if (context.payload instanceof DependencyNodeClass) {
-              return DependencyNode;
+          node(context: any) {
+            // Check if the node has our custom graphNode property
+            if (context.payload && context.payload.graphNode) {
+              if (context.payload.graphNode.type === 'root') {
+                return RootNode as any;
+              }
+              if (context.payload.graphNode.type === 'dependency') {
+                return DependencyNode as any;
+              }
             }
             return ReactPresets.classic.Node;
           }
         }
-      }));
+      }) as any);
 
-      // Configure area plugin
+      // Configure area plugin with enhanced debugging
+      console.log('Canvas: Setting up selectableNodes extension');
       AreaExtensions.selectableNodes(areaPlugin, AreaExtensions.selector(), {
         accumulating: AreaExtensions.accumulateOnCtrl()
       });
+      console.log('Canvas: selectableNodes extension configured');
+
+      // Listen for ALL area plugin events to debug selection
+      areaPlugin.addPipe((context: any) => {
+        console.log('Canvas: AreaPlugin event:', {
+          type: context.type,
+          data: context.data,
+          timestamp: Date.now()
+        });
+        return context;
+      });
 
       // Listen for node selection changes with enhanced error handling
-      areaPlugin.addPipe(context => {
+      areaPlugin.addPipe((context: any) => {
         try {
           if (context.type === 'nodeselected') {
             console.log('Canvas: Node selected event:', context.data);
@@ -309,30 +340,39 @@ export const Canvas: React.FC<CanvasProps> = ({
             const reteNode = newEditor.getNode(context.data.id);
             console.log('Canvas: Found Rete node:', reteNode);
             
-            if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
-              // Validate that the node has required graph data
-              if (!reteNode.graphNode) {
-                console.error('Canvas: Selected node missing graphNode data:', reteNode);
-                return context;
-              }
-              
+            // Cast to our custom node types and check for graphNode
+            const customNode = reteNode as any;
+            if (customNode && customNode.graphNode) {
               console.log('Canvas: Valid node instance, graphNode data:', {
-                id: reteNode.graphNode.id,
-                type: reteNode.graphNode.type,
-                name: reteNode.graphNode.name,
-                data: reteNode.graphNode.data,
-                hasInputs: !!reteNode.graphNode.data?.inputs,
-                inputsLength: reteNode.graphNode.data?.inputs?.length || 0,
-                hasOutputs: !!reteNode.graphNode.data?.outputs,
-                outputsLength: reteNode.graphNode.data?.outputs?.length || 0
+                id: customNode.graphNode.id,
+                type: customNode.graphNode.type,
+                name: customNode.graphNode.name,
+                data: customNode.graphNode.data,
+                hasInputs: !!customNode.graphNode.data?.inputs,
+                inputsLength: customNode.graphNode.data?.inputs?.length || 0,
+                hasOutputs: !!customNode.graphNode.data?.outputs,
+                outputsLength: customNode.graphNode.data?.outputs?.length || 0
               });
               
               // Update selection state
-              reteNode.selected = true;
-              handleDebouncedSelection(reteNode.graphNode);
+              customNode.selected = true;
+              handleDebouncedSelection(customNode.graphNode);
               
             } else {
-              console.warn('Canvas: Selected node is not a valid RootNodeClass or DependencyNodeClass:', reteNode);
+              console.warn('Canvas: Selected node missing graphNode data, trying alternative access:', reteNode);
+              
+              // Try alternative method - direct mapping lookup
+              const graphNodeFromMap = nodeIdToGraphNodeMap.current.get(context.data.id);
+              if (graphNodeFromMap) {
+                console.log('Canvas: Found graphNode via direct mapping:', graphNodeFromMap);
+                if (customNode) {
+                  customNode.selected = true;
+                }
+                handleDebouncedSelection(graphNodeFromMap);
+              } else {
+                console.error('Canvas: Could not find graphNode data for selected node:', context.data.id);
+                console.error('Canvas: Available mappings:', Array.from(nodeIdToGraphNodeMap.current.keys()));
+              }
             }
           } else if (context.type === 'nodeunselected') {
             console.log('Canvas: Node unselected event:', context.data);
@@ -344,8 +384,9 @@ export const Canvas: React.FC<CanvasProps> = ({
             }
             
             const reteNode = newEditor.getNode(context.data.id);
-            if (reteNode instanceof RootNodeClass || reteNode instanceof DependencyNodeClass) {
-              reteNode.selected = false;
+            const customNode = reteNode as any;
+            if (customNode && customNode.graphNode) {
+              customNode.selected = false;
               // Don't clear selection here - let the user explicitly select another node
             }
           }
@@ -355,8 +396,37 @@ export const Canvas: React.FC<CanvasProps> = ({
         return context;
       });
 
+      // Listen for ALL editor events to debug
+      newEditor.addPipe((context: any) => {
+        console.log('Canvas: Editor event:', {
+          type: context.type,
+          data: context.data,
+          timestamp: Date.now()
+        });
+        return context;
+      });
+      
+      // Listen for custom nodeclick events from React components
+      reactPlugin.addPipe((context: any) => {
+        console.log('Canvas: React plugin event:', {
+          type: context.type,
+          data: context.data,
+          timestamp: Date.now()
+        });
+        
+        if (context.type === 'nodeclick') {
+          console.log('Canvas: React nodeclick event detected:', context.data);
+          if (context.data && context.data.id) {
+            console.log('Canvas: Processing React nodeclick for node:', context.data.id);
+            handleDebouncedSelection(context.data);
+          }
+        }
+        
+        return context;
+      });
+
       // Listen for connection changes
-      newEditor.addPipe(context => {
+      newEditor.addPipe((context: any) => {
         if (context.type === 'connectioncreated') {
           const connection = context.data;
           console.log('Canvas: Connection created', connection);
@@ -381,6 +451,22 @@ export const Canvas: React.FC<CanvasProps> = ({
       setArea(areaPlugin);
 
       console.log('Canvas: Rete.js editor initialized successfully');
+      
+      // Add a test to verify node accessibility after initialization
+      setTimeout(() => {
+        console.log('Canvas: Post-initialization node verification:');
+        const editorNodes = newEditor.getNodes();
+        console.log('Canvas: Editor nodes count:', editorNodes.length);
+        editorNodes.forEach((node, index) => {
+          console.log(`Canvas: Node ${index}:`, {
+            id: node.id,
+            label: node.label,
+            hasGraphNode: !!(node as any).graphNode,
+            graphNodeId: (node as any).graphNode?.id,
+            graphNodeType: (node as any).graphNode?.type
+          });
+        });
+      }, 100);
     } catch (error) {
       console.error('Canvas: Error initializing Rete.js editor:', error);
       // Reset states in case of error
@@ -404,7 +490,6 @@ export const Canvas: React.FC<CanvasProps> = ({
       nodeCount: graphModel.nodes.length,
       connectionCount: graphModel.connections.length,
       nodes: graphModel.nodes,
-      selectedProduct: graphModel.selectedProduct,
       selectedFlavor: graphModel.selectedFlavor
     });
 
@@ -450,6 +535,14 @@ export const Canvas: React.FC<CanvasProps> = ({
           console.log('Canvas: Node added to editor successfully');
           newNodeMap.set(graphNode.id, reteNode);
 
+          // Ensure graphNode property is accessible
+          console.log('Canvas: Verifying graphNode property on reteNode:', {
+            hasGraphNode: !!reteNode.graphNode,
+            graphNodeId: reteNode.graphNode?.id,
+            graphNodeType: reteNode.graphNode?.type,
+            reteNodeId: reteNode.id
+          });
+
           // Position the node
           console.log('Canvas: Positioning node at:', graphNode.position);
           await area.translate(reteNode.id, {
@@ -457,12 +550,33 @@ export const Canvas: React.FC<CanvasProps> = ({
             y: graphNode.position.y
           });
           console.log('Canvas: Node positioned successfully');
+          
+          // Store direct mapping for alternative selection
+          nodeIdToGraphNodeMap.current.set(graphNode.id, graphNode);
+          console.log('Canvas: Stored graphNode mapping for direct access');
 
           // Set selection state
           if (selectedNode?.id === graphNode.id) {
             console.log('Canvas: Setting node as selected');
             reteNode.selected = true;
+          } else {
+            reteNode.selected = false;
           }
+          
+          // Add direct click handler to node element (alternative method)
+          setTimeout(() => {
+            const nodeElement = canvasRef.current?.querySelector(`[data-node-id="${graphNode.id}"]`);
+            if (nodeElement) {
+              console.log('Canvas: Adding direct click handler to node element');
+              nodeElement.addEventListener('click', (e) => {
+                e.stopPropagation();
+                console.log('Canvas: Direct node click detected:', graphNode.id);
+                handleDebouncedSelection(graphNode);
+              });
+            } else {
+              console.warn('Canvas: Could not find node element for direct click handler');
+            }
+          }, 50);
 
           console.log(`Canvas: Successfully processed node ${graphNode.id}`);
         } catch (nodeError) {
@@ -481,25 +595,25 @@ export const Canvas: React.FC<CanvasProps> = ({
         const targetNode = newNodeMap.get(graphConnection.target);
 
         if (sourceNode && targetNode) {
-          const sourceOutput = sourceNode.outputs.get(graphConnection.sourceHandle);
-          const targetInput = targetNode.inputs.get(graphConnection.targetHandle);
+          const sourceOutput = (sourceNode as any).outputs.get(graphConnection.sourceHandle);
+          const targetInput = (targetNode as any).inputs.get(graphConnection.targetHandle);
 
           if (sourceOutput && targetInput) {
             const connection = new ClassicPreset.Connection(
-              sourceNode,
+              sourceNode as any,
               graphConnection.sourceHandle,
-              targetNode,
+              targetNode as any,
               graphConnection.targetHandle
             );
-            connection.id = graphConnection.id;
+            (connection as any).id = graphConnection.id;
             await editor.addConnection(connection);
             console.log(`Canvas: Connection ${graphConnection.id} added successfully`);
           } else {
             console.warn(`Canvas: Could not find ports for connection ${graphConnection.id}`, {
               hasSourceOutput: !!sourceOutput,
               hasTargetInput: !!targetInput,
-              sourceOutputs: Array.from(sourceNode.outputs.keys()),
-              targetInputs: Array.from(targetNode.inputs.keys())
+              sourceOutputs: Array.from((sourceNode as any).outputs.keys()),
+              targetInputs: Array.from((targetNode as any).inputs.keys())
             });
           }
         } else {
@@ -531,9 +645,170 @@ export const Canvas: React.FC<CanvasProps> = ({
       });
     } catch (error) {
       console.error('Canvas: Error updating editor content:', error);
-      console.error('Canvas: Error stack:', error.stack);
+      console.error('Canvas: Error stack:', (error as Error).stack);
     }
-  }, [editor, area, graphModel, selectedNode]);
+  }, [editor, area, graphModel]);
+
+  // Update individual node properties without full rebuild
+  const updateNodeIncremental = useCallback(async (nodeId: string, updatedGraphNode: GraphNode) => {
+    if (!editor || !area || !nodeMap.has(nodeId)) {
+      console.warn('Canvas: Cannot update node incrementally - editor, area, or node not found', {
+        hasEditor: !!editor,
+        hasArea: !!area,
+        hasNode: nodeMap.has(nodeId)
+      });
+      return false;
+    }
+
+    try {
+      console.log('Canvas: Updating node incrementally:', nodeId, updatedGraphNode);
+      
+      const reteNode = nodeMap.get(nodeId);
+      if (!reteNode) {
+        console.warn('Canvas: Cannot find Rete node for incremental update:', nodeId);
+        return false;
+      }
+
+      // Update the graphNode property on the Rete node
+      (reteNode as any).graphNode = updatedGraphNode;
+      
+      // Update the node data and ports based on the updated graph node
+      if (updatedGraphNode.type === 'root') {
+        // For root nodes, update inputs and outputs
+        if (updatedGraphNode.data.inputs) {
+          // Clear existing inputs
+          Object.keys(reteNode.inputs || {}).forEach(key => {
+            (reteNode as any).removeInput(key);
+          });
+          
+          updatedGraphNode.data.inputs.forEach((input: any) => {
+            if (input.connector) {
+              const socket = new ClassicPreset.Socket(input.type || 'string');
+              const inputInstance = new ClassicPreset.Input(socket, input.name);
+              (reteNode as any).addInput(input.name, inputInstance);
+            }
+          });
+        }
+        
+        if (updatedGraphNode.data.outputs) {
+          // Clear existing outputs
+          Object.keys(reteNode.outputs || {}).forEach(key => {
+            (reteNode as any).removeOutput(key);
+          });
+          
+          updatedGraphNode.data.outputs.forEach((output: any) => {
+            if (output.connector) {
+              const socket = new ClassicPreset.Socket(output.type || 'string');
+              const outputInstance = new ClassicPreset.Output(socket, output.name);
+              (reteNode as any).addOutput(output.name, outputInstance);
+            }
+          });
+        }
+      } else if (updatedGraphNode.type === 'dependency') {
+        // For dependency nodes, update ports similarly
+        if (updatedGraphNode.data.inputs) {
+          // Clear existing inputs
+          Object.keys(reteNode.inputs || {}).forEach(key => {
+            (reteNode as any).removeInput(key);
+          });
+          
+          updatedGraphNode.data.inputs.forEach((input: any) => {
+            if (input.connector) {
+              const socket = new ClassicPreset.Socket(input.type || 'string');
+              const inputInstance = new ClassicPreset.Input(socket, input.name);
+              (reteNode as any).addInput(input.name, inputInstance);
+            }
+          });
+        }
+        
+        if (updatedGraphNode.data.outputs) {
+          // Clear existing outputs
+          Object.keys(reteNode.outputs || {}).forEach(key => {
+            (reteNode as any).removeOutput(key);
+          });
+          
+          updatedGraphNode.data.outputs.forEach((output: any) => {
+            if (output.connector) {
+              const socket = new ClassicPreset.Socket(output.type || 'string');
+              const outputInstance = new ClassicPreset.Output(socket, output.name);
+              (reteNode as any).addOutput(output.name, outputInstance);
+            }
+          });
+        }
+      }
+
+      // Update the node in the area to trigger re-render
+      await area.update('node', nodeId);
+      
+      console.log('Canvas: Successfully updated node incrementally:', nodeId);
+      return true;
+      
+    } catch (error) {
+      console.error('Canvas: Error updating node incrementally:', error);
+      return false;
+    }
+  }, [editor, area, nodeMap]);
+
+  // Track previous graph model for incremental updates
+  const prevGraphModelRef = useRef<GraphModel | null>(null);
+
+  // Detect if this is an incremental update (only node properties changed)
+  const isIncrementalUpdate = useCallback((prev: GraphModel | null, current: GraphModel): { isIncremental: boolean; changedNodeId?: string } => {
+    if (!prev || !current) return { isIncremental: false };
+    
+    // Check if the structure is the same (same number of nodes and connections)
+    if (prev.nodes.length !== current.nodes.length || 
+        prev.connections.length !== current.connections.length) {
+      return { isIncremental: false };
+    }
+    
+    // Check if any node IDs changed (structural change)
+    const prevNodeIds = new Set(prev.nodes.map(n => n.id));
+    const currentNodeIds = new Set(current.nodes.map(n => n.id));
+    if (prevNodeIds.size !== currentNodeIds.size) {
+      return { isIncremental: false };
+    }
+    
+    for (const id of prevNodeIds) {
+      if (!currentNodeIds.has(id)) {
+        return { isIncremental: false };
+      }
+    }
+    
+    // Check if connections changed
+    const prevConnections = prev.connections.map(c => `${c.source}-${c.target}-${c.sourceHandle}-${c.targetHandle}`);
+    const currentConnections = current.connections.map(c => `${c.source}-${c.target}-${c.sourceHandle}-${c.targetHandle}`);
+    if (prevConnections.length !== currentConnections.length) {
+      return { isIncremental: false };
+    }
+    
+    for (const conn of prevConnections) {
+      if (!currentConnections.includes(conn)) {
+        return { isIncremental: false };
+      }
+    }
+    
+    // Find which node(s) changed
+    const changedNodes: string[] = [];
+    for (let i = 0; i < prev.nodes.length; i++) {
+      const prevNode = prev.nodes[i];
+      const currentNode = current.nodes[i];
+      
+      if (prevNode.id === currentNode.id) {
+        // Deep compare node data
+        if (JSON.stringify(prevNode.data) !== JSON.stringify(currentNode.data)) {
+          changedNodes.push(prevNode.id);
+        }
+      }
+    }
+    
+    // For now, only support single node updates
+    if (changedNodes.length === 1) {
+      return { isIncremental: true, changedNodeId: changedNodes[0] };
+    }
+    
+    return { isIncremental: false };
+  }, []);
 
 
   // Initialize editor when component mounts
@@ -544,9 +819,59 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Update content when graph model changes
   useEffect(() => {
     if (editor && area) {
-      updateEditorContent();
+      const previous = prevGraphModelRef.current;
+      const current = graphModel;
+      
+      // Check if this is an incremental update
+      const updateInfo = isIncrementalUpdate(previous, current);
+      
+      if (updateInfo.isIncremental && updateInfo.changedNodeId) {
+        console.log('Canvas: Detected incremental update for node:', updateInfo.changedNodeId);
+        
+        // Find the updated node
+        const updatedNode = current?.nodes.find(n => n.id === updateInfo.changedNodeId);
+        if (updatedNode) {
+          // Try incremental update first
+          updateNodeIncremental(updateInfo.changedNodeId, updatedNode).then(success => {
+            if (!success) {
+              console.warn('Canvas: Incremental update failed, falling back to full rebuild');
+              updateEditorContent();
+            }
+          });
+        } else {
+          console.warn('Canvas: Could not find updated node for incremental update');
+          updateEditorContent();
+        }
+      } else {
+        console.log('Canvas: Detected structural change, performing full rebuild');
+        updateEditorContent();
+      }
+      
+      // Update the previous graph model reference
+      prevGraphModelRef.current = current;
     }
-  }, [updateEditorContent]);
+  }, [updateEditorContent, graphModel, isIncrementalUpdate, updateNodeIncremental]);
+
+  // Handle selection state changes without re-rendering the entire canvas
+  useEffect(() => {
+    if (!editor || !nodeMap.size) return;
+    
+    console.log('Canvas: Updating selection state for selectedNode:', selectedNode?.id);
+    
+    // Update selection state for all nodes
+    nodeMap.forEach((reteNode, nodeId) => {
+      const shouldBeSelected = selectedNode?.id === nodeId;
+      if (reteNode.selected !== shouldBeSelected) {
+        console.log(`Canvas: Updating selection state for node ${nodeId}:`, shouldBeSelected);
+        reteNode.selected = shouldBeSelected;
+        
+        // Force re-render of the node to update visual state
+        if (area) {
+          area.update('node', nodeId);
+        }
+      }
+    });
+  }, [selectedNode, editor, area, nodeMap]);
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -617,6 +942,29 @@ export const Canvas: React.FC<CanvasProps> = ({
             title="Auto Layout"
           >
             🎯
+          </button>
+          <button 
+            className="canvas-control-btn"
+            onClick={() => {
+              console.log('Canvas: Manual selection test');
+              if (editor) {
+                const nodes = editor.getNodes();
+                if (nodes.length > 0) {
+                  const firstNode = nodes[0];
+                  console.log('Canvas: Testing selection of first node:', firstNode.id);
+                  const graphNode = nodeIdToGraphNodeMap.current.get(firstNode.id);
+                  if (graphNode) {
+                    console.log('Canvas: Found graphNode for manual selection:', graphNode);
+                    handleDebouncedSelection(graphNode);
+                  } else {
+                    console.error('Canvas: No graphNode found for manual selection');
+                  }
+                }
+              }
+            }}
+            title="Test Selection"
+          >
+            🔍
           </button>
         </div>
       </div>

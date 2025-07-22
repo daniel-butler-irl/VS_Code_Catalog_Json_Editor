@@ -14,12 +14,9 @@ import { CatalogServiceMode, type CatalogServiceState, type ICatalogFileInfo, ty
 import type { Configuration as IBMCloudConfiguration } from '../types/ibmCloud';
 import type { Configuration as CatalogConfiguration } from '../types/catalog';
 import { QuickPickItemEx } from '../types/prompt';
-import { LookupItem } from '../types/cache';
 import { CachePrefetchService } from './core/CachePrefetchService';
-import { JsonPathService } from './core/JsonPathService';
 import { validateSchema, validateValue } from '../decorators/schemaValidation';
 import { SchemaMetadata } from '../types/schema';
-import { ValidationResult } from '../types/validation';
 
 /**
  * Service responsible for managing catalog data within the extension.

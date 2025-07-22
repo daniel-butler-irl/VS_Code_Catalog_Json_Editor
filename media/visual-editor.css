@@ -21,6 +21,11 @@
   --spacing-lg: 24px;
   --spacing-xl: 32px;
   
+  /* Debug mode colors */
+  --debug-bg: var(--vscode-editor-inactiveSelectionBackground);
+  --debug-border: var(--vscode-charts-purple);
+  --debug-text: var(--vscode-debugConsole-sourceForeground);
+  
   /* Component sizes */
   --toolbar-height: 40px;
   --panel-min-width: 250px;
@@ -622,14 +627,57 @@ body {
 
 /* Right panel - Properties */
 .properties-panel {
-  width: var(--panel-min-width);
-  min-width: var(--panel-min-width);
-  max-width: var(--panel-max-width);
+  min-width: 40px;
+  max-width: 600px;
   background-color: var(--secondary-bg);
   border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  transition: width 0.2s ease;
+}
+
+/* Resize handle */
+.resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background-color: transparent;
+  cursor: col-resize;
+  z-index: 1000;
+  transition: background-color 0.2s ease;
+}
+
+.resize-handle:hover {
+  background-color: var(--accent-color);
+}
+
+.resize-handle:active {
+  background-color: var(--accent-color);
+}
+
+/* Collapse button */
+.collapse-button {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  padding: 4px 8px;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+}
+
+.collapse-button:hover {
+  background-color: var(--accent-color);
+  color: var(--accent-text);
 }
 
 .properties-header {
@@ -645,6 +693,28 @@ body {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+.properties-header-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.debug-toggle-button {
+  background-color: var(--debug-bg);
+  color: var(--debug-text);
+  border: 1px solid var(--debug-border);
+  padding: var(--spacing-xs);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.debug-toggle-button:hover {
+  background-color: var(--debug-border);
+  color: var(--primary-bg);
 }
 
 .remove-button {
@@ -673,7 +743,177 @@ body {
   padding: var(--spacing-md);
 }
 
+/* Debug mode styles */
+.debug-section {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm);
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+}
+
+.debug-section h4 {
+  margin: 0 0 var(--spacing-sm) 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--debug-text);
+}
+
+.debug-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.debug-item {
+  font-size: 12px;
+  color: var(--debug-text);
+}
+
+.debug-item strong {
+  color: var(--text-color);
+}
+
+.debug-json {
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-sm);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  color: var(--text-color);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: var(--spacing-xs);
+}
+
+/* Enhanced empty state styles */
 .empty-selection {
+  text-align: center;
+  padding: var(--spacing-xl);
+  color: var(--text-color);
+  opacity: 0.7;
+}
+
+.empty-selection-icon {
+  font-size: 48px;
+  margin-bottom: var(--spacing-md);
+}
+
+.empty-selection-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+.empty-selection-message {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: var(--spacing-md);
+}
+
+.empty-selection-hint {
+  font-size: 12px;
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+.empty-state {
+  text-align: center;
+  padding: var(--spacing-lg);
+  color: var(--text-color);
+  opacity: 0.7;
+}
+
+.empty-state-icon {
+  font-size: 32px;
+  margin-bottom: var(--spacing-sm);
+}
+
+.empty-state-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+.empty-state-message {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: var(--spacing-sm);
+}
+
+.empty-state-hint {
+  font-size: 11px;
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.error-state {
+  text-align: center;
+  padding: var(--spacing-lg);
+  color: var(--text-color);
+}
+
+.error-state-icon {
+  font-size: 32px;
+  margin-bottom: var(--spacing-sm);
+}
+
+.error-state-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+  color: var(--error-color);
+}
+
+.error-state-message {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: var(--spacing-sm);
+}
+
+.error-state-details {
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family);
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.error-state-hint {
+  font-size: 11px;
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+/* Summary help styles */
+.summary-help {
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background-color: var(--debug-bg);
+  border: 1px solid var(--debug-border);
+  border-radius: var(--border-radius);
+  color: var(--debug-text);
+}
+
+/* Old empty selection styles - keep for backward compatibility */
+.empty-selection-old {
   text-align: center;
   color: var(--vscode-descriptionForeground);
   font-style: italic;
@@ -806,16 +1046,14 @@ body {
 
 /* Responsive adjustments */
 @media (max-width: 1200px) {
-  .da-library,
-  .properties-panel {
+  .da-library {
     width: 200px;
     min-width: 200px;
   }
 }
 
 @media (max-width: 900px) {
-  .da-library,
-  .properties-panel {
+  .da-library {
     width: 180px;
     min-width: 180px;
   }

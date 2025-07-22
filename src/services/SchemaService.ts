@@ -572,14 +572,6 @@ export class SchemaService {
       const text = document.getText();
       const parser = require('jsonc-parser');
 
-      interface JsonNode {
-        type: string;
-        offset: number;
-        length: number;
-        children?: JsonNode[];
-        value?: string;
-      }
-
       const root = parser.parseTree(text) as JsonNode;
 
       // Handle root path

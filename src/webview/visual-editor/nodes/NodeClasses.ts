@@ -144,7 +144,8 @@ export class RootNodeClass extends ClassicPreset.Node {
           readonly: false // Connector inputs can be edited via connections or direct input
         });
         
-        this.addInput(input.name, new ClassicPreset.Input(socket, input.name, true));
+        const inputInstance = new ClassicPreset.Input(socket, input.name, true);
+        this.addInput(input.name, inputInstance);
         this.addControl(input.name, inputControl);
       }
     });
@@ -153,7 +154,7 @@ export class RootNodeClass extends ClassicPreset.Node {
     console.log('RootNode: Setup inputs complete', {
       nodeId: this.graphNode.id,
       totalInputs: inputs.length,
-      connectorInputs: inputs.filter(input => input.connector).length
+      connectorInputs: inputs.filter((input: any) => input.connector).length
     });
   }
 
@@ -164,7 +165,8 @@ export class RootNodeClass extends ClassicPreset.Node {
       // Only create sockets for connector outputs
       if (output.connector) {
         const socket = createSocket(output.type);
-        this.addOutput(output.name, new ClassicPreset.Output(socket, output.name));
+        const outputInstance = new ClassicPreset.Output(socket, output.name);
+        this.addOutput(output.name, outputInstance);
       }
     });
 
@@ -172,7 +174,7 @@ export class RootNodeClass extends ClassicPreset.Node {
     console.log('RootNode: Setup outputs complete', {
       nodeId: this.graphNode.id,
       totalOutputs: outputs.length,
-      connectorOutputs: outputs.filter(output => output.connector).length
+      connectorOutputs: outputs.filter((output: any) => output.connector).length
     });
   }
 
@@ -190,13 +192,13 @@ export class RootNodeClass extends ClassicPreset.Node {
    */
   private refreshInputsOutputs(): void {
     // Clear existing inputs and outputs
-    Array.from(this.inputs.keys()).forEach(key => {
+    Object.keys(this.inputs || {}).forEach(key => {
       this.removeInput(key);
     });
-    Array.from(this.outputs.keys()).forEach(key => {
+    Object.keys(this.outputs || {}).forEach(key => {
       this.removeOutput(key);
     });
-    Array.from(this.controls.keys()).forEach(key => {
+    Object.keys(this.controls || {}).forEach(key => {
       this.removeControl(key);
     });
 
@@ -215,7 +217,8 @@ export class RootNodeClass extends ClassicPreset.Node {
       readonly: config.connector || false
     });
     
-    this.addInput(name, new ClassicPreset.Input(socket, name, true));
+    const inputInstance = new ClassicPreset.Input(socket, name, true);
+    this.addInput(name, inputInstance);
     this.addControl(name, inputControl);
 
     // Update the graph node data
@@ -234,7 +237,8 @@ export class RootNodeClass extends ClassicPreset.Node {
    */
   addNewOutput(name: string, type: string = 'string', config: Partial<NodeOutput> = {}): void {
     const socket = createSocket(type);
-    this.addOutput(name, new ClassicPreset.Output(socket, name));
+    const outputInstance = new ClassicPreset.Output(socket, name);
+    this.addOutput(name, outputInstance);
 
     // Update the graph node data
     if (!this.graphNode.data.outputs) {
@@ -310,7 +314,8 @@ export class DependencyNodeClass extends ClassicPreset.Node {
           readonly: false // Connector inputs can be edited via connections or direct input
         });
         
-        this.addInput(input.name, new ClassicPreset.Input(socket, input.name, !input.required));
+        const inputInstance = new ClassicPreset.Input(socket, input.name, !input.required);
+        this.addInput(input.name, inputInstance);
         this.addControl(input.name, inputControl);
       }
     });
@@ -319,7 +324,7 @@ export class DependencyNodeClass extends ClassicPreset.Node {
     console.log('DependencyNode: Setup inputs complete', {
       nodeId: this.graphNode.id,
       totalInputs: inputs.length,
-      connectorInputs: inputs.filter(input => input.connector).length
+      connectorInputs: inputs.filter((input: any) => input.connector).length
     });
   }
 
@@ -330,7 +335,8 @@ export class DependencyNodeClass extends ClassicPreset.Node {
       // Only create sockets for connector outputs
       if (output.connector) {
         const socket = createSocket(output.type);
-        this.addOutput(output.name, new ClassicPreset.Output(socket, output.name));
+        const outputInstance = new ClassicPreset.Output(socket, output.name);
+        this.addOutput(output.name, outputInstance);
       }
     });
 
@@ -338,7 +344,7 @@ export class DependencyNodeClass extends ClassicPreset.Node {
     console.log('DependencyNode: Setup outputs complete', {
       nodeId: this.graphNode.id,
       totalOutputs: outputs.length,
-      connectorOutputs: outputs.filter(output => output.connector).length
+      connectorOutputs: outputs.filter((output: any) => output.connector).length
     });
   }
 
