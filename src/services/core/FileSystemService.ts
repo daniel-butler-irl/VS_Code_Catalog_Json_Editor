@@ -1,7 +1,6 @@
 // src/services/core/FileSystemService.ts
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { promises as fs } from 'fs';
 import { LoggingService } from './LoggingService';
 import type { ICatalogFileInfo } from '../../types/catalog';

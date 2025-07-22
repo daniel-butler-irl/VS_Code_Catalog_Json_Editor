@@ -4,6 +4,7 @@ import { IBMCloudService } from '../services/IBMCloudService';
 import { AuthService } from '../services/AuthService';
 import { SchemaService } from '../services/SchemaService';
 import { LoggingService } from '../services/core/LoggingService';
+import { CacheService } from '../services/CacheService';
 import { Dependency } from '../types/catalog';
 import { JsonPathService } from '../services/core/JsonPathService';
 import { TerraformParsingService } from '../services/TerraformParsingService';
@@ -62,6 +63,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
   private readonly jsonPathService: JsonPathService;
   private readonly terraformParsingService: TerraformParsingService;
   private readonly context: vscode.ExtensionContext;
+  private readonly cacheService: CacheService;
   private disposables: vscode.Disposable[] = [];
   private currentOfferings: any[] = []; // Store current offerings data for node label lookup
   private rootNodeConfigurations: Map<string, { inputs?: any[], outputs?: any[] }> = new Map(); // Store root node input/output configurations
@@ -72,7 +74,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     catalogService: CatalogService,
     ibmCloudService: IBMCloudService | null,
     schemaService: SchemaService,
-    jsonPathService: JsonPathService
+    jsonPathService: JsonPathService,
+    cacheService: CacheService
   ) {
     this.context = context;
     this.logger = logger;
@@ -81,6 +84,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     this.schemaService = schemaService;
     this.jsonPathService = jsonPathService;
     this.terraformParsingService = TerraformParsingService.getInstance();
+    this.cacheService = cacheService;
   }
 
   public static initialize(
@@ -89,7 +93,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
     catalogService: CatalogService,
     ibmCloudService: IBMCloudService | null,
     schemaService: SchemaService,
-    jsonPathService: JsonPathService
+    jsonPathService: JsonPathService,
+    cacheService: CacheService
   ): CatalogVisualEditorProvider {
     if (!CatalogVisualEditorProvider.instance) {
       CatalogVisualEditorProvider.instance = new CatalogVisualEditorProvider(
@@ -98,7 +103,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         catalogService,
         ibmCloudService,
         schemaService,
-        jsonPathService
+        jsonPathService,
+        cacheService
       );
     }
     return CatalogVisualEditorProvider.instance;
@@ -211,6 +217,13 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }, 'visualEditor');
 
       // Send initial data to webview
+      console.log('WEBVIEW_MESSAGE: Sending initializeGraph to webview', {
+        command: 'initializeGraph',
+        graphModel,
+        nodeCount: graphModel.nodes.length,
+        connectionCount: graphModel.connections.length
+      });
+      
       this.logger.debug('Visual Editor: Sending initializeGraph message to webview', {}, 'visualEditor');
       await webviewPanel.webview.postMessage({
         command: 'initializeGraph',
@@ -234,6 +247,14 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       selectedProduct,
       selectedFlavor
     }, 'visualEditor');
+
+    console.log('BUILD_GRAPH_MODEL: Starting buildGraphModel', {
+      catalogData,
+      hasProducts: !!catalogData.products,
+      productCount: catalogData.products?.length || 0,
+      selectedProduct,
+      selectedFlavor
+    });
 
     const nodes: GraphNode[] = [];
     const connections: GraphConnection[] = [];
@@ -435,7 +456,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         inputs: finalInputs,
         outputs: finalOutputs
       },
-      position: { x: 400, y: 200 }
+      position: { x: 300, y: 100 }  // Center position for tree layout with 2-column dependencies
     };
     
     this.logger.debug('Visual Editor: Created root node', {
@@ -607,8 +628,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           outputs: depOutputs
         },
         position: { 
-          x: 100, 
-          y: 100 + (index * 150) 
+          x: 100 + (index % 2) * 450,  // 2 columns with wider spacing
+          y: 450 + Math.floor(index / 2) * 350  // Much more vertical spacing
         }
       };
       nodes.push(depNode);
@@ -649,12 +670,42 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       selectedProduct: targetProductName
     };
 
+    console.log('BUILD_GRAPH_MODEL: Final graph model created', {
+      nodeCount: graphModel.nodes.length,
+      connectionCount: graphModel.connections.length,
+      selectedProduct: graphModel.selectedProduct,
+      selectedFlavor: graphModel.selectedFlavor,
+      nodes: graphModel.nodes.map(n => ({ 
+        id: n.id, 
+        type: n.type, 
+        name: n.name,
+        position: n.position,
+        hasData: !!n.data,
+        inputCount: n.data?.inputs?.length || 0,
+        outputCount: n.data?.outputs?.length || 0
+      })),
+      connections: graphModel.connections.map(conn => ({
+        id: conn.id,
+        source: conn.source,
+        target: conn.target,
+        sourceHandle: conn.sourceHandle,
+        targetHandle: conn.targetHandle
+      }))
+    });
+
     this.logger.debug('Visual Editor: Built complete graph model', {
       nodeCount: graphModel.nodes.length,
       connectionCount: graphModel.connections.length,
       selectedProduct: graphModel.selectedProduct,
       selectedFlavor: graphModel.selectedFlavor,
-      nodeTypes: graphModel.nodes.map(n => ({ id: n.id, type: n.type, name: n.name }))
+      nodeTypes: graphModel.nodes.map(n => ({ id: n.id, type: n.type, name: n.name })),
+      connections: graphModel.connections.map(conn => ({
+        id: conn.id,
+        source: conn.source,
+        target: conn.target,
+        sourceHandle: conn.sourceHandle,
+        targetHandle: conn.targetHandle
+      }))
     }, 'visualEditor');
 
     return graphModel;
@@ -744,6 +795,10 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
           await this.initializeEditor(webviewPanel, document);
           // Also send offerings data immediately after initialization
           await this.loadAndSendOfferingsData(webviewPanel);
+          break;
+        case 'debug':
+          // Log debug messages from webview to extension output
+          this.handleDebugMessage(message);
           break;
         default:
           this.logger.warn('Unknown message command', { command: message.command }, 'visualEditor');
@@ -1477,7 +1532,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       // Fetch offerings for the specific catalog
       let offerings;
       try {
-        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+        // Use cache-first approach (skipCache: false) to avoid rate limiting
+        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId, false);
       } catch (offeringsError) {
         this.logger.error('Visual Editor: Failed to retrieve offerings for catalog', { 
           error: offeringsError, 
@@ -1583,6 +1639,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       }
 
       // Fetch available offerings for the DA Library with proper error handling
+      // Use cache-first approach to reduce API calls
       let allCatalogs;
       try {
         allCatalogs = await ibmCloudService.getAvailableCatalogs();
@@ -1645,7 +1702,8 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       const catalogId = defaultCatalog.id;
       let offerings;
       try {
-        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId);
+        // Use cache-first approach (skipCache: false) to avoid rate limiting
+        offerings = await ibmCloudService.getOfferingsForCatalog(catalogId, false);
       } catch (offeringsError) {
         this.logger.error('Visual Editor: Failed to retrieve offerings for catalog', { 
           error: offeringsError, 
@@ -1893,11 +1951,23 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       // Add common dependency inputs and outputs based on dependency type
       this.addCommonDependencyPorts(dep, depPorts);
 
+      // For any dependency input that's a common pass-through port, 
+      // also add it as a root output port so it can be used as a source handle
+      const commonPassThroughPorts = ['region', 'resource_group_name', 'prefix', 'tags', 'enable_platform_metrics', 'logs_routing_tenant_regions', 'existing_kms_instance_crn'];
+      commonPassThroughPorts.forEach(port => {
+        if (depPorts.inputs.has(port)) {
+          rootInputPorts.add(port);
+          rootOutputPorts.add(port); // Add as output for pass-through
+        }
+      });
+
       if (dep.input_mapping && Array.isArray(dep.input_mapping)) {
         dep.input_mapping.forEach((mapping: any) => {
           // Root input connected to dependency input
           if (mapping.version_input && mapping.dependency_input) {
             rootInputPorts.add(mapping.version_input);
+            // Also add as output port so it can be used as a source handle for pass-through
+            rootOutputPorts.add(mapping.version_input);
             depPorts.inputs.add(mapping.dependency_input);
           }
           
@@ -2018,5 +2088,26 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
       inputs: Array.from(depPorts.inputs),
       outputs: Array.from(depPorts.outputs)
     }, 'visualEditor');
+  }
+
+  private handleDebugMessage(message: WebviewMessage): void {
+    const { data } = message;
+    if (data && data.level && data.message) {
+      switch (data.level) {
+        case 'error':
+          this.logger.error(`React Flow Debug: ${data.message}`, data.details || {}, 'visualEditor');
+          break;
+        case 'warn':
+          this.logger.warn(`React Flow Debug: ${data.message}`, data.details || {}, 'visualEditor');
+          break;
+        case 'info':
+          this.logger.info(`React Flow Debug: ${data.message}`, data.details || {}, 'visualEditor');
+          break;
+        case 'debug':
+        default:
+          this.logger.debug(`React Flow Debug: ${data.message}`, data.details || {}, 'visualEditor');
+          break;
+      }
+    }
   }
 }

@@ -3,22 +3,20 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
     {
-        ignores: ["dist/**/*", "out/**/*", "src/test/**/*", "*.js", "*.mjs"]
+        ignores: ["dist/**/*", "out/**/*", "src/test/**/*", "*.js", "*.mjs", "node_modules/**/*"]
     },
     {
         files: ["src/**/*.ts"],
+        ignores: ["src/test/**/*"],
         plugins: {
             "@typescript-eslint": typescriptEslint,
         },
         languageOptions: {
             parser: tsParser,
             parserOptions: {
-                project: "./tsconfig.json",
-                tsconfigRootDir: ".",
-                warnOnUnsupportedTypeScriptVersion: false
-            },
-            ecmaVersion: 2022,
-            sourceType: "module",
+                ecmaVersion: 2022,
+                sourceType: "module",
+            }
         },
         rules: {
             "@typescript-eslint/naming-convention": ["warn", {

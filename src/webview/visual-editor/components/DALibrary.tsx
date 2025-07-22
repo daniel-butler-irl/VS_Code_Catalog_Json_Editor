@@ -93,7 +93,7 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
               onClick={(e) => e.stopPropagation()}
             >
               {offering.flavors.map(flavor => (
-                <option key={flavor.name} value={flavor.name}>{flavor.label || flavor.name}</option>
+                <option key={`${offering.id}-${flavor.name}`} value={flavor.name}>{flavor.label || flavor.name}</option>
               ))}
             </select>
           </div>
@@ -107,8 +107,8 @@ const OfferingCard: React.FC<OfferingCardProps> = ({ offering, onDragStart }) =>
               onChange={(e) => setSelectedVersion(e.target.value)}
               onClick={(e) => e.stopPropagation()}
             >
-              {availableVersions.map(version => (
-                <option key={version} value={version}>{version}</option>
+              {availableVersions.map((version, index) => (
+                <option key={`${offering.id}-${selectedFlavor}-${version}-${index}`} value={version}>{version}</option>
               ))}
             </select>
           </div>

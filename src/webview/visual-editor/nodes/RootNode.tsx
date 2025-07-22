@@ -11,22 +11,13 @@ interface RootNodeProps {
 
 interface SocketProps {
   data: ClassicPreset.Socket;
+  isInput: boolean;
 }
 
-const Socket: React.FC<SocketProps> = ({ data }) => {
-  const getSocketColor = (socketType: string) => {
-    switch (socketType) {
-      case 'string':
-        return '#3b82f6'; // blue
-      case 'number':
-        return '#10b981'; // green
-      case 'boolean':
-        return '#f59e0b'; // amber
-      case 'object':
-        return '#8b5cf6'; // purple
-      default:
-        return '#6b7280'; // gray
-    }
+const Socket: React.FC<SocketProps> = ({ data, isInput }) => {
+  const getSocketColor = (isInput: boolean) => {
+    // Standardize to match legend: green for inputs, amber for outputs
+    return isInput ? '#10b981' : '#f59e0b';
   };
 
   return (
@@ -35,12 +26,12 @@ const Socket: React.FC<SocketProps> = ({ data }) => {
       style={{
         width: SOCKET_SIZE,
         height: SOCKET_SIZE,
-        backgroundColor: getSocketColor(data.name),
+        backgroundColor: getSocketColor(isInput),
         borderRadius: '50%',
         border: '2px solid #fff',
         cursor: 'crosshair'
       }}
-      title={`${data.name} socket`}
+      title={`${isInput ? 'Input' : 'Output'} socket`}
     />
   );
 };
@@ -164,7 +155,7 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
               {connectorInputs.map(([key, input]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ flex: '0 0 auto' }}>
-                    {input?.socket && <Socket data={input.socket} />}
+                    {input?.socket && <Socket data={input.socket} isInput={true} />}
                   </div>
                   <div style={{ flex: '1', minWidth: 0 }}>
                     <div style={{ 
@@ -213,7 +204,7 @@ export const RootNode: React.FC<RootNodeProps> = ({ data, emit }) => {
                     </div>
                   </div>
                   <div style={{ flex: '0 0 auto' }}>
-                    {output?.socket && <Socket data={output.socket} />}
+                    {output?.socket && <Socket data={output.socket} isInput={false} />}
                   </div>
                 </div>
               ))}

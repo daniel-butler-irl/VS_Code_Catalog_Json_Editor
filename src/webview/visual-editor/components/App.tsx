@@ -525,6 +525,17 @@ export const VisualEditorApp: React.FC = () => {
             error={offeringsError}
           />
           
+          {(() => {
+            console.log('APP_RENDER: About to render Canvas component with graphModel:', {
+              hasGraphModel: !!graphModel,
+              nodeCount: graphModel?.nodes?.length || 0,
+              connectionCount: graphModel?.connections?.length || 0,
+              nodes: graphModel?.nodes?.map(n => ({ id: n.id, type: n.type, name: n.name, position: n.position })) || [],
+              fullGraphModel: graphModel
+            });
+            return null;
+          })()}
+          
           <Canvas
             graphModel={graphModel}
             selectedNode={selectedNode}

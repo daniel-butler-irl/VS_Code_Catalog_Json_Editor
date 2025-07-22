@@ -1,7 +1,5 @@
 // extension.ts is the entry point for the extension. It is responsible for activating the extension and setting up the necessary services and commands.
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import { CatalogTreeProvider } from './providers/CatalogTreeProvider';
 import { CatalogVisualEditorProvider } from './providers/CatalogVisualEditorProvider';
 import { CatalogFileSystemWatcher } from './services/CatalogFileSystemWatcher';
@@ -17,7 +15,6 @@ import { UIStateService } from './services/core/UIStateService';
 import { FileSystemService } from './services/core/FileSystemService';
 import { JsonPathService } from './services/core/JsonPathService';
 import { PreReleaseWebview } from './webview/PreReleaseWebview';
-import { AuthenticationSession } from 'vscode';
 import { PreReleaseService } from './services/PreReleaseService';
 import { ValidationUIService } from './services/ValidationUIService';
 import { ValidationRuleRegistry, SchemaValidationIgnoreService } from './services/validation';
@@ -131,7 +128,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
             catalogService,
             null, // We'll handle IBM Cloud service creation within the provider
             schemaService,
-            jsonPathService
+            jsonPathService,
+            cacheService
         );
 
         try {

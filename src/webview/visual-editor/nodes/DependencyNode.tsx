@@ -11,22 +11,13 @@ interface DependencyNodeProps {
 
 interface SocketProps {
   data: ClassicPreset.Socket;
+  isInput: boolean;
 }
 
-const Socket: React.FC<SocketProps> = ({ data }) => {
-  const getSocketColor = (socketType: string) => {
-    switch (socketType) {
-      case 'string':
-        return '#3b82f6'; // blue
-      case 'number':
-        return '#10b981'; // green
-      case 'boolean':
-        return '#f59e0b'; // amber
-      case 'object':
-        return '#8b5cf6'; // purple
-      default:
-        return '#6b7280'; // gray
-    }
+const Socket: React.FC<SocketProps> = ({ data, isInput }) => {
+  const getSocketColor = (isInput: boolean) => {
+    // Standardize to match legend: green for inputs, amber for outputs
+    return isInput ? '#10b981' : '#f59e0b';
   };
 
   return (
@@ -35,12 +26,12 @@ const Socket: React.FC<SocketProps> = ({ data }) => {
       style={{
         width: SOCKET_SIZE,
         height: SOCKET_SIZE,
-        backgroundColor: getSocketColor(data.name),
+        backgroundColor: getSocketColor(isInput),
         borderRadius: '50%',
         border: '2px solid #fff',
         cursor: 'crosshair'
       }}
-      title={`${data.name} socket`}
+      title={`${isInput ? 'Input' : 'Output'} socket`}
     />
   );
 };
@@ -220,7 +211,7 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
               {connectorInputs.map(([key, input]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div style={{ flex: '0 0 auto' }}>
-                    {input?.socket && <Socket data={input.socket} />}
+                    {input?.socket && <Socket data={input.socket} isInput={true} />}
                   </div>
                   <div style={{ flex: '1', minWidth: 0 }}>
                     <div style={{ 
@@ -269,7 +260,7 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
                     </div>
                   </div>
                   <div style={{ flex: '0 0 auto' }}>
-                    {output?.socket && <Socket data={output.socket} />}
+                    {output?.socket && <Socket data={output.socket} isInput={false} />}
                   </div>
                 </div>
               ))}
@@ -302,31 +293,6 @@ export const DependencyNode: React.FC<DependencyNodeProps> = ({ data, emit }) =>
         </div>
       </div>
 
-      {/* Connection Count Indicator */}
-      {data.getInputMappings().length > 0 && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '-6px',
-            left: '-6px',
-            background: '#3b82f6',
-            color: '#fff',
-            borderRadius: '50%',
-            width: '16px',
-            height: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '10px',
-            fontWeight: '700',
-            border: '2px solid #fff',
-            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
-          }}
-          title={`${data.getInputMappings().length} connections`}
-        >
-          {data.getInputMappings().length}
-        </div>
-      )}
 
       {/* Resize Handle */}
       <div

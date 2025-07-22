@@ -151,7 +151,7 @@ export abstract class BaseValidationRule implements ValidationRule {
           if (key) {
             // Find the position of this key in the raw text
             const keyPattern = new RegExp(`"key"\\s*:\\s*"${key}"`, 'g');
-            let match;
+            let match: RegExpExecArray | null;
             let matchIndex = 0;
             while ((match = keyPattern.exec(rawText)) !== null) {
               const keyStart = match.index + match[0].indexOf(key);
@@ -172,7 +172,7 @@ export abstract class BaseValidationRule implements ValidationRule {
             indices.forEach((index, arrayIndex) => {
               // Find the position of this specific instance
               const keyPattern = new RegExp(`"key"\\s*:\\s*"${key}"`, 'g');
-              let match;
+              let match: RegExpExecArray | null;
               let matchIndex = 0;
               while ((match = keyPattern.exec(rawText)) !== null) {
                 if (matchIndex === index) {

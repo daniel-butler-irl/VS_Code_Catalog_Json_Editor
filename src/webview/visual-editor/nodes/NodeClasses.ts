@@ -94,8 +94,9 @@ export class RootNodeClass extends ClassicPreset.Node {
   constructor(graphNode: GraphNode) {
     super(graphNode.name);
     this.graphNode = graphNode;
-    this.id = graphNode.id;
-    this.label = graphNode.name;
+    // Set the id directly on the instance
+    (this as any).id = graphNode.id;
+    (this as any).label = graphNode.name;
 
     // Ensure graphNode.data has proper structure
     this.initializeGraphNodeData();
@@ -145,8 +146,8 @@ export class RootNodeClass extends ClassicPreset.Node {
         });
         
         const inputInstance = new ClassicPreset.Input(socket, input.name, true);
-        this.addInput(input.name, inputInstance);
-        this.addControl(input.name, inputControl);
+        this.inputs[input.name] = inputInstance;
+        this.controls[input.name] = inputControl;
       }
     });
 
@@ -166,7 +167,7 @@ export class RootNodeClass extends ClassicPreset.Node {
       if (output.connector) {
         const socket = createSocket(output.type);
         const outputInstance = new ClassicPreset.Output(socket, output.name);
-        this.addOutput(output.name, outputInstance);
+        this.outputs[output.name] = outputInstance;
       }
     });
 
@@ -193,13 +194,13 @@ export class RootNodeClass extends ClassicPreset.Node {
   private refreshInputsOutputs(): void {
     // Clear existing inputs and outputs
     Object.keys(this.inputs || {}).forEach(key => {
-      this.removeInput(key);
+      delete this.inputs[key];
     });
     Object.keys(this.outputs || {}).forEach(key => {
-      this.removeOutput(key);
+      delete this.outputs[key];
     });
     Object.keys(this.controls || {}).forEach(key => {
-      this.removeControl(key);
+      delete this.controls[key];
     });
 
     // Recreate inputs and outputs
@@ -218,8 +219,8 @@ export class RootNodeClass extends ClassicPreset.Node {
     });
     
     const inputInstance = new ClassicPreset.Input(socket, name, true);
-    this.addInput(name, inputInstance);
-    this.addControl(name, inputControl);
+    this.inputs[name] = inputInstance;
+    this.controls[name] = inputControl;
 
     // Update the graph node data
     if (!this.graphNode.data.inputs) {
@@ -238,7 +239,7 @@ export class RootNodeClass extends ClassicPreset.Node {
   addNewOutput(name: string, type: string = 'string', config: Partial<NodeOutput> = {}): void {
     const socket = createSocket(type);
     const outputInstance = new ClassicPreset.Output(socket, name);
-    this.addOutput(name, outputInstance);
+    this.outputs[name] = outputInstance;
 
     // Update the graph node data
     if (!this.graphNode.data.outputs) {
@@ -264,8 +265,9 @@ export class DependencyNodeClass extends ClassicPreset.Node {
   constructor(graphNode: GraphNode) {
     super(graphNode.name);
     this.graphNode = graphNode;
-    this.id = graphNode.id;
-    this.label = graphNode.name;
+    // Set the id directly on the instance
+    (this as any).id = graphNode.id;
+    (this as any).label = graphNode.name;
 
     // Ensure graphNode.data has proper structure
     this.initializeGraphNodeData();
@@ -315,8 +317,8 @@ export class DependencyNodeClass extends ClassicPreset.Node {
         });
         
         const inputInstance = new ClassicPreset.Input(socket, input.name, !input.required);
-        this.addInput(input.name, inputInstance);
-        this.addControl(input.name, inputControl);
+        this.inputs[input.name] = inputInstance;
+        this.controls[input.name] = inputControl;
       }
     });
 
@@ -336,7 +338,7 @@ export class DependencyNodeClass extends ClassicPreset.Node {
       if (output.connector) {
         const socket = createSocket(output.type);
         const outputInstance = new ClassicPreset.Output(socket, output.name);
-        this.addOutput(output.name, outputInstance);
+        this.outputs[output.name] = outputInstance;
       }
     });
 
@@ -357,7 +359,7 @@ export class DependencyNodeClass extends ClassicPreset.Node {
     
     // Update label if name changed
     if (properties.name) {
-      this.label = properties.name;
+      (this as any).label = properties.name;
     }
   }
 

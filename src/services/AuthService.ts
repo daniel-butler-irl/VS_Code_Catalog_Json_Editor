@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
-import { CacheService } from './CacheService';
 import { LoggingService } from './core/LoggingService';
 import axios from 'axios';
-import { CacheKeys, CacheConfigurations } from '../types/cache/cacheConfig';
 
 /**
  * Service for handling IBM Cloud authentication.

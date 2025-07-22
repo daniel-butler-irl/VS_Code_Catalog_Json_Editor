@@ -21,12 +21,7 @@ interface ToolbarProps {
   onZoomOut?: () => void;
   onFitToScreen?: () => void;
   onResetLayout?: () => void;
-  onSave?: () => void;
-  onValidate?: () => void;
   onAutoLayout?: () => void;
-  validationErrors?: number;
-  isModified?: boolean;
-  isSaving?: boolean;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -39,12 +34,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onZoomOut,
   onFitToScreen,
   onResetLayout,
-  onSave,
-  onValidate,
   onAutoLayout,
-  validationErrors = 0,
-  isModified = false,
-  isSaving = false
 }) => {
   const currentProduct = products.find(p => p.name === selectedProduct);
   const availableFlavors = currentProduct?.flavors || [];
@@ -92,44 +82,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             )}
           </select>
         </div>
-        
-        {/* Status Indicators */}
-        <div className="status-indicators">
-          {isModified && (
-            <span className="status-indicator modified" title="Unsaved changes">
-              •
-            </span>
-          )}
-          {validationErrors > 0 && (
-            <span className="status-indicator error" title={`${validationErrors} validation errors`}>
-              ⚠️ {validationErrors}
-            </span>
-          )}
-        </div>
       </div>
       
-      <div className="toolbar-section toolbar-actions">
-        <button 
-          className={`toolbar-button ${isModified ? 'modified' : ''}`}
-          onClick={onSave}
-          disabled={isSaving || !isModified}
-          title={isModified ? 'Save Changes' : 'No Changes to Save'}
-        >
-          <span className="toolbar-icon">{isSaving ? '⏳' : '💾'}</span>
-          <span className="toolbar-text">Save</span>
-          {isModified && <span className="modified-indicator">•</span>}
-        </button>
-        
-        <button 
-          className={`toolbar-button ${validationErrors > 0 ? 'error' : 'success'}`}
-          onClick={onValidate}
-          title={validationErrors > 0 ? `${validationErrors} validation errors` : 'Validation passed'}
-        >
-          <span className="toolbar-icon">{validationErrors > 0 ? '⚠️' : '✅'}</span>
-          <span className="toolbar-text">Validate</span>
-          {validationErrors > 0 && <span className="error-count">{validationErrors}</span>}
-        </button>
-      </div>
       
       <div className="toolbar-section toolbar-layout">
         <button 
