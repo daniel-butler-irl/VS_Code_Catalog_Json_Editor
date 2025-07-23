@@ -1610,77 +1610,9 @@ path.rete-connection-preview {
   position: relative;
 }
 
-/* React Flow Specific Styles - AgentK Studio Theme */
-.reactflow-wrapper {
-  height: 100% !important;
-  width: 100% !important;
-  min-height: 400px !important;
-  min-width: 400px !important;
-  box-sizing: border-box !important;
-  position: relative !important;
-}
+/* Custom Canvas Specific Styles */
 
-/* React Flow Dark Theme Override */
-/* ReactFlow container - minimal styling without !important */
-.react-flow {
-  height: 100%;
-  width: 100%;
-  min-height: 500px;
-  min-width: 500px;
-  box-sizing: border-box;
-  position: relative;
-}
-
-/* Remove all node overrides - let ReactFlow handle its own styling */
-
-/* React Flow Components - Less aggressive styling */
-.react-flow__controls {
-  background: #374151;
-  border: 1px solid #4b5563;
-  border-radius: 8px;
-  padding: 4px;
-}
-
-.react-flow__controls-button {
-  background: transparent;
-  border: none;
-  color: #d1d5db;
-  font-size: 16px;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.react-flow__controls-button:hover {
-  background: #4b5563;
-  color: #ffffff;
-}
-
-.react-flow__controls-button:disabled {
-  color: #6b7280;
-  pointer-events: none;
-}
-
-.react-flow__minimap {
-  background-color: #374151;
-  border: 1px solid #4b5563;
-  border-radius: 8px;
-}
-
-.react-flow__minimap-mask {
-  fill: rgba(31, 41, 55, 0.8);
-}
-
-.react-flow__minimap-node {
-  fill: #6b7280;
-  stroke: none;
-}
-
-/* React Flow Panels - AgentK Studio Style */
+/* Canvas Panels - AgentK Studio Style */
 .canvas-info-panel {
   background: #374151 !important;
   border: 1px solid #4b5563 !important;
@@ -1766,83 +1698,54 @@ path.rete-connection-preview {
   cursor: not-allowed !important;
 }
 
-/* React Flow Node Styles - Custom */
-.root-node-reactflow,
-.dependency-node-reactflow {
-  border-radius: 8px !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
-  font-family: var(--vscode-font-family, monospace) !important;
-  transition: all 0.2s !important;
+/* Custom Canvas Node Styles */
+.unified-node-canvas {
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font-family: var(--vscode-font-family, monospace);
+  transition: all 0.2s;
 }
 
-.root-node-reactflow:hover,
-.dependency-node-reactflow:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
-  transform: translateY(-1px) !important;
+.unified-node-canvas:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: translateY(-1px);
 }
 
-.root-node-reactflow.selected,
-.dependency-node-reactflow.selected {
-  box-shadow: 0 4px 12px rgba(251, 191, 36, 0.3) !important;
+.unified-node-canvas.selected {
+  box-shadow: 0 4px 12px rgba(251, 191, 36, 0.3);
 }
 
-/* React Flow Handles - Positioned within node bounds to prevent invisible boundary issues */
-.react-flow__handle {
-  /* Force handles to stay within node bounds */
-  position: absolute !important;
-  z-index: 10 !important;
-  /* Override default sizing to ensure handles don't extend beyond visible content */
-  width: 8px !important;
-  height: 8px !important;
-  border: 1px solid #fff !important;
-  border-radius: 50% !important;
-  transition: all 0.2s ease !important;
-  /* Ensure handles don't affect layout calculations */
-  pointer-events: auto !important;
+/* Custom Canvas Handles */
+.canvas-handle {
+  position: absolute;
+  z-index: 10;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  pointer-events: auto;
+  cursor: crosshair;
 }
 
-/* Handle hover effects - keep compact to prevent boundary issues */
-.react-flow__handle:hover {
-  transform: scale(1.15) !important;
-  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5) !important;
-  z-index: 20 !important;
+.canvas-handle:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+  z-index: 20;
 }
 
-/* Connecting state styles */
-.react-flow__handle-connecting {
-  background: #3b82f6 !important;
-  border-color: #3b82f6 !important;
-  transform: scale(1.15) !important;
+.canvas-handle.connecting {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  transform: scale(1.15);
 }
 
-/* Input handle styles (left side) */
-.react-flow__handle[data-handlepos="left"] {
-  background: #10b981 !important;
-  border-color: #fff !important;
+.canvas-handle.input {
+  background: #10b981;
 }
 
-/* Output handle styles (right side) */
-.react-flow__handle[data-handlepos="right"] {
-  background: #f59e0b !important;
-  border-color: #fff !important;
-}
-
-/* Dark theme for React Flow Attribution */
-.react-flow__attribution {
-  background: rgba(55, 65, 81, 0.8) !important;
-  color: #9ca3af !important;
-  padding: 2px 6px !important;
-  border-radius: 4px !important;
-  font-size: 10px !important;
-}
-
-.react-flow__attribution a {
-  color: #60a5fa !important;
-  text-decoration: none !important;
-}
-
-.react-flow__attribution a:hover {
-  color: #93c5fd !important;
+.canvas-handle.output {
+  background: #f59e0b;
 }
 
 /* Print styles */

@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { LayoutService } from '../services/LayoutService';
 import { CollisionDetectionService } from '../services/CollisionDetectionService';
 import { PositionUtils } from '../utils/PositionUtils';
-import { LayoutAlgorithm, LayoutState, CanvasLayoutNode, CanvasLayoutEdge, CollisionState, CollisionOptions } from '../types/LayoutTypes';
+import { LayoutState, CanvasLayoutNode, CanvasLayoutEdge, CollisionState, CollisionOptions } from '../types/LayoutTypes';
 
 interface NodePort {
   id: string;
@@ -594,7 +594,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         id: node.id,
         type: node.type,
         name: node.name,
-        label: node.label,
+        label: node.label || node.name,
         x: node.position.x,
         y: node.position.y,
         width: 240, // Same width for all nodes
@@ -1497,7 +1497,6 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
 
     // Check if this node is in collision
     const isConflicting = collisionState.conflictingNodes.includes(node.id);
-    const isDraggedNode = state.draggedNode === node.id;
 
     // Selection highlight is now handled in the main node styling
 

@@ -1,2 +1,1 @@
-// ReactFlow components
-export { UnifiedNodeReactFlow } from './UnifiedNodeReactFlow';
+// No ReactFlow components - using custom canvas implementation
