@@ -48,7 +48,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [panelWidth, setPanelWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const _resizeHandleRef = useRef<HTMLDivElement>(null);
   
   console.log('PropertiesPanel: Render with selectedNode:', {
     hasNode: !!selectedNode,

@@ -122,7 +122,7 @@ export const DALibrary: React.FC<DALibraryProps> = ({
   offerings, 
   catalogs = [], 
   selectedCatalogId, 
-  onAddDependency, 
+  onAddDependency: _onAddDependency, 
   onCatalogChange, 
   loading = false, 
   error = null 

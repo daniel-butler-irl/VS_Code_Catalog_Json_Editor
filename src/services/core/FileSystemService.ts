@@ -24,7 +24,7 @@ export class FileSystemService {
     private treeDataProvider?: CatalogTreeProvider;
 
     private constructor(
-        private readonly context: vscode.ExtensionContext,
+        private readonly _context: vscode.ExtensionContext,
         private readonly schemaService: SchemaService
     ) {
         this.logger.debug('Initializing FileSystemService');

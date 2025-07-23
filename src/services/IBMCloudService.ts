@@ -126,8 +126,8 @@ export class IBMCloudService {
     private logger: LoggingService;
     private backgroundCacheQueue: Set<string> = new Set();
     private isProcessingQueue: boolean = false;
-    private readonly apiUrl = 'https://cm.globalcatalog.cloud.ibm.com/api/v1-beta';
-    private readonly CACHE_DURATION_MS = 6 * 60 * 60 * 1000; // 6 hours
+    private readonly _apiUrl = 'https://cm.globalcatalog.cloud.ibm.com/api/v1-beta';
+    private readonly _CACHE_DURATION_MS = 6 * 60 * 60 * 1000; // 6 hours
     private apiKey: string;
     private authenticator: IamAuthenticator;
     private workspaceRoot?: string;
@@ -279,7 +279,7 @@ export class IBMCloudService {
      * Adds a catalog ID to the background caching queue.
      * @param catalogId - Catalog ID to cache.
      */
-    private enqueueCatalogId(catalogId: string): void {
+    private _enqueueCatalogId(catalogId: string): void {
         if (!this.backgroundCacheQueue.has(catalogId)) {
             this.logger.debug(`Enqueuing catalog ID for background caching: ${catalogId}`);
             this.backgroundCacheQueue.add(catalogId);
@@ -1409,10 +1409,10 @@ export class IBMCloudService {
         return 0;
     }
 
-    private getVersionMappingSummary(
-        catalogId: string,
-        offeringId: string,
-        kindType: string,
+    private _getVersionMappingSummary(
+        _catalogId: string,
+        _offeringId: string,
+        _kindType: string,
         githubReleases: GitHubRelease[],
         catalogVersions: CatalogVersion[]
     ): VersionMappingSummary[] {

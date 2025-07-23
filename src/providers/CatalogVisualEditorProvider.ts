@@ -507,7 +507,7 @@ export class CatalogVisualEditorProvider implements vscode.CustomTextEditorProvi
         hasDependencies: !!flavor.dependencies,
         dependencyCount: dependencies.length
       },
-      dependencies: dependencies.map((dep, index) => ({
+      dependencies: dependencies.map((dep: Dependency, index: number) => ({
         index,
         id: dep.id,
         name: dep.name,

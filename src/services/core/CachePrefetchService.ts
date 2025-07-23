@@ -3,7 +3,7 @@
 import { LoggingService } from './LoggingService';
 import { IBMCloudService } from '../IBMCloudService';
 import { CacheService } from '../CacheService';
-import { chunk, throttle } from 'lodash';
+// import { chunk, throttle } from 'lodash';
 import type { LookupItem, PrefetchOptions } from '../../types/cache';
 import { CacheConfigurations, CacheKeys, DynamicCacheKeys } from '../../types/cache/cacheConfig';
 

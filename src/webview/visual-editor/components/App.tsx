@@ -84,6 +84,7 @@ export const VisualEditorApp: React.FC = () => {
   const [selectedFlavor, setSelectedFlavor] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
 
   // Message handler for VS Code communication
   const handleMessage = useCallback((event: MessageEvent) => {
@@ -492,14 +493,8 @@ export const VisualEditorApp: React.FC = () => {
     );
   }
 
-  if (!graphModel) {
-    console.log('Visual Editor App: Rendering empty state - no graph model');
-    return (
-      <div className="empty-state">
-        <div className="empty-state-text">No graph data available</div>
-      </div>
-    );
-  }
+  // Remove the graphModel check - always render the main interface
+  // The Canvas component will handle showing demo data when no graphModel is available
 
   console.log('Visual Editor App: Rendering main interface with graph model');
 

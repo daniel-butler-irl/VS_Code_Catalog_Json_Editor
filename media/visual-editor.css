@@ -1621,96 +1621,63 @@ path.rete-connection-preview {
 }
 
 /* React Flow Dark Theme Override */
+/* ReactFlow container - minimal styling without !important */
 .react-flow {
-  background-color: #1f2937 !important;
-  height: 100% !important;
-  width: 100% !important;
-  min-height: 400px !important;
-  min-width: 400px !important;
-  box-sizing: border-box !important;
-  position: relative !important;
+  height: 100%;
+  width: 100%;
+  min-height: 500px;
+  min-width: 500px;
+  box-sizing: border-box;
+  position: relative;
 }
 
-/* React Flow Node Visibility - CRITICAL FIX */
-.react-flow__node {
-  visibility: visible !important;
-  opacity: 1 !important;
-  display: block !important;
-  pointer-events: auto !important;
-  z-index: 1 !important;
-}
+/* Remove all node overrides - let ReactFlow handle its own styling */
 
-.react-flow__node-default {
-  visibility: visible !important;
-  opacity: 1 !important;
-  display: block !important;
-}
-
-.react-flow__background {
-  background-color: #1f2937 !important;
-}
-
-.react-flow__edge {
-  stroke: #10b981 !important;
-  stroke-width: 2px !important;
-}
-
-.react-flow__edge-path {
-  stroke: #10b981 !important;
-  stroke-width: 2px !important;
-}
-
-.react-flow__edge.selected {
-  stroke: #fbbf24 !important;
-  stroke-width: 3px !important;
-}
-
-/* React Flow Controls - Dark Theme */
+/* React Flow Components - Less aggressive styling */
 .react-flow__controls {
-  background: #374151 !important;
-  border: 1px solid #4b5563 !important;
-  border-radius: 8px !important;
-  padding: 4px !important;
+  background: #374151;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  padding: 4px;
 }
 
 .react-flow__controls-button {
-  background: transparent !important;
-  border: none !important;
-  color: #d1d5db !important;
-  font-size: 16px !important;
-  width: 24px !important;
-  height: 24px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  border-radius: 4px !important;
-  transition: all 0.2s !important;
+  background: transparent;
+  border: none;
+  color: #d1d5db;
+  font-size: 16px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
 }
 
 .react-flow__controls-button:hover {
-  background: #4b5563 !important;
-  color: #ffffff !important;
+  background: #4b5563;
+  color: #ffffff;
 }
 
 .react-flow__controls-button:disabled {
-  color: #6b7280 !important;
-  pointer-events: none !important;
+  color: #6b7280;
+  pointer-events: none;
 }
 
-/* React Flow MiniMap - Dark Theme */
 .react-flow__minimap {
-  background-color: #374151 !important;
-  border: 1px solid #4b5563 !important;
-  border-radius: 8px !important;
+  background-color: #374151;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
 }
 
 .react-flow__minimap-mask {
-  fill: rgba(31, 41, 55, 0.8) !important;
+  fill: rgba(31, 41, 55, 0.8);
 }
 
 .react-flow__minimap-node {
-  fill: #6b7280 !important;
-  stroke: none !important;
+  fill: #6b7280;
+  stroke: none;
 }
 
 /* React Flow Panels - AgentK Studio Style */

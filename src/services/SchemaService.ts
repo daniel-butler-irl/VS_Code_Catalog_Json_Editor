@@ -4,10 +4,10 @@ import * as https from 'https';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { LoggingService } from './core/LoggingService';
-import { SchemaMetadata } from '../types/schema';
-import { ValidationUIService } from './ValidationUIService';
+import { SchemaMetadata } from '../types/schema/index';
+// import { ValidationUIService } from './ValidationUIService';
 import { ValidationRuleRegistry } from './validation';
-import { SchemaModification, SchemaModificationType } from '../types/validation/rules';
+import { SchemaModificationType } from '../types/validation/rules';
 import { parseTree } from 'jsonc-parser';
 import { SchemaValidationIgnoreService } from './validation/SchemaValidationIgnoreService';
 

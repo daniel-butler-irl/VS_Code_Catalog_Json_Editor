@@ -6,7 +6,7 @@ import { LoggingService } from './core/LoggingService';
 import type { InputMappingContext, MappingOption } from '../types/catalog';
 import { compareSemVer } from '../utils/semver';
 import type { Configuration, Output } from '../types/ibmCloud';
-import { CacheKeys, CacheConfigurations, CacheConfig } from '../types/cache/cacheConfig';
+import { /* CacheKeys, CacheConfigurations, */ CacheConfig } from '../types/cache/cacheConfig';
 
 /**
  * Service responsible for fetching and caching input mapping options for dependencies.

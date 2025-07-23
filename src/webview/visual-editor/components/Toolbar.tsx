@@ -17,11 +17,6 @@ interface ToolbarProps {
   selectedFlavor: string;
   onProductChange: (productName: string) => void;
   onFlavorChange: (flavorName: string) => void;
-  onZoomIn?: () => void;
-  onZoomOut?: () => void;
-  onFitToScreen?: () => void;
-  onResetLayout?: () => void;
-  onAutoLayout?: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -30,11 +25,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   selectedFlavor,
   onProductChange,
   onFlavorChange,
-  onZoomIn,
-  onZoomOut,
-  onFitToScreen,
-  onResetLayout,
-  onAutoLayout,
 }) => {
   const currentProduct = products.find(p => p.name === selectedProduct);
   const availableFlavors = currentProduct?.flavors || [];
@@ -84,52 +74,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </div>
       </div>
       
-      
-      <div className="toolbar-section toolbar-layout">
-        <button 
-          className="toolbar-button"
-          onClick={onAutoLayout}
-          title="Auto Layout"
-        >
-          <span className="toolbar-icon">🎯</span>
-          <span className="toolbar-text">Auto</span>
-        </button>
-        
-        <button 
-          className="toolbar-button"
-          onClick={onResetLayout}
-          title="Reset Layout"
-        >
-          <span className="toolbar-icon">🔄</span>
-          <span className="toolbar-text">Reset</span>
-        </button>
-      </div>
-      
-      <div className="toolbar-section toolbar-view">
-        <button 
-          className="toolbar-button"
-          onClick={onZoomIn}
-          title="Zoom In"
-        >
-          <span className="toolbar-icon">🔍+</span>
-        </button>
-        
-        <button 
-          className="toolbar-button"
-          onClick={onZoomOut}
-          title="Zoom Out"
-        >
-          <span className="toolbar-icon">🔍-</span>
-        </button>
-        
-        <button 
-          className="toolbar-button"
-          onClick={onFitToScreen}
-          title="Fit to Screen"
-        >
-          <span className="toolbar-icon">⚏</span>
-        </button>
-      </div>
     </div>
   );
 };

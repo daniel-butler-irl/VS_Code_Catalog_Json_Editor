@@ -7,13 +7,13 @@ import { Octokit } from '@octokit/rest';
 import * as path from 'path';
 import { AuthService } from './AuthService';
 import { CacheService } from '../services/CacheService';
-import { DynamicCacheKeys } from '../types/cache/cacheConfig';
+// import { DynamicCacheKeys } from '../types/cache/cacheConfig';
 import { CacheKeys } from '../types/cache/cacheConfig';
-import { CacheConfigurations } from '../types/cache/cacheConfig';
+// import { CacheConfigurations } from '../types/cache/cacheConfig';
 import { PreReleaseDetails, GitHubRelease, CatalogVersion, CatalogDetails, WebviewMessage } from '../types/catalog/prerelease';
 import * as fs from 'fs';
 import * as os from 'os';
-import fetch from 'node-fetch';
+// import fetch from 'node-fetch';
 import * as tar from 'tar';
 import axios from 'axios';
 import { OfferingVersion as IBMCloudOfferingVersion } from '../types/ibmCloud';
@@ -108,7 +108,7 @@ export class PreReleaseService {
     return PreReleaseService.instance;
   }
 
-  public static getInstance(context: vscode.ExtensionContext): PreReleaseService {
+  public static getInstance(_context: vscode.ExtensionContext): PreReleaseService {
     if (!PreReleaseService.instance) {
       throw new Error('PreReleaseService not initialized. Call initialize() first.');
     }
@@ -518,7 +518,7 @@ export class PreReleaseService {
       }, 'preRelease');
 
       // Check cache first
-      const cacheKey = `${CacheKeys.OFFERING_DETAILS}_${catalogId}`;
+      const _cacheKey = `${CacheKeys.OFFERING_DETAILS}_${catalogId}`;
       const workspaceRoot = this.workspaceRoot;
       if (!workspaceRoot) {
         throw new Error('No workspace root found');
@@ -1606,7 +1606,7 @@ export class PreReleaseService {
     }
   }
 
-  private async handleMessage(message: WebviewMessage): Promise<void> {
+  private async _handleMessage(message: WebviewMessage): Promise<void> {
     try {
       // Validate message structure first
       if (!message || typeof message.command !== 'string') {
@@ -1736,7 +1736,7 @@ export class PreReleaseService {
         try {
           catalogDetails = await this.getSelectedCatalogDetails(catalogId);
           if (catalogDetails) {
-            versionMappings = this.getVersionMappingSummary(
+            versionMappings = this._getVersionMappingSummary(
               catalogId,
               catalogDetails.offeringId,
               githubReleases,
@@ -2173,7 +2173,7 @@ export class PreReleaseService {
         try {
           catalogDetails = await this.getSelectedCatalogDetails(selectedCatalogId);
           if (catalogDetails) {
-            versionMappings = this.getVersionMappingSummary(
+            versionMappings = this._getVersionMappingSummary(
               selectedCatalogId,
               catalogDetails.offeringId,
               githubReleases,
@@ -2566,12 +2566,12 @@ export class PreReleaseService {
     }, 'preRelease');
 
     // Look for ibm_catalog.json in all subdirectories
-    const findIbmCatalogJson = async (dir: string): Promise<string | undefined> => {
+    const _findIbmCatalogJson = async (dir: string): Promise<string | undefined> => {
       const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          const found = await findIbmCatalogJson(fullPath);
+          const found = await _findIbmCatalogJson(fullPath);
           if (found) { return found; }
         } else if (entry.name === 'ibm_catalog.json') {
           return fullPath;
@@ -2580,7 +2580,7 @@ export class PreReleaseService {
       return undefined;
     };
 
-    const catalogFilePath = await findIbmCatalogJson(tempDir);
+    const catalogFilePath = await _findIbmCatalogJson(tempDir);
 
     if (!catalogFilePath) {
       this.logger.error('ibm_catalog.json not found after extraction', {
@@ -2595,9 +2595,9 @@ export class PreReleaseService {
     return catalogFilePath;
   }
 
-  private getVersionMappingSummary(
-    catalogId: string,
-    offeringId: string,
+  private _getVersionMappingSummary(
+    _catalogId: string,
+    _offeringId: string,
     githubReleases: GitHubRelease[],
     catalogVersions: CatalogVersion[]
   ): VersionMappingSummary[] {

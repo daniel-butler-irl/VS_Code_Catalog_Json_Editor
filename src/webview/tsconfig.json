@@ -15,7 +15,15 @@
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    "../services/**/*.ts",
+    "../services/core/**/*.ts",
+    "../services/validation/**/*.ts",
+    "../types/**/*.ts",
+    "../decorators/**/*.ts",
+    "../utils/**/*.ts",
+    "../models/**/*.ts",
+    "../providers/**/*.ts"
   ],
   "exclude": [
     "node_modules",
