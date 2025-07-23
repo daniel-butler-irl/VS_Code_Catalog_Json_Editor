@@ -1,4 +1,8 @@
 import React, { useRef, useEffect, useCallback } from 'react';
+import { LayoutService } from '../services/LayoutService';
+import { CollisionDetectionService } from '../services/CollisionDetectionService';
+import { PositionUtils } from '../utils/PositionUtils';
+import { LayoutAlgorithm, LayoutState, CanvasLayoutNode, CanvasLayoutEdge, CollisionState, CollisionOptions } from '../types/LayoutTypes';
 
 interface NodePort {
   id: string;
@@ -7,21 +11,25 @@ interface NodePort {
   x: number;
   y: number;
   description?: string;
+  isConnected?: boolean;
 }
 
 interface CanvasNode {
   id: string;
   type: 'root' | 'dependency';
   name: string;
+  label?: string;
   x: number;
   y: number;
   width: number;
   height: number;
   data?: {
-    inputs?: Array<{ name: string; description?: string }>;
-    outputs?: Array<{ name: string; description?: string }>;
+    inputs?: Array<{ name: string; display_name?: string; description?: string; defaultValue?: any }>;
+    outputs?: Array<{ name: string; display_name?: string; description?: string; defaultValue?: any }>;
     version?: string;
     description?: string;
+    flavor?: string;
+    label?: string;
   };
   ports?: NodePort[];
   expanded?: boolean;
@@ -56,7 +64,10 @@ interface CanvasState {
   selectedNode: string | null;
   draggedNode: string | null;
   dragOffset: { x: number; y: number };
+  dragStartPosition: { x: number; y: number } | null;
   mousePos: { x: number; y: number };
+  hoveredPort: NodePort | null;
+  showTooltip: boolean;
 }
 
 interface GraphNode {
@@ -94,23 +105,90 @@ interface CanvasProps {
   onNodeSelect?: (node: any) => void;
 }
 
+// Constants for node layout
+const HEADER_HEIGHT = 60;
+const BASE_CONTENT_HEIGHT = 30; // Minimum content area height
+const PORT_SPACING = 15; // Height per port
+
+// Calculate dynamic node height based on expansion state and actual visible ports
+const calculateDynamicHeight = (node: CanvasNode, edges: CanvasEdge[], expanded: boolean = false): number => {
+  const inputs = node.data?.inputs || [];
+  const outputs = node.data?.outputs || [];
+  
+  // Replicate the exact connection detection logic from calculateNodePorts
+  const connectedInputs = new Set<number>();
+  const connectedOutputs = new Set<number>();
+
+  edges.forEach(edge => {
+    // Check for connections using sourceHandle/targetHandle if available
+    if (edge.source === node.id && edge.sourceHandle) {
+      const match = edge.sourceHandle.match(/-output-(\d+)$/);
+      if (match) {
+        connectedOutputs.add(parseInt(match[1], 10));
+      }
+    } else if (edge.source === node.id) {
+      // For simple edges without handles, mark first output as connected
+      if (outputs.length > 0) {
+        connectedOutputs.add(0);
+      }
+    }
+    
+    if (edge.target === node.id && edge.targetHandle) {
+      const match = edge.targetHandle.match(/-input-(\d+)$/);
+      if (match) {
+        connectedInputs.add(parseInt(match[1], 10));
+      }
+    } else if (edge.target === node.id) {
+      // For simple edges without handles, mark first input as connected
+      if (inputs.length > 0) {
+        connectedInputs.add(0);
+      }
+    }
+  });
+
+  let visiblePortCount = 0;
+  if (expanded) {
+    // Show all ports when expanded
+    visiblePortCount = Math.max(inputs.length, outputs.length);
+  } else {
+    // Show only connected ports when collapsed (exact same logic as calculateNodePorts)
+    const visibleInputs = inputs.filter((_, index) => connectedInputs.has(index));
+    const visibleOutputs = outputs.filter((_, index) => connectedOutputs.has(index));
+    visiblePortCount = Math.max(visibleInputs.length, visibleOutputs.length);
+  }
+  
+  const contentHeight = Math.max(BASE_CONTENT_HEIGHT, visiblePortCount * PORT_SPACING + 20);
+  
+  // Add space for expand/collapse button if node has expandable content
+  const totalInputs = node.data?.inputs?.length || 0;
+  const totalOutputs = node.data?.outputs?.length || 0;
+  const hasExpandableContent = totalInputs > 3 || totalOutputs > 3;
+  const buttonSpace = hasExpandableContent ? 36 : 8; // 20px button + 8px gap + 8px bottom margin, or just 8px margin
+  
+  return HEADER_HEIGHT + contentHeight + buttonSpace;
+};
+
 const initialNodes: CanvasNode[] = [
   {
     id: 'root-1',
     type: 'root',
     name: 'Cloud Automation for Secrets Manager',
+    label: 'Secrets Manager Architecture',
     x: 100,
     y: 100,
-    width: 200,
-    height: 80,
+    width: 240,
+    height: 0, // Will be calculated dynamically
     data: {
+      label: 'Secrets Manager Architecture',
+      flavor: 'Standard Configuration',
+      version: 'v1.2.3',
       inputs: [
-        { name: 'region', description: 'Target region for deployment' },
-        { name: 'resource_group', description: 'Resource group ID' }
+        { name: 'region', display_name: 'Deploy Region', description: 'Target region for deployment', defaultValue: 'us-south' },
+        { name: 'resource_group', display_name: 'Resource Group', description: 'Resource group ID' }
       ],
       outputs: [
-        { name: 'vpc_id', description: 'VPC identifier' },
-        { name: 'security_group_id', description: 'Security group identifier' }
+        { name: 'vpc_id', display_name: 'VPC ID', description: 'VPC identifier' },
+        { name: 'security_group_id', display_name: 'Security Group', description: 'Security group identifier' }
       ]
     }
   },
@@ -118,18 +196,21 @@ const initialNodes: CanvasNode[] = [
     id: 'dep-1',
     type: 'dependency',
     name: 'VPC Module',
-    x: 400,
+    label: 'IBM VPC Foundation',
+    x: 450,
     y: 50,
-    width: 150,
-    height: 60,
+    width: 240,
+    height: 0, // Will be calculated dynamically
     data: {
-      version: '1.0.0',
+      label: 'IBM VPC Foundation',
+      flavor: 'Multi-zone',
+      version: '>=1.0.0',
       inputs: [
-        { name: 'region', description: 'AWS region' }
+        { name: 'region', display_name: 'Region', description: 'Target region', defaultValue: 'us-south' }
       ],
       outputs: [
-        { name: 'vpc_id', description: 'VPC ID' },
-        { name: 'subnet_ids', description: 'Subnet IDs' }
+        { name: 'vpc_id', display_name: 'VPC ID', description: 'VPC identifier' },
+        { name: 'subnet_ids', display_name: 'Subnet IDs', description: 'List of subnet identifiers' }
       ]
     }
   },
@@ -137,17 +218,20 @@ const initialNodes: CanvasNode[] = [
     id: 'dep-2',
     type: 'dependency',
     name: 'Security Group Module',
-    x: 400,
+    label: 'Network Security Controls',
+    x: 450,
     y: 150,
-    width: 150,
-    height: 60,
+    width: 240,
+    height: 0, // Will be calculated dynamically
     data: {
-      version: '2.1.0',
+      label: 'Network Security Controls',
+      flavor: 'Standard Rules',
+      version: '~>2.1.0',
       inputs: [
-        { name: 'vpc_id', description: 'VPC identifier' }
+        { name: 'vpc_id', display_name: 'VPC ID', description: 'VPC identifier for security group' }
       ],
       outputs: [
-        { name: 'security_group_id', description: 'Security group ID' }
+        { name: 'security_group_id', display_name: 'Security Group ID', description: 'Security group identifier' }
       ]
     }
   }
@@ -161,10 +245,11 @@ const initialEdges: CanvasEdge[] = [
 export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Initialize nodes with calculated ports
+  // Initialize nodes with calculated ports and dynamic heights
   const [nodes, setNodes] = React.useState<CanvasNode[]>(() => {
     return initialNodes.map(node => ({
       ...node,
+      height: calculateDynamicHeight(node, initialEdges, false), // Start collapsed
       ports: []
     }));
   });
@@ -174,7 +259,10 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     selectedNode: null,
     draggedNode: null,
     dragOffset: { x: 0, y: 0 },
-    mousePos: { x: 0, y: 0 }
+    dragStartPosition: null,
+    mousePos: { x: 0, y: 0 },
+    hoveredPort: null,
+    showTooltip: false
   });
 
   // Add connection state
@@ -196,6 +284,29 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
 
   // Add interaction mode state
   const [interactionMode, setInteractionMode] = React.useState<InteractionMode>('select');
+
+  // Layout service and state
+  const [layoutService] = React.useState(() => new LayoutService());
+  const [layoutState, setLayoutState] = React.useState<LayoutState>(() => layoutService.getLayoutState());
+  const [selectedAlgorithm, setSelectedAlgorithm] = React.useState<string>('hierarchical');
+  const [isAnimatingLayout, setIsAnimatingLayout] = React.useState(false);
+
+  // Collision detection service and state
+  const [collisionService] = React.useState(() => new CollisionDetectionService());
+  const [collisionState, setCollisionState] = React.useState<CollisionState>({
+    isDragging: false,
+    hasCollision: false,
+    conflictingNodes: []
+  });
+  const [collisionOptions, setCollisionOptions] = React.useState<CollisionOptions>({
+    enabled: true,
+    margin: 20,
+    enableBoundaryCheck: true,
+    enableSmartPositioning: true,
+    enableVisualFeedback: true,
+    snapToGrid: false,
+    gridSize: 20
+  });
 
   // Handle keyboard shortcuts for mode switching and editor actions
   React.useEffect(() => {
@@ -305,6 +416,84 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.selectedNode, nodes]);
 
+  // Calculate all ports for tooltip detection (ignores expansion state)
+  const calculateAllNodePorts = useCallback((node: CanvasNode, edges: CanvasEdge[]): NodePort[] => {
+    const ports: NodePort[] = [];
+    const inputs = node.data?.inputs || [];
+    const outputs = node.data?.outputs || [];
+
+    // Find connected port indices
+    const connectedInputs = new Set<number>();
+    const connectedOutputs = new Set<number>();
+
+    edges.forEach(edge => {
+      // Check for connections using sourceHandle/targetHandle if available
+      if (edge.source === node.id && edge.sourceHandle) {
+        const match = edge.sourceHandle.match(/-output-(\d+)$/);
+        if (match) {
+          connectedOutputs.add(parseInt(match[1], 10));
+        }
+      } else if (edge.source === node.id) {
+        // For simple edges without handles, mark first output as connected
+        if (outputs.length > 0) {
+          connectedOutputs.add(0);
+        }
+      }
+      
+      if (edge.target === node.id && edge.targetHandle) {
+        const match = edge.targetHandle.match(/-input-(\d+)$/);
+        if (match) {
+          connectedInputs.add(parseInt(match[1], 10));
+        }
+      } else if (edge.target === node.id) {
+        // For simple edges without handles, mark first input as connected
+        if (inputs.length > 0) {
+          connectedInputs.add(0);
+        }
+      }
+    });
+
+    // Always show all ports for tooltip detection
+    const allInputs = inputs.map((input, index) => ({ 
+      input, 
+      index, 
+      isConnected: connectedInputs.has(index) 
+    }));
+    const allOutputs = outputs.map((output, index) => ({ 
+      output, 
+      index, 
+      isConnected: connectedOutputs.has(index) 
+    }));
+
+    // Create input ports (left side, positioned inside node boundary)
+    allInputs.forEach(({ input, index, isConnected }, displayIndex) => {
+      ports.push({
+        id: `${node.id}-input-${index}`,
+        name: input.name,
+        type: 'input',
+        x: node.x + 6, // Moved inside the node
+        y: node.y + HEADER_HEIGHT + 10 + (displayIndex * 15),
+        description: input.description,
+        isConnected // Add connection status to port data
+      });
+    });
+
+    // Create output ports (right side, positioned inside node boundary)
+    allOutputs.forEach(({ output, index, isConnected }, displayIndex) => {
+      ports.push({
+        id: `${node.id}-output-${index}`,
+        name: output.name,
+        type: 'output',
+        x: node.x + node.width - 6, // Moved inside the node
+        y: node.y + HEADER_HEIGHT + 10 + (displayIndex * 15),
+        description: output.description,
+        isConnected // Add connection status to port data
+      });
+    });
+
+    return ports;
+  }, []);
+
   // Calculate ports based on expansion state and connection status
   const calculateNodePorts = useCallback((node: CanvasNode, edges: CanvasEdge[]): NodePort[] => {
     const ports: NodePort[] = [];
@@ -312,66 +501,86 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     const outputs = node.data?.outputs || [];
     const expanded = node.expanded ?? false;
 
-    // Find connected port indices
+    // Find connected port indices - improved logic to handle both simple and handle-based edges
     const connectedInputs = new Set<number>();
     const connectedOutputs = new Set<number>();
 
     edges.forEach(edge => {
+      // Check for connections using sourceHandle/targetHandle if available
       if (edge.source === node.id && edge.sourceHandle) {
-        // Extract port index from sourceHandle (format: nodeId-output-index)
         const match = edge.sourceHandle.match(/-output-(\d+)$/);
         if (match) {
           connectedOutputs.add(parseInt(match[1], 10));
         }
+      } else if (edge.source === node.id) {
+        // For simple edges without handles, mark first output as connected
+        if (outputs.length > 0) {
+          connectedOutputs.add(0);
+        }
       }
+      
       if (edge.target === node.id && edge.targetHandle) {
-        // Extract port index from targetHandle (format: nodeId-input-index)
         const match = edge.targetHandle.match(/-input-(\d+)$/);
         if (match) {
           connectedInputs.add(parseInt(match[1], 10));
+        }
+      } else if (edge.target === node.id) {
+        // For simple edges without handles, mark first input as connected
+        if (inputs.length > 0) {
+          connectedInputs.add(0);
         }
       }
     });
 
     // Determine which ports to show
-    let visibleInputs: Array<{ input: any; index: number }> = [];
-    let visibleOutputs: Array<{ output: any; index: number }> = [];
+    let visibleInputs: Array<{ input: any; index: number; isConnected: boolean }> = [];
+    let visibleOutputs: Array<{ output: any; index: number; isConnected: boolean }> = [];
 
     if (expanded) {
       // Show all ports when expanded
-      visibleInputs = inputs.map((input, index) => ({ input, index }));
-      visibleOutputs = outputs.map((output, index) => ({ output, index }));
+      visibleInputs = inputs.map((input, index) => ({ 
+        input, 
+        index, 
+        isConnected: connectedInputs.has(index) 
+      }));
+      visibleOutputs = outputs.map((output, index) => ({ 
+        output, 
+        index, 
+        isConnected: connectedOutputs.has(index) 
+      }));
     } else {
       // Show only connected ports when collapsed
       visibleInputs = inputs
-        .map((input, index) => ({ input, index }))
-        .filter(({ index }) => connectedInputs.has(index));
+        .map((input, index) => ({ input, index, isConnected: connectedInputs.has(index) }))
+        .filter(({ isConnected }) => isConnected);
       visibleOutputs = outputs
-        .map((output, index) => ({ output, index }))
-        .filter(({ index }) => connectedOutputs.has(index));
+        .map((output, index) => ({ output, index, isConnected: connectedOutputs.has(index) }))
+        .filter(({ isConnected }) => isConnected);
     }
 
-    // Create input ports (left side)
-    visibleInputs.forEach(({ input, index }, displayIndex) => {
+    // Create input ports (left side, positioned inside node boundary)
+    visibleInputs.forEach(({ input, index, isConnected }, displayIndex) => {
       ports.push({
         id: `${node.id}-input-${index}`,
         name: input.name,
         type: 'input',
-        x: node.x - 6,
-        y: node.y + 25 + (displayIndex * 15),
-        description: input.description
+        x: node.x + 6, // Moved inside the node
+        y: node.y + HEADER_HEIGHT + 10 + (displayIndex * 15),
+        description: input.description,
+        isConnected // Add connection status to port data
       });
     });
 
-    // Create output ports (right side)
-    visibleOutputs.forEach(({ output, index }, displayIndex) => {
+    // Create output ports (right side, positioned inside node boundary)
+    visibleOutputs.forEach(({ output, index, isConnected }, displayIndex) => {
       ports.push({
         id: `${node.id}-output-${index}`,
         name: output.name,
         type: 'output',
-        x: node.x + node.width + 6,
-        y: node.y + 25 + (displayIndex * 15),
-        description: output.description
+        x: node.x + node.width - 6, // Moved inside the node
+        y: node.y + HEADER_HEIGHT + 10 + (displayIndex * 15),
+        description: output.description,
+        isConnected // Add connection status to port data
       });
     });
 
@@ -385,11 +594,13 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         id: node.id,
         type: node.type,
         name: node.name,
+        label: node.label,
         x: node.position.x,
         y: node.position.y,
-        width: node.type === 'root' ? 200 : 150,
-        height: node.type === 'root' ? 80 : 60,
-        data: node.data
+        width: 240, // Same width for all nodes
+        height: calculateDynamicHeight({ id: node.id, type: node.type, name: node.name, x: 0, y: 0, width: 0, height: 0, data: node.data }, edges, node.expanded ?? false),
+        data: node.data,
+        expanded: node.expanded
       };
       canvasNode.ports = calculateNodePorts(canvasNode, edges);
       return canvasNode;
@@ -462,13 +673,46 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       if (!node.ports) continue;
       for (const port of node.ports) {
         const distance = Math.sqrt(Math.pow(x - port.x, 2) + Math.pow(y - port.y, 2));
-        if (distance <= 6) { // Port radius + tolerance
+        if (distance <= 8) { // Increased radius for better detection
           return port;
         }
       }
     }
     return null;
   }, [nodes]);
+
+  // Find port at position from specific nodes array (for up-to-date port positions)
+  const getPortAtPositionFromNodes = useCallback((x: number, y: number, nodeList: CanvasNode[]): NodePort | null => {
+    for (const node of nodeList) {
+      // Use all ports for tooltip detection (not just visible ports)
+      // Pass the current node state to ensure accurate positions
+      const allPorts = calculateAllNodePorts(node, edges);
+      for (const port of allPorts) {
+        // Check port circle area
+        const circleDistance = Math.sqrt(Math.pow(x - port.x, 2) + Math.pow(y - port.y, 2));
+        if (circleDistance <= 8) {
+          return port;
+        }
+        
+        // Check port text label area
+        const labelX = port.type === 'input' ? port.x + 8 : port.x - 8;
+        const labelY = port.y + 3;
+        
+        // Create a rectangular area around the text label (estimated 60px width, 16px height)
+        const textWidth = 60;
+        const textHeight = 16;
+        const textLeft = port.type === 'input' ? labelX : labelX - textWidth;
+        const textTop = labelY - textHeight / 2;
+        const textRight = textLeft + textWidth;
+        const textBottom = textTop + textHeight;
+        
+        if (x >= textLeft && x <= textRight && y >= textTop && y <= textBottom) {
+          return port;
+        }
+      }
+    }
+    return null;
+  }, [calculateAllNodePorts, edges]);
 
   // Validate connection between two ports
   const isValidConnection = useCallback((sourcePort: NodePort, targetPort: NodePort): boolean => {
@@ -572,6 +816,206 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     }));
   }, [nodes]);
 
+  // Layout functions
+  const convertToLayoutFormat = useCallback((canvasNodes: CanvasNode[], canvasEdges: CanvasEdge[]): { nodes: CanvasLayoutNode[], edges: CanvasLayoutEdge[] } => {
+    const layoutNodes: CanvasLayoutNode[] = canvasNodes.map(node => ({
+      id: node.id,
+      type: node.type,
+      name: node.name,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      expanded: node.expanded,
+      data: node.data,
+      ports: node.ports
+    }));
+
+    const layoutEdges: CanvasLayoutEdge[] = canvasEdges.map(edge => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle
+    }));
+
+    return { nodes: layoutNodes, edges: layoutEdges };
+  }, []);
+
+  const applyLayoutToNodes = useCallback((layoutNodes: CanvasLayoutNode[], animate: boolean = true) => {
+    if (!animate) {
+      // Apply immediately without animation
+      setNodes(prevNodes => 
+        prevNodes.map(node => {
+          const layoutNode = layoutNodes.find(ln => ln.id === node.id);
+          if (layoutNode) {
+            return {
+              ...node,
+              x: layoutNode.x,
+              y: layoutNode.y,
+              ports: calculateNodePorts({
+                ...node,
+                x: layoutNode.x,
+                y: layoutNode.y
+              }, edges)
+            };
+          }
+          return node;
+        })
+      );
+      return;
+    }
+
+    setIsAnimatingLayout(true);
+    
+    // Store start positions for animation
+    const startPositions = new Map<string, { x: number; y: number }>();
+    nodes.forEach(node => {
+      startPositions.set(node.id, { x: node.x, y: node.y });
+    });
+
+    // Animation duration in milliseconds
+    const animationDuration = 300;
+    const frameRate = 60;
+    const totalFrames = Math.ceil((animationDuration / 1000) * frameRate);
+    let currentFrame = 0;
+
+    const animateFrame = () => {
+      currentFrame++;
+      const progress = Math.min(currentFrame / totalFrames, 1);
+      
+      // Easing function for smooth animation
+      const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease-out cubic
+
+      setNodes(prevNodes => 
+        prevNodes.map(node => {
+          const layoutNode = layoutNodes.find(ln => ln.id === node.id);
+          const startPos = startPositions.get(node.id);
+          
+          if (layoutNode && startPos) {
+            // Interpolate between start and end positions
+            const x = startPos.x + (layoutNode.x - startPos.x) * easeProgress;
+            const y = startPos.y + (layoutNode.y - startPos.y) * easeProgress;
+            
+            return {
+              ...node,
+              x,
+              y,
+              ports: calculateNodePorts({
+                ...node,
+                x,
+                y
+              }, edges)
+            };
+          }
+          return node;
+        })
+      );
+
+      if (progress < 1) {
+        requestAnimationFrame(animateFrame);
+      } else {
+        setIsAnimatingLayout(false);
+      }
+    };
+
+    requestAnimationFrame(animateFrame);
+  }, [calculateNodePorts, edges, nodes]);
+
+  const applyAutoLayout = useCallback(async (algorithm?: string) => {
+    if (nodes.length === 0) return;
+
+    const algorithmToUse = algorithm || selectedAlgorithm;
+    layoutService.setAlgorithm(algorithmToUse);
+
+    const { nodes: layoutNodes, edges: layoutEdges } = convertToLayoutFormat(nodes, edges);
+    
+    try {
+      const result = await layoutService.applyLayout(layoutNodes, layoutEdges, {
+        algorithm: algorithmToUse,
+        animate: true,
+        animationDuration: 300
+      });
+
+      if (result.success && result.graph) {
+        applyLayoutToNodes(result.graph.nodes.map(ln => ({
+          id: ln.id,
+          type: nodes.find(n => n.id === ln.id)?.type || 'dependency',
+          name: nodes.find(n => n.id === ln.id)?.name || '',
+          x: ln.position.x,
+          y: ln.position.y,
+          width: ln.size.width,
+          height: ln.size.height,
+          expanded: nodes.find(n => n.id === ln.id)?.expanded,
+          data: nodes.find(n => n.id === ln.id)?.data,
+          ports: nodes.find(n => n.id === ln.id)?.ports
+        })));
+
+        setLayoutState(layoutService.getLayoutState());
+        console.log(`Layout applied successfully using ${algorithmToUse} algorithm in ${result.duration?.toFixed(2)}ms`);
+      } else {
+        console.error('Layout failed:', result.error);
+      }
+    } catch (error) {
+      console.error('Layout error:', error);
+    }
+  }, [nodes, edges, selectedAlgorithm, layoutService, convertToLayoutFormat, applyLayoutToNodes]);
+
+  const resetLayout = useCallback(() => {
+    const { nodes: layoutNodes } = convertToLayoutFormat(nodes, edges);
+    const resetResult = layoutService.resetToOriginalPositions(layoutNodes);
+    
+    if (resetResult.nodes.length > 0) {
+      applyLayoutToNodes(resetResult.nodes.map(ln => ({
+        id: ln.id,
+        type: nodes.find(n => n.id === ln.id)?.type || 'dependency',
+        name: nodes.find(n => n.id === ln.id)?.name || '',
+        x: ln.position.x,
+        y: ln.position.y,
+        width: ln.size.width,
+        height: ln.size.height,
+        expanded: nodes.find(n => n.id === ln.id)?.expanded,
+        data: nodes.find(n => n.id === ln.id)?.data,
+        ports: nodes.find(n => n.id === ln.id)?.ports
+      })));
+    }
+
+    setLayoutState(layoutService.getLayoutState());
+    console.log('Layout reset to original positions');
+  }, [nodes, edges, layoutService, convertToLayoutFormat, applyLayoutToNodes]);
+
+  const handleNodeExpansion = useCallback(async (nodeId: string, isExpanding: boolean) => {
+    if (layoutState.isAutoLayout) {
+      const { nodes: layoutNodes, edges: layoutEdges } = convertToLayoutFormat(nodes, edges);
+      
+      try {
+        const result = await layoutService.applyIncrementalLayout(
+          layoutNodes, 
+          layoutEdges, 
+          nodeId, 
+          isExpanding
+        );
+
+        if (result.success && result.graph) {
+          applyLayoutToNodes(result.graph.nodes.map(ln => ({
+            id: ln.id,
+            type: nodes.find(n => n.id === ln.id)?.type || 'dependency',
+            name: nodes.find(n => n.id === ln.id)?.name || '',
+            x: ln.position.x,
+            y: ln.position.y,
+            width: ln.size.width,
+            height: ln.size.height,
+            expanded: nodes.find(n => n.id === ln.id)?.expanded,
+            data: nodes.find(n => n.id === ln.id)?.data,
+            ports: nodes.find(n => n.id === ln.id)?.ports
+          })));
+        }
+      } catch (error) {
+        console.error('Incremental layout error:', error);
+      }
+    }
+  }, [layoutState.isAutoLayout, nodes, edges, layoutService, convertToLayoutFormat, applyLayoutToNodes]);
+
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     // Lock mode - disable all interactions
     if (interactionMode === 'lock') {
@@ -624,7 +1068,59 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       if (hasExpandableContent) {
         const buttonSize = 20;
         const buttonX = node.x + node.width / 2 - buttonSize / 2;
-        const buttonY = node.y + node.height - buttonSize - 4;
+        
+        // Position button below the port area, not within it
+        // Use the same visible port calculation logic as calculateDynamicHeight
+        const inputs = node.data?.inputs || [];
+        const outputs = node.data?.outputs || [];
+        const expanded = node.expanded ?? false;
+        
+        // Find connected port indices (same logic as calculateDynamicHeight)
+        const connectedInputs = new Set<number>();
+        const connectedOutputs = new Set<number>();
+        
+        edges.forEach(edge => {
+          if (edge.source === node.id) {
+            if (edge.sourceHandle) {
+              const handleIndex = parseInt(edge.sourceHandle.replace('output-', ''));
+              if (!isNaN(handleIndex)) {
+                connectedOutputs.add(handleIndex);
+              }
+            } else {
+              // Simple edge without specific handle - assume first output
+              if (outputs.length > 0) {
+                connectedOutputs.add(0);
+              }
+            }
+          }
+          if (edge.target === node.id) {
+            if (edge.targetHandle) {
+              const handleIndex = parseInt(edge.targetHandle.replace('input-', ''));
+              if (!isNaN(handleIndex)) {
+                connectedInputs.add(handleIndex);
+              }
+            } else {
+              // Simple edge without specific handle - assume first input
+              if (inputs.length > 0) {
+                connectedInputs.add(0);
+              }
+            }
+          }
+        });
+
+        let visiblePortCount = 0;
+        if (expanded) {
+          // Show all ports when expanded
+          visiblePortCount = Math.max(inputs.length, outputs.length);
+        } else {
+          // Show only connected ports when collapsed
+          const visibleInputs = inputs.filter((_, index) => connectedInputs.has(index));
+          const visibleOutputs = outputs.filter((_, index) => connectedOutputs.has(index));
+          visiblePortCount = Math.max(visibleInputs.length, visibleOutputs.length);
+        }
+        
+        const portAreaHeight = Math.max(BASE_CONTENT_HEIGHT, visiblePortCount * PORT_SPACING + 20);
+        const buttonY = node.y + HEADER_HEIGHT + portAreaHeight + 8; // 8px gap below ports
         
         const distance = Math.sqrt(
           Math.pow(coords.x - (buttonX + buttonSize / 2), 2) + 
@@ -632,14 +1128,28 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         );
         
         if (distance <= buttonSize / 2) {
-          // Toggle expand/collapse
+          // Toggle expand/collapse with dynamic height calculation
+          const newExpanded = !(node.expanded ?? false);
+          
           setNodes(prevNodes => 
-            prevNodes.map(n => 
-              n.id === node.id 
-                ? { ...n, expanded: !(n.expanded ?? false) }
-                : n
-            )
+            prevNodes.map(n => {
+              if (n.id === node.id) {
+                const updatedNode = { 
+                  ...n, 
+                  expanded: newExpanded,
+                  height: calculateDynamicHeight(n, edges, newExpanded)
+                };
+                // Recalculate ports with new expansion state
+                updatedNode.ports = calculateNodePorts(updatedNode, edges);
+                return updatedNode;
+              }
+              return n;
+            })
           );
+
+          // Apply incremental layout if in auto-layout mode
+          handleNodeExpansion(node.id, newExpanded);
+          
           return;
         }
       }
@@ -668,6 +1178,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     const clickedNode = getNodeAtPosition(coords.x, coords.y);
     
     if (clickedNode) {
+      console.log('Starting drag for node:', clickedNode.id, 'in mode:', interactionMode);
       setState(prev => ({
         ...prev,
         selectedNode: clickedNode.id,
@@ -676,6 +1187,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
           x: coords.x - clickedNode.x,
           y: coords.y - clickedNode.y
         },
+        dragStartPosition: { x: clickedNode.x, y: clickedNode.y },
         mousePos: coords
       }));
 
@@ -693,7 +1205,8 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       setState(prev => ({
         ...prev,
         selectedNode: null,
-        draggedNode: null
+        draggedNode: null,
+        dragStartPosition: null
       }));
     }
   }, [interactionMode, getCanvasCoordinates, getPortAtPosition, getNodeAtPosition, onNodeSelect, nodes]);
@@ -714,15 +1227,40 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
 
     const coords = getCanvasCoordinates(event);
     
-    setState(prev => ({ ...prev, mousePos: coords }));
+    // Check for port hover for tooltip (uses calculateAllNodePorts internally)
+    // Ensure we use the most current node state with updated port positions
+    const updatedNodes = nodes.map(node => ({
+      ...node,
+      ports: calculateNodePorts(node, edges) // Ensure ports are current
+    }));
+    const hoveredPort = getPortAtPositionFromNodes(coords.x, coords.y, updatedNodes);
+    
+    // Debug logging for drag investigation
+    if (state.draggedNode) {
+      console.log('Drag in progress:', {
+        draggedNodeId: state.draggedNode,
+        interactionMode,
+        coords,
+        dragOffset: state.dragOffset
+      });
+    }
+    
+    setState(prev => ({ 
+      ...prev, 
+      mousePos: coords,
+      hoveredPort,
+      showTooltip: !!hoveredPort
+    }));
 
     // Lock mode - disable all interactions
     if (interactionMode === 'lock') {
+      console.log('Mouse move blocked: lock mode');
       return;
     }
 
     // Move mode - no node dragging or connection creation, only panning
     if (interactionMode === 'move') {
+      console.log('Mouse move blocked: move mode');
       return;
     }
 
@@ -739,24 +1277,88 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         }
       }));
     } else if (state.draggedNode) {
+      const rawX = coords.x - state.dragOffset.x;
+      const rawY = coords.y - state.dragOffset.y;
+      
+      let finalX = rawX;
+      let finalY = rawY;
+      let hasCollision = false;
+      let conflictingNodes: string[] = [];
+
+      // Apply grid snapping if enabled (before collision check)
+      if (collisionOptions.snapToGrid && collisionOptions.gridSize) {
+        const snapped = PositionUtils.snapToGrid(
+          { x: finalX, y: finalY }, 
+          collisionOptions.gridSize
+        );
+        finalX = snapped.x;
+        finalY = snapped.y;
+      }
+
+      // Check for collision for visual feedback only - don't prevent movement
+      if (collisionOptions.enabled) {
+        const draggedNode = nodes.find(n => n.id === state.draggedNode);
+        if (draggedNode) {
+          // Prepare nodes for collision detection (excluding the dragged node)
+          const otherNodes = nodes
+            .filter(n => n.id !== state.draggedNode)
+            .map(n => ({ id: n.id, x: n.x, y: n.y, width: n.width, height: n.height }));
+
+          // Check collision at the preferred position
+          const validation = collisionService.validatePosition(
+            state.draggedNode,
+            { x: finalX, y: finalY },
+            { width: draggedNode.width, height: draggedNode.height },
+            otherNodes,
+            {
+              margin: collisionOptions.margin,
+              enableBoundaryCheck: collisionOptions.enableBoundaryCheck,
+              canvasBounds: { x: 0, y: 0, width: 4000, height: 3000 }
+            }
+          );
+
+          hasCollision = !validation.isValid;
+          conflictingNodes = validation.conflicts;
+        }
+      }
+
+      // Update collision state for visual feedback
+      setCollisionState({
+        isDragging: true,
+        hasCollision,
+        conflictingNodes
+      });
+
+      // Check if this is manual movement that should disable auto-layout
+      if (layoutState.isAutoLayout) {
+        const isManualMove = layoutService.isPositionManuallyModified(state.draggedNode, { x: finalX, y: finalY });
+        if (isManualMove) {
+          // Disable auto-layout when user manually moves nodes
+          layoutService.toggleAutoLayout();
+          setLayoutState(layoutService.getLayoutState());
+          console.log('Manual node movement detected - auto-layout disabled');
+        }
+      }
+      
+      // Always allow movement during drag, regardless of collision
       setNodes(prevNodes => 
         prevNodes.map(node => 
           node.id === state.draggedNode
             ? {
                 ...node,
-                x: coords.x - state.dragOffset.x,
-                y: coords.y - state.dragOffset.y,
+                x: finalX,
+                y: finalY,
                 ports: calculateNodePorts({
                   ...node,
-                  x: coords.x - state.dragOffset.x,
-                  y: coords.y - state.dragOffset.y
+                  x: finalX,
+                  y: finalY
                 }, edges)
               }
             : node
         )
       );
     }
-  }, [viewport.isPanning, getCanvasCoordinates, connectionState, state.draggedNode, state.dragOffset, calculateNodePorts, interactionMode]);
+  }, [viewport.isPanning, getCanvasCoordinates, connectionState, state.draggedNode, state.dragOffset, calculateNodePorts, interactionMode, getPortAtPosition, layoutState.isAutoLayout, layoutService, collisionOptions, collisionService, nodes]);
 
   const handleMouseUp = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     setViewport(prev => ({ ...prev, isPanning: false }));
@@ -802,9 +1404,89 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       });
     }
 
+    // Handle drag completion with collision validation
+    if (state.draggedNode && state.dragStartPosition) {
+      const draggedNode = nodes.find(n => n.id === state.draggedNode);
+      
+      if (draggedNode && collisionOptions.enabled) {
+        // Final collision check at drop position
+        const otherNodes = nodes
+          .filter(n => n.id !== state.draggedNode)
+          .map(n => ({ id: n.id, x: n.x, y: n.y, width: n.width, height: n.height }));
+
+        const validation = collisionService.validatePosition(
+          state.draggedNode,
+          { x: draggedNode.x, y: draggedNode.y },
+          { width: draggedNode.width, height: draggedNode.height },
+          otherNodes,
+          {
+            margin: collisionOptions.margin,
+            enableBoundaryCheck: collisionOptions.enableBoundaryCheck,
+            canvasBounds: { x: 0, y: 0, width: 4000, height: 3000 }
+          }
+        );
+
+        // If invalid position, revert to original position with animation
+        if (!validation.isValid) {
+          console.log('Invalid drop position detected, reverting to original position');
+          
+          // Animate back to original position
+          const startPos = { x: draggedNode.x, y: draggedNode.y };
+          const endPos = state.dragStartPosition;
+          const animationDuration = 200; // 200ms animation
+          const startTime = performance.now();
+
+          const animateRevert = () => {
+            const elapsed = performance.now() - startTime;
+            const progress = Math.min(elapsed / animationDuration, 1);
+            
+            // Ease-out animation
+            const easeProgress = 1 - Math.pow(1 - progress, 2);
+            
+            const currentX = startPos.x + (endPos.x - startPos.x) * easeProgress;
+            const currentY = startPos.y + (endPos.y - startPos.y) * easeProgress;
+
+            setNodes(prevNodes => 
+              prevNodes.map(node => 
+                node.id === state.draggedNode
+                  ? {
+                      ...node,
+                      x: currentX,
+                      y: currentY,
+                      ports: calculateNodePorts({
+                        ...node,
+                        x: currentX,
+                        y: currentY
+                      }, edges)
+                    }
+                  : node
+              )
+            );
+
+            if (progress < 1) {
+              requestAnimationFrame(animateRevert);
+            }
+          };
+
+          requestAnimationFrame(animateRevert);
+        }
+      }
+    }
+
     // Reset drag state
-    setState(prev => ({ ...prev, draggedNode: null }));
-  }, [connectionState, getCanvasCoordinates, getPortAtPosition, isValidConnection, interactionMode]);
+    setState(prev => ({ 
+      ...prev, 
+      draggedNode: null,
+      dragStartPosition: null 
+    }));
+    
+    // Reset collision state
+    setCollisionState({
+      isDragging: false,
+      hasCollision: false,
+      conflictingNodes: []
+    });
+  }, [connectionState, getCanvasCoordinates, getPortAtPosition, isValidConnection, interactionMode, state.draggedNode, state.dragStartPosition, nodes, collisionOptions, collisionService, calculateNodePorts, edges]);
 
   const drawNode = useCallback((ctx: CanvasRenderingContext2D, node: CanvasNode) => {
     const isSelected = state.selectedNode === node.id;
@@ -812,6 +1494,10 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     const totalInputs = node.data?.inputs?.length || 0;
     const totalOutputs = node.data?.outputs?.length || 0;
     const hasExpandableContent = totalInputs > 3 || totalOutputs > 3;
+
+    // Check if this node is in collision
+    const isConflicting = collisionState.conflictingNodes.includes(node.id);
+    const isDraggedNode = state.draggedNode === node.id;
 
     // Selection highlight is now handled in the main node styling
 
@@ -828,8 +1514,8 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       gradient.addColorStop(0.5, '#6366f1');
       gradient.addColorStop(1, '#7c3aed');
       ctx.fillStyle = gradient;
-      ctx.strokeStyle = isSelected ? '#fbbf24' : '#6366f1';
-      ctx.lineWidth = isSelected ? 3 : 2;
+      ctx.strokeStyle = isConflicting ? '#ef4444' : (isSelected ? '#fbbf24' : '#6366f1');
+      ctx.lineWidth = isConflicting ? 4 : (isSelected ? 3 : 2);
     } else {
       // Drop shadow for dependency nodes
       ctx.shadowColor = 'rgba(5, 150, 105, 0.2)';
@@ -842,11 +1528,11 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       gradient.addColorStop(0.5, '#10b981');
       gradient.addColorStop(1, '#34d399');
       ctx.fillStyle = gradient;
-      ctx.strokeStyle = isSelected ? '#fbbf24' : '#34d399';
-      ctx.lineWidth = isSelected ? 2 : 1;
+      ctx.strokeStyle = isConflicting ? '#ef4444' : (isSelected ? '#fbbf24' : '#34d399');
+      ctx.lineWidth = isConflicting ? 4 : (isSelected ? 2 : 1);
     }
 
-    // Draw rounded rectangle
+    // Draw main node body rounded rectangle
     const radius = node.type === 'root' ? 8 : 6;
     ctx.beginPath();
     ctx.roundRect(node.x, node.y, node.width, node.height, radius);
@@ -859,11 +1545,99 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
 
+    // Draw header section
+    ctx.save();
+    // Create header background with slightly different gradient
+    if (node.type === 'root') {
+      const headerGradient = ctx.createLinearGradient(node.x, node.y, node.x, node.y + HEADER_HEIGHT);
+      headerGradient.addColorStop(0, '#5b21b6');
+      headerGradient.addColorStop(1, '#4f46e5');
+      ctx.fillStyle = headerGradient;
+    } else {
+      const headerGradient = ctx.createLinearGradient(node.x, node.y, node.x, node.y + HEADER_HEIGHT);
+      headerGradient.addColorStop(0, '#047857');
+      headerGradient.addColorStop(1, '#059669');
+      ctx.fillStyle = headerGradient;
+    }
+    
+    // Draw header background with rounded top corners only
+    ctx.beginPath();
+    ctx.moveTo(node.x + radius, node.y);
+    ctx.lineTo(node.x + node.width - radius, node.y);
+    ctx.arcTo(node.x + node.width, node.y, node.x + node.width, node.y + radius, radius);
+    ctx.lineTo(node.x + node.width, node.y + HEADER_HEIGHT);
+    ctx.lineTo(node.x, node.y + HEADER_HEIGHT);
+    ctx.lineTo(node.x, node.y + radius);
+    ctx.arcTo(node.x, node.y, node.x + radius, node.y, radius);
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw separator line between header and content
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(node.x, node.y + HEADER_HEIGHT);
+    ctx.lineTo(node.x + node.width, node.y + HEADER_HEIGHT);
+    ctx.stroke();
+    
+    ctx.restore();
+
     // Expand/collapse button (only if node has expandable content)
     if (hasExpandableContent) {
       const buttonSize = 20;
       const buttonX = node.x + node.width / 2 - buttonSize / 2;
-      const buttonY = node.y + node.height - buttonSize - 4;
+      
+      // Position button below the port area, not within it
+      // Use the same visible port calculation logic as calculateDynamicHeight
+      const inputs = node.data?.inputs || [];
+      const outputs = node.data?.outputs || [];
+      
+      // Find connected port indices (same logic as calculateDynamicHeight)
+      const connectedInputs = new Set<number>();
+      const connectedOutputs = new Set<number>();
+      
+      edges.forEach(edge => {
+        if (edge.source === node.id) {
+          if (edge.sourceHandle) {
+            const handleIndex = parseInt(edge.sourceHandle.replace('output-', ''));
+            if (!isNaN(handleIndex)) {
+              connectedOutputs.add(handleIndex);
+            }
+          } else {
+            // Simple edge without specific handle - assume first output
+            if (outputs.length > 0) {
+              connectedOutputs.add(0);
+            }
+          }
+        }
+        if (edge.target === node.id) {
+          if (edge.targetHandle) {
+            const handleIndex = parseInt(edge.targetHandle.replace('input-', ''));
+            if (!isNaN(handleIndex)) {
+              connectedInputs.add(handleIndex);
+            }
+          } else {
+            // Simple edge without specific handle - assume first input
+            if (inputs.length > 0) {
+              connectedInputs.add(0);
+            }
+          }
+        }
+      });
+
+      let visiblePortCount = 0;
+      if (expanded) {
+        // Show all ports when expanded
+        visiblePortCount = Math.max(inputs.length, outputs.length);
+      } else {
+        // Show only connected ports when collapsed
+        const visibleInputs = inputs.filter((_, index) => connectedInputs.has(index));
+        const visibleOutputs = outputs.filter((_, index) => connectedOutputs.has(index));
+        visiblePortCount = Math.max(visibleInputs.length, visibleOutputs.length);
+      }
+      
+      const portAreaHeight = Math.max(BASE_CONTENT_HEIGHT, visiblePortCount * PORT_SPACING + 20);
+      const buttonY = node.y + HEADER_HEIGHT + portAreaHeight + 8; // 8px gap below ports
 
       // Button background - subtle circular background
       ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
@@ -901,56 +1675,80 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       ctx.stroke();
     }
 
-    // Draw node text
+    // Draw header text (title, flavor, and version all in header)
     ctx.fillStyle = 'white';
-    ctx.font = node.type === 'root' ? 'bold 14px sans-serif' : 'bold 13px sans-serif';
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     
-    // Main label (truncate if too long)
-    const maxNameLength = hasExpandableContent ? 15 : 18; // Less space if expand button present
-    const displayName = node.name.length > maxNameLength ? 
-      node.name.substring(0, maxNameLength - 3) + '...' : 
-      node.name;
+    // Header Line 1: Offering/Dependency name (prefer label over name) - with text scaling
+    const displayName = node.data?.label || node.label || node.name;
+    const availableWidth = node.width - 16; // 8px padding on each side
+    
+    // Start with base font size and scale down if needed
+    let fontSize = node.type === 'root' ? 14 : 13;
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    let textWidth = ctx.measureText(displayName).width;
+    
+    // Scale down font if text is too wide (minimum font size of 8px)
+    while (textWidth > availableWidth && fontSize > 8) {
+      fontSize -= 0.5;
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      textWidth = ctx.measureText(displayName).width;
+    }
     
     ctx.fillText(
       displayName, 
-      node.x + node.width / 2, 
-      node.y + node.height / 2 - 12
+      node.x + 8, 
+      node.y + 16
     );
 
-    // Subtitle
-    ctx.font = '11px sans-serif';
-    ctx.globalAlpha = 0.9;
-    const subtitle = node.type === 'root' ? 'ROOT ARCHITECTURE' : 'EXTERNAL MODULE';
-    ctx.fillText(
-      subtitle,
-      node.x + node.width / 2,
-      node.y + node.height / 2 + 2
-    );
-    
-    // Version and port count info
-    ctx.font = '9px sans-serif';
-    ctx.globalAlpha = 0.7;
-    const infoItems = [];
-    
-    if (node.data?.version) {
-      infoItems.push(`v${node.data.version}`);
-    }
-    
-    if (totalInputs > 0 || totalOutputs > 0) {
-      infoItems.push(`${totalInputs}→${totalOutputs}`);
-    }
-    
-    if (infoItems.length > 0) {
+    // Header Line 2: Flavor label (if available) - with text scaling
+    if (node.data?.flavor) {
+      ctx.globalAlpha = 0.9;
+      
+      // Start with base font size for flavor and scale down if needed
+      let flavorFontSize = 12;
+      ctx.font = `${flavorFontSize}px sans-serif`;
+      let flavorTextWidth = ctx.measureText(node.data.flavor).width;
+      
+      // Scale down font if text is too wide (minimum font size of 8px)
+      while (flavorTextWidth > availableWidth && flavorFontSize > 8) {
+        flavorFontSize -= 0.5;
+        ctx.font = `${flavorFontSize}px sans-serif`;
+        flavorTextWidth = ctx.measureText(node.data.flavor).width;
+      }
+      
       ctx.fillText(
-        infoItems.join(' • '),
-        node.x + node.width / 2,
-        node.y + node.height / 2 + 14
+        node.data.flavor,
+        node.x + 8,
+        node.y + 32
       );
+      ctx.globalAlpha = 1;
     }
     
-    ctx.globalAlpha = 1;
+    // Header Line 3: Version (if available) - with text scaling
+    if (node.data?.version) {
+      ctx.globalAlpha = 0.8;
+      
+      // Start with base font size for version and scale down if needed
+      let versionFontSize = 11;
+      ctx.font = `${versionFontSize}px sans-serif`;
+      let versionTextWidth = ctx.measureText(node.data.version).width;
+      
+      // Scale down font if text is too wide (minimum font size of 7px)
+      while (versionTextWidth > availableWidth && versionFontSize > 7) {
+        versionFontSize -= 0.5;
+        ctx.font = `${versionFontSize}px sans-serif`;
+        versionTextWidth = ctx.measureText(node.data.version).width;
+      }
+      
+      ctx.fillText(
+        node.data.version, // Use exact version, no forced "v" prefix
+        node.x + 8,
+        node.y + 48
+      );
+      ctx.globalAlpha = 1;
+    }
   }, [state.selectedNode]);
 
   const drawNodePorts = useCallback((ctx: CanvasRenderingContext2D, node: CanvasNode) => {
@@ -961,18 +1759,155 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       ctx.beginPath();
       ctx.arc(port.x, port.y, 4, 0, 2 * Math.PI);
       
-      if (port.type === 'input') {
-        ctx.fillStyle = '#10b981'; // Green for inputs
+      // Choose color based on connection status and port type
+      if (port.isConnected === false) {
+        ctx.fillStyle = '#6b7280'; // Grey for unconnected ports
+      } else if (port.type === 'input') {
+        ctx.fillStyle = '#10b981'; // Green for connected inputs
       } else {
-        ctx.fillStyle = '#f59e0b'; // Orange for outputs
+        ctx.fillStyle = '#f59e0b'; // Orange for connected outputs
       }
       
       ctx.fill();
       ctx.strokeStyle = 'white';
       ctx.lineWidth = 2;
       ctx.stroke();
+
+      // Draw port labels inside the node
+      ctx.fillStyle = 'white';
+      ctx.font = '12px sans-serif';
+      ctx.globalAlpha = 0.9;
+
+      // Find the corresponding input/output data to get display_name
+      const portData = port.type === 'input' 
+        ? node.data?.inputs?.find(input => input.name === port.name || input.display_name === port.name)
+        : node.data?.outputs?.find(output => output.name === port.name || output.display_name === port.name);
+
+      const fullLabelText = portData?.display_name || port.name;
+      
+      // Calculate available space: half node width minus padding for port circle and margins
+      const availableWidth = (node.width / 2) - 20; // 20px for port circle + margins
+      
+      // Measure actual text width and truncate based on available space
+      let labelText = fullLabelText;
+      let textWidth = ctx.measureText(labelText).width;
+      
+      if (textWidth > availableWidth) {
+        // Iteratively truncate until text fits
+        while (textWidth > availableWidth && labelText.length > 3) {
+          const truncatedLength = Math.max(3, labelText.length - 1);
+          labelText = fullLabelText.substring(0, truncatedLength - 2) + '..';
+          textWidth = ctx.measureText(labelText).width;
+        }
+      }
+      
+      if (port.type === 'input') {
+        // Input labels inside node, left side
+        ctx.textAlign = 'left';
+        ctx.fillText(labelText, port.x + 8, port.y + 3);
+      } else {
+        // Output labels inside node, right side
+        ctx.textAlign = 'right';
+        ctx.fillText(labelText, port.x - 8, port.y + 3);
+      }
+
+      ctx.globalAlpha = 1;
     });
   }, []);
+
+  // Draw tooltip for hovered port
+  const drawTooltip = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!state.showTooltip || !state.hoveredPort) return;
+
+    const port = state.hoveredPort;
+    
+    // Find the corresponding port data to get description and default value
+    const node = nodes.find(n => n.ports?.some(p => p.id === port.id));
+    if (!node) return;
+
+    const portData = port.type === 'input' 
+      ? node.data?.inputs?.find(input => input.name === port.name || input.display_name === port.name)
+      : node.data?.outputs?.find(output => output.name === port.name || output.display_name === port.name);
+
+    const fullPortName = portData?.display_name || port.name;
+    
+    // Build tooltip content
+    const lines = [];
+    
+    // Always show the full port name at the top
+    lines.push(`${fullPortName}`);
+    
+    // Add description if available
+    if (portData?.description) {
+      lines.push(`Description: ${portData.description}`);
+    }
+    
+    // Add default value if available
+    if (portData?.defaultValue !== undefined && portData.defaultValue !== null && portData.defaultValue !== '') {
+      lines.push(`Default: ${portData.defaultValue}`);
+    }
+
+    // Always show tooltip if we have at least the port name
+    if (lines.length === 0) {
+      lines.push(port.name); // Fallback to port name if no display name
+    }
+
+    // Calculate tooltip dimensions
+    ctx.font = '11px sans-serif';
+    const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width)) + 16;
+    const lineHeight = 16;
+    const tooltipHeight = lines.length * lineHeight + 12;
+
+    // Position tooltip near the mouse, but keep it on screen
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Convert world coordinates to screen coordinates for tooltip positioning
+    const screenX = state.mousePos.x * viewport.zoom + viewport.panX;
+    const screenY = state.mousePos.y * viewport.zoom + viewport.panY;
+    
+    let tooltipX = screenX + 10;
+    let tooltipY = screenY - tooltipHeight - 10;
+
+    // Keep tooltip on screen
+    if (tooltipX + maxWidth > canvas.clientWidth) {
+      tooltipX = canvas.clientWidth - maxWidth - 10;
+    }
+    if (tooltipY < 10) {
+      tooltipY = screenY + 20;
+    }
+
+    // Draw tooltip background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(tooltipX, tooltipY, maxWidth, tooltipHeight, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Draw tooltip text
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    lines.forEach((line, index) => {
+      if (index === 0) {
+        // First line is the port name - make it bold and slightly larger
+        ctx.fillStyle = '#93c5fd'; // Light blue for port name
+        ctx.font = 'bold 12px sans-serif';
+      } else {
+        // Other lines are description/default - normal styling
+        ctx.fillStyle = 'white';
+        ctx.font = '11px sans-serif';
+      }
+      
+      ctx.fillText(
+        line,
+        tooltipX + 8,
+        tooltipY + 12 + index * lineHeight
+      );
+    });
+  }, [state.showTooltip, state.hoveredPort, state.mousePos, nodes, viewport]);
 
   // Draw preview connection
   const drawPreviewConnection = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -1012,16 +1947,16 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     let endX = targetNode.x;
     let endY = targetNode.y + targetNode.height / 2;
 
-    // Use specific port positions if available
+    // Use specific port positions for Y coordinates, but connect to node edges for X
     const sourcePort = sourceNode.ports?.find(p => p.type === 'output');
     const targetPort = targetNode.ports?.find(p => p.type === 'input');
 
     if (sourcePort) {
-      startX = sourcePort.x;
+      startX = sourceNode.x + sourceNode.width; // Keep at node edge
       startY = sourcePort.y;
     }
     if (targetPort) {
-      endX = targetPort.x;
+      endX = targetNode.x; // Keep at node edge
       endY = targetPort.y;
     }
 
@@ -1109,7 +2044,10 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     });
 
     ctx.restore();
-  }, [nodes, edges, drawNode, drawNodePorts, drawEdgeWithPorts, drawPreviewConnection, viewport]);
+
+    // Draw tooltip (outside of viewport transform so it stays fixed on screen)
+    drawTooltip(ctx);
+  }, [nodes, edges, drawNode, drawNodePorts, drawEdgeWithPorts, drawPreviewConnection, drawTooltip, viewport]);
 
   useEffect(() => {
     render();
@@ -1173,6 +2111,16 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
           {interactionMode === 'select' ? '🎯' : interactionMode === 'move' ? '✋' : '🔒'}
         </span>
         <span style={{ textTransform: 'capitalize' }}>{interactionMode}</span>
+        {interactionMode !== 'select' && (
+          <span style={{ 
+            fontSize: '9px', 
+            color: '#ef4444', 
+            marginLeft: '4px',
+            fontWeight: 'bold'
+          }}>
+            (Press S to drag nodes)
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1297,6 +2245,201 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       >
         Fit
       </button>
+
+      {/* Layout Controls */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        borderTop: '1px solid #e5e7eb',
+        paddingTop: '8px',
+        marginTop: '4px'
+      }}>
+        <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center', marginBottom: '2px' }}>
+          Layout
+        </div>
+        
+        {/* Algorithm Selection */}
+        <select
+          value={selectedAlgorithm}
+          onChange={(e) => setSelectedAlgorithm(e.target.value)}
+          style={{
+            padding: '2px 4px',
+            fontSize: '9px',
+            border: '1px solid #d1d5db',
+            borderRadius: '3px',
+            background: 'white',
+            cursor: 'pointer'
+          }}
+          title="Select layout algorithm"
+        >
+          {LayoutService.ALGORITHMS.map(algo => (
+            <option key={algo.id} value={algo.id}>
+              {algo.name}
+            </option>
+          ))}
+        </select>
+
+        {/* Auto Layout Button */}
+        <button
+          onClick={() => applyAutoLayout()}
+          disabled={isAnimatingLayout || nodes.length === 0}
+          style={{
+            padding: '4px 6px',
+            fontSize: '10px',
+            border: '1px solid #d1d5db',
+            background: layoutState.isAutoLayout ? '#8b5cf6' : 'white',
+            color: layoutState.isAutoLayout ? 'white' : '#374151',
+            borderRadius: '3px',
+            cursor: nodes.length === 0 || isAnimatingLayout ? 'not-allowed' : 'pointer',
+            opacity: nodes.length === 0 || isAnimatingLayout ? 0.5 : 1,
+            fontWeight: layoutState.isAutoLayout ? 'bold' : 'normal'
+          }}
+          title="Apply automatic layout"
+        >
+          {isAnimatingLayout ? '⏳' : '🎯'} Auto Layout
+        </button>
+
+        {/* Reset Layout Button */}
+        <button
+          onClick={resetLayout}
+          disabled={!layoutState.isAutoLayout || isAnimatingLayout}
+          style={{
+            padding: '4px 6px',
+            fontSize: '10px',
+            border: '1px solid #d1d5db',
+            background: 'white',
+            color: '#374151',
+            borderRadius: '3px',
+            cursor: (!layoutState.isAutoLayout || isAnimatingLayout) ? 'not-allowed' : 'pointer',
+            opacity: (!layoutState.isAutoLayout || isAnimatingLayout) ? 0.5 : 1
+          }}
+          title="Reset to manual positions"
+        >
+          🔄 Reset
+        </button>
+
+        {/* Layout Status Indicator */}
+        <div style={{
+          fontSize: '8px',
+          color: '#6b7280',
+          textAlign: 'center',
+          padding: '2px 4px',
+          background: layoutState.isAutoLayout ? '#f3f4f6' : 'transparent',
+          borderRadius: '2px'
+        }}>
+          {layoutState.isAutoLayout ? `Auto (${selectedAlgorithm})` : 'Manual'}
+        </div>
+      </div>
+
+      {/* Collision Detection Controls */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        borderTop: '1px solid #e5e7eb',
+        paddingTop: '8px',
+        marginTop: '4px'
+      }}>
+        <div style={{ fontSize: '10px', color: '#6b7280', textAlign: 'center', marginBottom: '2px' }}>
+          Collision
+        </div>
+        
+        {/* Collision Detection Toggle */}
+        <button
+          onClick={() => setCollisionOptions(prev => ({ ...prev, enabled: !prev.enabled }))}
+          style={{
+            padding: '4px 6px',
+            fontSize: '10px',
+            border: '1px solid #d1d5db',
+            background: collisionOptions.enabled ? '#10b981' : 'white',
+            color: collisionOptions.enabled ? 'white' : '#374151',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontWeight: collisionOptions.enabled ? 'bold' : 'normal'
+          }}
+          title="Toggle collision detection"
+        >
+          {collisionOptions.enabled ? '🛡️' : '⚠️'} Detection
+        </button>
+
+        {/* Collision Margin Control */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ fontSize: '8px', color: '#6b7280', minWidth: '35px' }}>Margin:</span>
+          <input
+            type="range"
+            min="5"
+            max="50"
+            value={collisionOptions.margin}
+            onChange={(e) => setCollisionOptions(prev => ({ ...prev, margin: parseInt(e.target.value) }))}
+            style={{
+              flex: 1,
+              height: '12px',
+              cursor: 'pointer'
+            }}
+            title={`Collision margin: ${collisionOptions.margin}px`}
+          />
+          <span style={{ fontSize: '8px', color: '#6b7280', minWidth: '20px' }}>
+            {collisionOptions.margin}
+          </span>
+        </div>
+
+        {/* Smart Positioning Toggle */}
+        <button
+          onClick={() => setCollisionOptions(prev => ({ ...prev, enableSmartPositioning: !prev.enableSmartPositioning }))}
+          disabled={!collisionOptions.enabled}
+          style={{
+            padding: '3px 6px',
+            fontSize: '9px',
+            border: '1px solid #d1d5db',
+            background: (collisionOptions.enabled && collisionOptions.enableSmartPositioning) ? '#8b5cf6' : 'white',
+            color: (collisionOptions.enabled && collisionOptions.enableSmartPositioning) ? 'white' : '#374151',
+            borderRadius: '3px',
+            cursor: collisionOptions.enabled ? 'pointer' : 'not-allowed',
+            opacity: collisionOptions.enabled ? 1 : 0.5
+          }}
+          title="Automatically find valid positions when collision detected"
+        >
+          🧠 Smart Position
+        </button>
+
+        {/* Grid Snap Toggle */}
+        <button
+          onClick={() => setCollisionOptions(prev => ({ ...prev, snapToGrid: !prev.snapToGrid }))}
+          disabled={!collisionOptions.enabled}
+          style={{
+            padding: '3px 6px',
+            fontSize: '9px',
+            border: '1px solid #d1d5db',
+            background: (collisionOptions.enabled && collisionOptions.snapToGrid) ? '#f59e0b' : 'white',
+            color: (collisionOptions.enabled && collisionOptions.snapToGrid) ? 'white' : '#374151',
+            borderRadius: '3px',
+            cursor: collisionOptions.enabled ? 'pointer' : 'not-allowed',
+            opacity: collisionOptions.enabled ? 1 : 0.5
+          }}
+          title="Snap nodes to grid when moving"
+        >
+          🔲 Grid Snap
+        </button>
+
+        {/* Collision Status Indicator */}
+        {collisionState.isDragging && (
+          <div style={{
+            fontSize: '8px',
+            color: collisionState.hasCollision ? '#ef4444' : '#10b981',
+            textAlign: 'center',
+            padding: '2px 4px',
+            background: collisionState.hasCollision ? '#fef2f2' : '#f0fdf4',
+            borderRadius: '2px',
+            border: `1px solid ${collisionState.hasCollision ? '#fecaca' : '#bbf7d0'}`
+          }}>
+            {collisionState.hasCollision ? 
+              `⚠️ ${collisionState.conflictingNodes.length} conflict${collisionState.conflictingNodes.length !== 1 ? 's' : ''}` : 
+              '✅ Valid position'
+            }
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -1310,7 +2453,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
           background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%)',
           cursor: viewport.isPanning ? 'grabbing' :
                   connectionState.isCreating ? 'crosshair' : 
-                  state.draggedNode ? 'grabbing' :
+                  state.draggedNode ? (collisionState.hasCollision ? 'not-allowed' : 'grabbing') :
                   interactionMode === 'move' ? 'grab' :
                   interactionMode === 'lock' ? 'not-allowed' :
                   'default'
