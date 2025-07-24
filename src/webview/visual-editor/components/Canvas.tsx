@@ -244,6 +244,7 @@ const initialEdges: CanvasEdge[] = [
 
 export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const autoFitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Initialize nodes with calculated ports and dynamic heights
   const [nodes, setNodes] = React.useState<CanvasNode[]>(() => {
@@ -301,7 +302,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
   const [collisionOptions, setCollisionOptions] = React.useState<CollisionOptions>({
     enabled: true,
     margin: 20,
-    enableBoundaryCheck: true,
+    enableBoundaryCheck: false,
     enableSmartPositioning: true,
     enableVisualFeedback: true,
     snapToGrid: false,
@@ -358,42 +359,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         case 'f':
           if (event.metaKey || event.ctrlKey) {
             event.preventDefault();
-            // Inline fit to view logic
-            if (nodes.length === 0) break;
-
-            const padding = 50;
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-            nodes.forEach(node => {
-              minX = Math.min(minX, node.x);
-              minY = Math.min(minY, node.y);
-              maxX = Math.max(maxX, node.x + node.width);
-              maxY = Math.max(maxY, node.y + node.height);
-            });
-
-            const canvas = canvasRef.current;
-            if (!canvas) break;
-
-            const contentWidth = maxX - minX;
-            const contentHeight = maxY - minY;
-            const canvasWidth = canvas.clientWidth;
-            const canvasHeight = canvas.clientHeight;
-
-            const scaleX = (canvasWidth - 2 * padding) / contentWidth;
-            const scaleY = (canvasHeight - 2 * padding) / contentHeight;
-            const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
-
-            const centerX = (minX + maxX) / 2;
-            const centerY = (minY + maxY) / 2;
-            const panX = canvasWidth / 2 - centerX * scale;
-            const panY = canvasHeight / 2 - centerY * scale;
-
-            setViewport(prev => ({
-              ...prev,
-              zoom: scale,
-              panX,
-              panY
-            }));
+            fitToView(true); // Allow zoom in for manual keyboard shortcut
           }
           break;
         
@@ -639,6 +605,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     );
   }, [calculateNodePorts, edges]);
 
+
   // Transform screen coordinates to world coordinates
   const screenToWorld = useCallback((screenX: number, screenY: number) => {
     return {
@@ -778,8 +745,11 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
   }, [viewport, screenToWorld, worldToScreen, interactionMode]);
 
   // Fit to view function
-  const fitToView = useCallback(() => {
+  const fitToView = useCallback((allowZoomIn = false) => {
     if (nodes.length === 0) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
     const padding = 50;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -791,17 +761,29 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       maxY = Math.max(maxY, node.y + node.height);
     });
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
     const contentWidth = maxX - minX;
     const contentHeight = maxY - minY;
     const canvasWidth = canvas.clientWidth;
     const canvasHeight = canvas.clientHeight;
 
+    // Handle single node or very small content
+    if (contentWidth < 10 && contentHeight < 10) {
+      // Just center the content without scaling
+      const centerX = minX + contentWidth / 2;
+      const centerY = minY + contentHeight / 2;
+      setViewport(prev => ({
+        ...prev,
+        zoom: 1,
+        panX: canvasWidth / 2 - centerX,
+        panY: canvasHeight / 2 - centerY
+      }));
+      return;
+    }
+
     const scaleX = (canvasWidth - 2 * padding) / contentWidth;
     const scaleY = (canvasHeight - 2 * padding) / contentHeight;
-    const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
+    const maxScale = allowZoomIn ? 2 : 1; // Allow zoom in for manual calls
+    const scale = Math.min(scaleX, scaleY, maxScale);
 
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
@@ -815,6 +797,61 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       panY
     }));
   }, [nodes]);
+
+  // Auto-fit to view when nodes are first loaded (debounced)
+  React.useEffect(() => {
+    if (nodes.length > 0) {
+      // Clear any existing timeout
+      if (autoFitTimeoutRef.current) {
+        clearTimeout(autoFitTimeoutRef.current);
+      }
+      
+      // Use a small delay to ensure nodes are fully rendered and debounce rapid changes
+      autoFitTimeoutRef.current = setTimeout(() => {
+        fitToView();
+        autoFitTimeoutRef.current = null;
+      }, 150);
+    }
+    
+    return () => {
+      if (autoFitTimeoutRef.current) {
+        clearTimeout(autoFitTimeoutRef.current);
+        autoFitTimeoutRef.current = null;
+      }
+    };
+  }, [nodes.length, fitToView]);
+
+  // Add document-level mouseup handler as backup for VS Code webview drag issues
+  React.useEffect(() => {
+    const handleDocumentMouseUp = () => {
+      // Force cursor reset if we have drag state but document mouseup fired
+      if (state.draggedNode) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          canvas.style.cursor = 'default';
+          document.body.style.cursor = 'default';
+        }
+        
+        // Reset drag state as backup
+        setState(prev => ({ 
+          ...prev, 
+          draggedNode: null,
+          dragStartPosition: null 
+        }));
+        
+        setCollisionState({
+          isDragging: false,
+          hasCollision: false,
+          conflictingNodes: []
+        });
+      }
+    };
+
+    document.addEventListener('mouseup', handleDocumentMouseUp);
+    return () => {
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
+    };
+  }, [state.draggedNode]);
 
   // Layout functions
   const convertToLayoutFormat = useCallback((canvasNodes: CanvasNode[], canvasEdges: CanvasEdge[]): { nodes: CanvasLayoutNode[], edges: CanvasLayoutEdge[] } => {
@@ -1295,32 +1332,10 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         finalY = snapped.y;
       }
 
-      // Check for collision for visual feedback only - don't prevent movement
-      if (collisionOptions.enabled) {
-        const draggedNode = nodes.find(n => n.id === state.draggedNode);
-        if (draggedNode) {
-          // Prepare nodes for collision detection (excluding the dragged node)
-          const otherNodes = nodes
-            .filter(n => n.id !== state.draggedNode)
-            .map(n => ({ id: n.id, x: n.x, y: n.y, width: n.width, height: n.height }));
-
-          // Check collision at the preferred position
-          const validation = collisionService.validatePosition(
-            state.draggedNode,
-            { x: finalX, y: finalY },
-            { width: draggedNode.width, height: draggedNode.height },
-            otherNodes,
-            {
-              margin: collisionOptions.margin,
-              enableBoundaryCheck: collisionOptions.enableBoundaryCheck,
-              canvasBounds: { x: 0, y: 0, width: 4000, height: 3000 }
-            }
-          );
-
-          hasCollision = !validation.isValid;
-          conflictingNodes = validation.conflicts;
-        }
-      }
+      // Skip collision detection during drag for infinite canvas experience
+      // Collision will only be checked on drop
+      hasCollision = false;
+      conflictingNodes = [];
 
       // Update collision state for visual feedback
       setCollisionState({
@@ -1414,6 +1429,40 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
           .filter(n => n.id !== state.draggedNode)
           .map(n => ({ id: n.id, x: n.x, y: n.y, width: n.width, height: n.height }));
 
+        console.log('=== COLLISION DEBUG ===');
+        console.log('Dragged node:', {
+          id: state.draggedNode,
+          position: { x: draggedNode.x, y: draggedNode.y },
+          size: { width: draggedNode.width, height: draggedNode.height }
+        });
+        console.log('Other nodes:', otherNodes);
+        console.log('Collision options:', {
+          margin: collisionOptions.margin,
+          enableBoundaryCheck: collisionOptions.enableBoundaryCheck
+        });
+
+        // Manual collision test with ALL other nodes to verify detection
+        console.log('Testing collision with each node individually:');
+        otherNodes.forEach((testNode, index) => {
+          const targetRect = {
+            x: draggedNode.x,
+            y: draggedNode.y,
+            width: draggedNode.width,
+            height: draggedNode.height
+          };
+          
+          const testOverlap = collisionService.checkRectangleOverlap(targetRect, testNode, collisionOptions.margin);
+          console.log(`Node ${index} (${testNode.id}):`, {
+            position: { x: testNode.x, y: testNode.y },
+            size: { width: testNode.width, height: testNode.height },
+            overlaps: testOverlap
+          });
+          
+          if (testOverlap) {
+            console.log(`  -> COLLISION DETECTED with ${testNode.id}`);
+          }
+        });
+
         const validation = collisionService.validatePosition(
           state.draggedNode,
           { x: draggedNode.x, y: draggedNode.y },
@@ -1422,9 +1471,12 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
           {
             margin: collisionOptions.margin,
             enableBoundaryCheck: collisionOptions.enableBoundaryCheck,
-            canvasBounds: { x: 0, y: 0, width: 4000, height: 3000 }
+            canvasBounds: { x: -50000, y: -50000, width: 100000, height: 100000 }
           }
         );
+
+        console.log('Validation result:', validation);
+        console.log('=== END COLLISION DEBUG ===');
 
         // If invalid position, revert to original position with animation
         if (!validation.isValid) {
@@ -1465,20 +1517,41 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
 
             if (progress < 1) {
               requestAnimationFrame(animateRevert);
+            } else {
+              // Animation complete - reset drag state
+              setState(prev => ({ 
+                ...prev, 
+                draggedNode: null,
+                dragStartPosition: null 
+              }));
             }
           };
 
           requestAnimationFrame(animateRevert);
+        } else {
+          // Valid drop - reset drag state immediately
+          setState(prev => ({ 
+            ...prev, 
+            draggedNode: null,
+            dragStartPosition: null 
+          }));
         }
+      } else {
+        // Collision detection disabled - reset drag state immediately
+        setState(prev => ({ 
+          ...prev, 
+          draggedNode: null,
+          dragStartPosition: null 
+        }));
       }
+    } else {
+      // No drag operation - reset drag state immediately
+      setState(prev => ({ 
+        ...prev, 
+        draggedNode: null,
+        dragStartPosition: null 
+      }));
     }
-
-    // Reset drag state
-    setState(prev => ({ 
-      ...prev, 
-      draggedNode: null,
-      dragStartPosition: null 
-    }));
     
     // Reset collision state
     setCollisionState({
@@ -1486,6 +1559,14 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       hasCollision: false,
       conflictingNodes: []
     });
+
+    // Force cursor reset for VS Code webview compatibility
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.style.cursor = 'default';
+      // Also reset on document body as backup for webview issues
+      document.body.style.cursor = 'default';
+    }
   }, [connectionState, getCanvasCoordinates, getPortAtPosition, isValidConnection, interactionMode, state.draggedNode, state.dragStartPosition, nodes, collisionOptions, collisionService, calculateNodePorts, edges]);
 
   const drawNode = useCallback((ctx: CanvasRenderingContext2D, node: CanvasNode) => {
@@ -1814,9 +1895,40 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     });
   }, []);
 
+  // Helper function to wrap text to fit within max width
+  const wrapText = useCallback((ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const testWidth = ctx.measureText(testLine).width;
+      
+      if (testWidth <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          // Single word is too long, force it on its own line
+          lines.push(word);
+          currentLine = '';
+        }
+      }
+    }
+    
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+    
+    return lines;
+  }, []);
+
   // Draw tooltip for hovered port
   const drawTooltip = useCallback((ctx: CanvasRenderingContext2D) => {
-    if (!state.showTooltip || !state.hoveredPort) return;
+    if (!state.showTooltip || !state.hoveredPort || state.draggedNode) return;
 
     const port = state.hoveredPort;
     
@@ -1830,32 +1942,45 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
 
     const fullPortName = portData?.display_name || port.name;
     
-    // Build tooltip content
-    const lines = [];
+    // Set maximum tooltip width
+    const MAX_TOOLTIP_WIDTH = 300;
+    const padding = 16;
+    const availableTextWidth = MAX_TOOLTIP_WIDTH - padding;
     
-    // Always show the full port name at the top
-    lines.push(`${fullPortName}`);
+    // Build tooltip content with word wrapping
+    const wrappedLines: string[] = [];
     
-    // Add description if available
+    // Set font for measurement (will be reset for drawing)
+    ctx.font = '11px sans-serif';
+    
+    // Always show the full port name at the top (may wrap if very long)
+    ctx.font = 'bold 12px sans-serif';
+    wrappedLines.push(...wrapText(ctx, fullPortName, availableTextWidth));
+    
+    // Add description if available (with word wrapping)
     if (portData?.description) {
-      lines.push(`Description: ${portData.description}`);
+      ctx.font = '11px sans-serif';
+      const descriptionLines = wrapText(ctx, `Description: ${portData.description}`, availableTextWidth);
+      wrappedLines.push(...descriptionLines);
     }
     
-    // Add default value if available
+    // Add default value if available (with word wrapping)
     if (portData?.defaultValue !== undefined && portData.defaultValue !== null && portData.defaultValue !== '') {
-      lines.push(`Default: ${portData.defaultValue}`);
+      ctx.font = '11px sans-serif';
+      const defaultLines = wrapText(ctx, `Default: ${portData.defaultValue}`, availableTextWidth);
+      wrappedLines.push(...defaultLines);
     }
 
-    // Always show tooltip if we have at least the port name
-    if (lines.length === 0) {
-      lines.push(port.name); // Fallback to port name if no display name
+    // Fallback if no content
+    if (wrappedLines.length === 0) {
+      ctx.font = '11px sans-serif';
+      wrappedLines.push(...wrapText(ctx, port.name, availableTextWidth));
     }
 
     // Calculate tooltip dimensions
-    ctx.font = '11px sans-serif';
-    const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width)) + 16;
     const lineHeight = 16;
-    const tooltipHeight = lines.length * lineHeight + 12;
+    const tooltipWidth = MAX_TOOLTIP_WIDTH;
+    const tooltipHeight = wrappedLines.length * lineHeight + 12;
 
     // Position tooltip near the mouse, but keep it on screen
     const canvas = canvasRef.current;
@@ -1869,8 +1994,8 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     let tooltipY = screenY - tooltipHeight - 10;
 
     // Keep tooltip on screen
-    if (tooltipX + maxWidth > canvas.clientWidth) {
-      tooltipX = canvas.clientWidth - maxWidth - 10;
+    if (tooltipX + tooltipWidth > canvas.clientWidth) {
+      tooltipX = canvas.clientWidth - tooltipWidth - 10;
     }
     if (tooltipY < 10) {
       tooltipY = screenY + 20;
@@ -1881,7 +2006,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(tooltipX, tooltipY, maxWidth, tooltipHeight, 4);
+    ctx.roundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 4);
     ctx.fill();
     ctx.stroke();
 
@@ -1889,13 +2014,19 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
 
-    lines.forEach((line, index) => {
-      if (index === 0) {
-        // First line is the port name - make it bold and slightly larger
-        ctx.fillStyle = '#93c5fd'; // Light blue for port name
+    // Track how many lines belong to the port name (first wrapped section)
+    let portNameLines = 0;
+    ctx.font = 'bold 12px sans-serif';
+    const portNameWrapped = wrapText(ctx, fullPortName, availableTextWidth);
+    portNameLines = portNameWrapped.length;
+
+    wrappedLines.forEach((line, index) => {
+      if (index < portNameLines) {
+        // Port name lines - make them bold and light blue
+        ctx.fillStyle = '#93c5fd';
         ctx.font = 'bold 12px sans-serif';
       } else {
-        // Other lines are description/default - normal styling
+        // Description/default lines - normal styling
         ctx.fillStyle = 'white';
         ctx.font = '11px sans-serif';
       }
@@ -1906,7 +2037,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         tooltipY + 12 + index * lineHeight
       );
     });
-  }, [state.showTooltip, state.hoveredPort, state.mousePos, nodes, viewport]);
+  }, [state.showTooltip, state.hoveredPort, state.mousePos, nodes, viewport, wrapText]);
 
   // Draw preview connection
   const drawPreviewConnection = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -2032,8 +2163,13 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
     drawPreviewConnection(ctx);
 
     // Draw nodes and their ports (recalculate ports with current edges)
-    nodes.forEach(node => {
-      // Recalculate ports with current edges for accurate display
+    // Render non-dragged nodes first, then dragged node last so it appears on top
+    const draggedNodeId = state.draggedNode;
+    const nonDraggedNodes = nodes.filter(node => node.id !== draggedNodeId);
+    const draggedNode = draggedNodeId ? nodes.find(node => node.id === draggedNodeId) : null;
+    
+    // Draw non-dragged nodes first
+    nonDraggedNodes.forEach(node => {
       const nodeWithPorts = {
         ...node,
         ports: calculateNodePorts(node, edges)
@@ -2041,6 +2177,16 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
       drawNode(ctx, nodeWithPorts);
       drawNodePorts(ctx, nodeWithPorts);
     });
+    
+    // Draw dragged node last so it appears in front
+    if (draggedNode) {
+      const nodeWithPorts = {
+        ...draggedNode,
+        ports: calculateNodePorts(draggedNode, edges)
+      };
+      drawNode(ctx, nodeWithPorts);
+      drawNodePorts(ctx, nodeWithPorts);
+    }
 
     ctx.restore();
 
@@ -2231,7 +2377,7 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         −
       </button>
       <button
-        onClick={fitToView}
+        onClick={() => fitToView(true)}
         style={{ 
           padding: '4px 8px', 
           fontSize: '10px',
@@ -2461,6 +2607,16 @@ export const Canvas: React.FC<CanvasProps> = ({ graphModel, onNodeSelect }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onMouseEnter={() => {
+          // Force cursor reset on canvas enter as backup for webview issues
+          if (!state.draggedNode && !viewport.isPanning && !connectionState.isCreating) {
+            const canvas = canvasRef.current;
+            if (canvas) {
+              canvas.style.cursor = 'default';
+              document.body.style.cursor = 'default';
+            }
+          }
+        }}
         onWheel={handleWheel}
       />
       <StatusBar />

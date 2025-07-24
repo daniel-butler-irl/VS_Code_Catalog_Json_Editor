@@ -32,6 +32,12 @@ export class CollisionDetectionService {
    * Check if two rectangles overlap with optional margin
    */
   public checkRectangleOverlap(rect1: Rectangle, rect2: Rectangle, margin: number = 0): boolean {
+    // Two rectangles overlap if they are NOT separated by at least margin pixels
+    // For rectangles to be separated by margin, one of these must be true:
+    // - rect1 is to the left of rect2 with margin: rect1.x + rect1.width + margin <= rect2.x
+    // - rect2 is to the left of rect1 with margin: rect2.x + rect2.width + margin <= rect1.x  
+    // - rect1 is above rect2 with margin: rect1.y + rect1.height + margin <= rect2.y
+    // - rect2 is above rect1 with margin: rect2.y + rect2.height + margin <= rect1.y
     return !(
       rect1.x + rect1.width + margin <= rect2.x ||
       rect2.x + rect2.width + margin <= rect1.x ||
@@ -63,9 +69,18 @@ export class CollisionDetectionService {
 
     const conflicts: string[] = [];
 
+    console.log('=== ValidatePosition Debug ===');
+    console.log('Target node ID:', targetNodeId);
+    console.log('Target rect:', targetRect);
+    console.log('Margin:', margin);
+    console.log('All nodes count:', allNodes.length);
+
     // Check collision with other nodes
     for (const node of allNodes) {
-      if (node.id === targetNodeId) {continue;} // Skip self
+      if (node.id === targetNodeId) {
+        console.log(`Skipping self: ${node.id}`);
+        continue;
+      }
 
       const nodeRect: Rectangle = {
         x: node.x,
@@ -74,10 +89,17 @@ export class CollisionDetectionService {
         height: node.height
       };
 
-      if (this.checkRectangleOverlap(targetRect, nodeRect, margin)) {
+      const overlaps = this.checkRectangleOverlap(targetRect, nodeRect, margin);
+      console.log(`Checking ${node.id}:`, {nodeRect, overlaps});
+
+      if (overlaps) {
         conflicts.push(node.id);
+        console.log(`  -> Added to conflicts: ${node.id}`);
       }
     }
+
+    console.log('Final conflicts:', conflicts);
+    console.log('=== End ValidatePosition Debug ===');
 
     // Check canvas boundaries
     let boundsValid = true;
